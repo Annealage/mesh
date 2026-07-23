@@ -2,6 +2,8 @@
 
 Annealage Mesh is a little web tool for reviewing 3D-print models by pointing at them. You give it a folder of STL files, it serves up a 3D viewer in the browser, and you click on the model to drop a comment pinned to that exact spot. Hit submit and the comments land in a JSON file next to the STLs, each one carrying the 3D location it was placed at.
 
+![Annealage Mesh: a human's orange pins and an agent's cyan callouts on the same STL, each carrying its comment](docs/mesh-screenshot.png)
+
 ## Why
 
 I built this while iterating on a 3D-printed part with Claude Code. The CAD was generated from a script, I'd look at a render, and then spend ages typing things like "no, the inside corner on the far wall near the fan, not that one" trying to describe which face I meant. It was a pain, and half the time the agent picked the wrong spot anyway.
