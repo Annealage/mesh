@@ -237,7 +237,7 @@ async function loadManifest() {
       name: m.name,
       file: m.file,
       color: PALETTE[i % PALETTE.length],
-      opacity: 0.95,
+      opacity: 1.0,         // opaque: transparent + depthWrite-off mis-sorts internal faces on concave parts
       show: i === 0,        // first model shown, rest toggled off
     }));
     buildPartsUI();
