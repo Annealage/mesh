@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Annealage Mesh — STL review</title>
+<style>
+  :root { color-scheme: dark; --bar: 48px; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #14161a; font: 13px/1.4 system-ui, sans-serif; color: #d6d8dc; }
+  * { -webkit-tap-highlight-color: transparent; }
+  #app { position: fixed; inset: 0; }
+  #app canvas { touch-action: none; display: block; }
+
+  /* ---------- top bar ---------- */
+  #topbar {
+    position: fixed; top: 0; left: 0; right: 0; height: var(--bar); z-index: 15;
+    display: flex; align-items: center; gap: 8px; padding: 0 10px; box-sizing: border-box;
+    background: rgba(20,23,28,.92); border-bottom: 1px solid #2c313a; backdrop-filter: blur(4px);
+  }
+  #topbar .title { font-weight: 600; color: #9aa; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-right: auto; white-space: nowrap; }
+  #topbar button {
+    min-height: 38px; padding: 0 13px; border-radius: 7px; border: 1px solid #3a3f47;
+    background: #2a2e35; color: #d6d8dc; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
+  }
+  #topbar button:hover { background: #333941; }
+  #topbar #modeBtn.on { background: #e86b34; border-color: #e86b34; color: #14161a; }
+  #topbar #panelBtn.on { background: #2f3946; border-color: #4a586a; }
+  #topbar #upBtn { font-size: 11px; }
+  @media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } }
+
+  /* ---------- drawer (parts + annotations) ---------- */
+  #side {
+    position: fixed; top: var(--bar); right: 0; bottom: 0; z-index: 12; width: 340px;
+    background: rgba(20,23,28,.97); border-left: 1px solid #2c313a;
+    display: flex; flex-direction: column; backdrop-filter: blur(4px);
+    transform: translateX(100%); transition: transform .25s ease;
+  }
+  body.panel-open #side { transform: none; }
+  @media (max-width: 560px) { #side { width: min(90vw, 360px); } }
+
+  #scrim { position: fixed; inset: var(--bar) 0 0 0; z-index: 11; background: #0007; display: none; }
+  body.panel-open #scrim { display: block; }
+  @media (min-width: 900px) { #scrim { display: none !important; } }
+
+  #side header { padding: 12px 14px 10px; border-bottom: 1px solid #2c313a; }
+  #side header h1 { font-size: 12px; margin: 0 0 4px; letter-spacing: .04em; text-transform: uppercase; color: #9aa; font-weight: 600; }
+  #side header .sub { color: #778; font-size: 11px; }
+  #side header .legend { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+  #side header .legend label { display: flex; align-items: center; gap: 7px; cursor: pointer; font-size: 12px; color: #aab; padding: 2px 0; }
+  #side header .legend input { accent-color: #35c7e0; width: 16px; height: 16px; }
+  #side header .legend .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  #side header .legend .dot.agent { background: #35c7e0; }
+  #side header .legend .dot.user { background: #e86b34; }
+
+  .sec-hdr { font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: #8a92a0; margin-bottom: 6px; }
+
+  #parts-sec { flex: none; padding: 10px 12px; border-bottom: 1px solid #2c313a; }
+  #parts label { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  #parts label .sw { width: 12px; height: 12px; border-radius: 2px; flex: none; border: 1px solid #0004; }
+  #parts input[type=checkbox] { accent-color: #e86b34; width: 16px; height: 16px; }
+
+  .agentsec { flex: none; max-height: 38%; overflow-y: auto; padding: 10px 10px 0; }
+  .agentsec:empty { display: none; }
+  .agentsec .sec-hdr { color: #6cc; }
+  .apin { border: 1px solid #234; border-left: 3px solid #35c7e0; border-radius: 6px; margin-bottom: 7px; padding: 8px 9px; background: #12232a; cursor: pointer; }
+  .apin:hover { background: #16303a; }
+  .apin .top { display: flex; align-items: center; gap: 8px; }
+  .apin .num { width: 22px; height: 22px; border-radius: 50%; flex: none; background: #35c7e0; color: #06222b; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .apin .meta { flex: 1; min-width: 0; }
+  .apin .meta .part { font-weight: 600; color: #bdd; }
+  .apin .meta .loc { color: #799; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .apin .meta .label { color: #6cc; font-size: 11px; }
+  .apin .cmt { margin-top: 5px; color: #cde; font-size: 12px; white-space: pre-wrap; }
+
+  #pins { flex: 1; overflow-y: auto; padding: 10px; }
+  #pins .empty { color: #667; padding: 14px 6px; font-size: 12px; }
+  .pin { border: 1px solid #2f343d; border-radius: 7px; margin-bottom: 8px; padding: 9px; background: #1b1e24; }
+  .pin.sel { border-color: #e86b34; box-shadow: 0 0 0 1px #e86b3455; }
+  .pin .top { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+  .pin .num { width: 22px; height: 22px; border-radius: 50%; flex: none; background: #e86b34; color: #14161a; font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+  .pin .meta { flex: 1; min-width: 0; }
+  .pin .meta .part { font-weight: 600; color: #cdd; }
+  .pin .meta .loc { color: #889; font-size: 11px; font-variant-numeric: tabular-nums; }
+  .pin .meta .label { color: #e8a030; font-size: 11px; }
+  .pin .del { flex: none; background: none; border: none; color: #a55; cursor: pointer; font-size: 20px; line-height: 1; padding: 4px 8px; border-radius: 4px; touch-action: manipulation; }
+  .pin .del:hover { background: #3a2226; color: #e88; }
+  .pin textarea { width: 100%; margin-top: 8px; box-sizing: border-box; resize: vertical; min-height: 46px; background: #12151a; color: #d6d8dc; border: 1px solid #2f343d; border-radius: 5px; padding: 7px; font: inherit; }
+  .pin textarea:focus { outline: none; border-color: #e86b34; }
+
+  #side footer { padding: 10px 12px; border-top: 1px solid #2c313a; display: flex; flex-direction: column; gap: 8px; }
+  #side footer .rowbtns { display: flex; gap: 8px; }
+  #side footer button { flex: 1; border-radius: 7px; padding: 11px; cursor: pointer; border: 1px solid #3a3f47; background: #2a2e35; color: #d6d8dc; font-weight: 600; touch-action: manipulation; }
+  #side footer button.primary { background: #e86b34; border-color: #e86b34; color: #14161a; }
+  #side footer button.primary:hover { background: #f07a44; }
+  #side footer button:hover { background: #333941; }
+
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 8px; font-weight: 600; display: none; box-shadow: 0 6px 24px #0008; max-width: 86vw; text-align: center; }
+  #toast.ok { background: #1e3a24; color: #9fe0a8; border: 1px solid #2f5c39; }
+  #toast.err { background: #3a1e1e; color: #e8a0a0; border: 1px solid #5c2f2f; }
+
+  #err { position: fixed; bottom: 12px; left: 12px; z-index: 14; color: #e88; background: rgba(40,20,20,.92); padding: 8px 12px; border-radius: 6px; display: none; max-width: 70vw; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="topbar">
+  <span class="title">Annealage Mesh — STL review</span>
+  <button id="modeBtn" title="Toggle pin/navigate mode">○ Navigate</button>
+  <button id="fit" title="Fit view (F)">Fit</button>
+  <button id="upBtn" title="Toggle which axis is 'up'">Z-up</button>
+  <button id="panelBtn" title="Show/hide panel">☰ Panel</button>
+</div>
+
+<div id="scrim"></div>
+
+<aside id="side">
+  <header>
+    <h1>Review</h1>
+    <div class="sub">Drag to orbit · pinch to zoom · two-finger to pan. Switch to <b>Add pin</b> to drop comments.</div>
+    <div class="legend">
+      <label><input type="checkbox" id="tgAgent" checked><span class="dot agent"></span>Agent callouts (read-only)</label>
+      <label><input type="checkbox" id="tgUser" checked><span class="dot user"></span>Your pins</label>
+    </div>
+  </header>
+  <div id="parts-sec">
+    <div class="sec-hdr">Parts</div>
+    <div id="parts"></div>
+  </div>
+  <div id="agentPins" class="agentsec"></div>
+  <div id="pins"><div class="empty">No pins yet — tap “Add pin”, then tap a visible part.</div></div>
+  <footer>
+    <div class="rowbtns">
+      <button id="clear">Clear all</button>
+      <button id="submit" class="primary">Submit</button>
+    </div>
+    <div class="sub" id="status" style="color:#778;font-size:11px;">unsaved</div>
+  </footer>
+</aside>
+
+<div id="toast"></div>
+<div id="err"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// Distinct colors auto-assigned to models in manifest order (cycled if there
+// are more models than colors).
+const PALETTE = [0xe86b34, 0xb2b6c0, 0xe8a030, 0x3aa0e8, 0x8890a0, 0x35c7e0, 0xcf5ce8, 0x7ee87a];
+
+const app = document.getElementById('app');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.5, 20000);
+camera.up.set(0, 0, 1);                       // default: Z up
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+renderer.setSize(innerWidth, innerHeight);
+app.appendChild(renderer.domElement);
+renderer.domElement.style.touchAction = 'none';   // let OrbitControls own touch gestures
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.enableRotate = true; controls.enablePan = true; controls.enableZoom = true;
+// one finger = orbit, two fingers = pinch-zoom + pan
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, 1.1));
+const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(1, 0.7, 1.4); scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1, -0.8, 0.4); scene.add(fill);
+
+const grid = new THREE.GridHelper(400, 40, 0x3a3f47, 0x282c32);
+grid.rotation.x = Math.PI / 2;                // grid on XY (z=0)
+scene.add(grid);
+scene.add(new THREE.AxesHelper(60));          // X red, Y green, Z blue
+
+const loader = new STLLoader();
+const meshes = {};                            // part name -> THREE.Mesh
+let loaded = 0;
+let PARTS = [];                               // populated from /manifest
+
+function showError(m) { const e = document.getElementById('err'); e.textContent = m; e.style.display = 'block'; }
+
+function loadPart(p) {
+  loader.load(p.file, (geo) => {
+    geo.computeVertexNormals();
+    const mat = new THREE.MeshStandardMaterial({
+      color: p.color, metalness: 0.15, roughness: 0.6,
+      transparent: p.opacity < 1, opacity: p.opacity,
+      depthWrite: p.opacity >= 1, side: THREE.DoubleSide, flatShading: false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.visible = p.show;
+    mesh.userData.partName = p.name;
+    meshes[p.name] = mesh;
+    scene.add(mesh);
+    if (++loaded === 1 || p.show) fitView();
+  }, undefined, () => { showError('Failed to load ' + p.file + ' — is it in the served directory?'); });
+}
+
+// --- Parts toggle UI ---
+const partsDiv = document.getElementById('parts');
+function buildPartsUI() {
+  partsDiv.innerHTML = '';
+  PARTS.forEach((p) => {
+    const lab = document.createElement('label');
+    const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = p.show;
+    const sw = document.createElement('span'); sw.className = 'sw'; sw.style.background = '#' + p.color.toString(16).padStart(6, '0');
+    const txt = document.createElement('span'); txt.textContent = p.name;
+    cb.addEventListener('change', () => { if (meshes[p.name]) { meshes[p.name].visible = cb.checked; } });
+    lab.append(cb, sw, txt); partsDiv.appendChild(lab);
+  });
+}
+
+async function loadManifest() {
+  try {
+    const res = await fetch('/manifest', { cache: 'no-store' });
+    const j = await res.json();
+    const models = (j && Array.isArray(j.models)) ? j.models : [];
+    if (!models.length) {
+      showError('No STLs found in the served directory.');
+      return;
+    }
+    PARTS = models.map((m, i) => ({
+      name: m.name,
+      file: m.file,
+      color: PALETTE[i % PALETTE.length],
+      opacity: 0.95,
+      show: i === 0,        // first model shown, rest toggled off
+    }));
+    buildPartsUI();
+    PARTS.forEach(loadPart);
+  } catch (e) {
+    showError('Failed to load /manifest: ' + e.message);
+  }
+}
+loadManifest();
+
+function fitView() {
+  const box = new THREE.Box3();
+  let any = false;
+  Object.values(meshes).forEach((m) => { if (m.visible) { box.expandByObject(m); any = true; } });
+  if (!any) return;
+  const sph = box.getBoundingSphere(new THREE.Sphere());
+  const r = sph.radius || 100;
+  controls.target.copy(sph.center);
+  const dir = new THREE.Vector3(1.1, -1.2, 0.75).normalize();
+  camera.position.copy(sph.center).addScaledVector(dir, r * 2.6);
+  camera.near = r / 50; camera.far = r * 50; camera.updateProjectionMatrix();
+  controls.update();
+}
+
+document.getElementById('fit').addEventListener('click', fitView);
+addEventListener('keydown', (e) => {
+  if (e.target && (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT')) return;
+  if (e.key === 'f' || e.key === 'F') fitView();
+  if (e.key === 'a' || e.key === 'A') toggleMode();
+});
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ============================ TOP BAR: mode + panel + up-axis ============================
+
+// Mode gates picking so touch-swipes to orbit don't drop stray pins.
+let mode = 'nav';                     // 'nav' | 'annotate'  (default navigate)
+const modeBtn = document.getElementById('modeBtn');
+function setMode(m) {
+  mode = m;
+  const on = m === 'annotate';
+  modeBtn.classList.toggle('on', on);
+  modeBtn.textContent = on ? '● Add pin' : '○ Navigate';
+  renderer.domElement.style.cursor = on ? 'crosshair' : 'grab';
+}
+function toggleMode() { setMode(mode === 'annotate' ? 'nav' : 'annotate'); }
+modeBtn.addEventListener('click', toggleMode);
+setMode('nav');
+
+// Some CAD tools export Y-up STLs instead of Z-up; flip camera.up and refit.
+let upAxis = 'z';
+const upBtn = document.getElementById('upBtn');
+upBtn.addEventListener('click', () => {
+  upAxis = upAxis === 'z' ? 'y' : 'z';
+  camera.up.set(0, upAxis === 'y' ? 1 : 0, upAxis === 'z' ? 1 : 0);
+  upBtn.textContent = upAxis === 'z' ? 'Z-up' : 'Y-up';
+  fitView();
+});
+
+// Drawer open/close. Desktop starts open; touch/narrow starts closed.
+const panelBtn = document.getElementById('panelBtn');
+function setPanel(open) {
+  document.body.classList.toggle('panel-open', open);
+  panelBtn.classList.toggle('on', open);
+}
+panelBtn.addEventListener('click', () => setPanel(!document.body.classList.contains('panel-open')));
+document.getElementById('scrim').addEventListener('click', () => setPanel(false));
+setPanel(matchMedia('(min-width: 900px)').matches);
+
+// ============================ ANNOTATION LOGIC ============================
+
+const pins = [];            // user pins: { id, part, point:[x,y,z], normal:[x,y,z], faceIndex, label, comment, marker, sprite }
+let nextId = 1;
+let selectedId = null;
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const markerGroup = new THREE.Group();      // user pins (orange)
+scene.add(markerGroup);
+const agentGroup = new THREE.Group();       // agent callouts (cyan, read-only)
+scene.add(agentGroup);
+
+const USER_COLOR = 0xe86b34, USER_SEL = 0xffd24a, AGENT_COLOR = 0x35c7e0;
+const TAP_SLOP = 8;                         // px; below this a pointerup counts as a tap, not an orbit
+
+// Distinguish a tap (pick) from an orbit drag. Picking only fires in annotate mode.
+let downPos = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downPos = { x: e.clientX, y: e.clientY, btn: e.button }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downPos) return;
+  const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  const wasPrimary = downPos.btn === 0;
+  downPos = null;
+  if (mode !== 'annotate') return;          // navigate mode: never pin
+  if (!wasPrimary || moved > TAP_SLOP) return;  // a drag = orbit, not a pin
+  pick(e);
+});
+
+function pick(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const targets = Object.values(meshes).filter((m) => m.visible);
+  const hits = raycaster.intersectObjects(targets, false);
+  if (!hits.length) return;
+  const h = hits[0];
+
+  // World-space normal (meshes are un-transformed so this equals model space,
+  // but normalise via the matrix to be robust if that ever changes).
+  let n = new THREE.Vector3(0, 0, 1);
+  if (h.face) {
+    n = h.face.normal.clone().transformDirection(h.object.matrixWorld).normalize();
+  }
+  const label = classify(n);
+  addPin({
+    part: h.object.userData.partName || 'unknown',
+    point: [round(h.point.x), round(h.point.y), round(h.point.z)],
+    normal: [round(n.x, 3), round(n.y, 3), round(n.z, 3)],
+    faceIndex: (h.faceIndex != null ? h.faceIndex : -1),
+    label,
+  });
+}
+
+// Classify the dominant face by which axis the normal points along.
+function classify(n) {
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  if (ax >= ay && ax >= az) return (n.x >= 0 ? '+X' : '-X');
+  if (ay >= ax && ay >= az) return (n.y >= 0 ? '+Y' : '-Y');
+  return (n.z >= 0 ? '+Z' : '-Z');
+}
+
+function round(v, d = 2) { const f = Math.pow(10, d); return Math.round(v * f) / f; }
+
+function markerRadius() {
+  // scale marker to scene size so it is visible on small and large parts
+  const box = new THREE.Box3();
+  Object.values(meshes).forEach((m) => { if (m.visible) box.expandByObject(m); });
+  const r = box.isEmpty() ? 100 : box.getBoundingSphere(new THREE.Sphere()).radius;
+  return Math.max(1.5, r * 0.018);
+}
+
+function makeLabelSprite(text, hexColor) {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = hexColor; ctx.beginPath(); ctx.arc(32, 32, 30, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#14161a'; ctx.font = 'bold 34px system-ui, sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(String(text), 32, 34);
+  const tex = new THREE.CanvasTexture(c); tex.anisotropy = 4;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false }));
+  return spr;
+}
+
+function addPin(data) {
+  const id = nextId++;
+  const rad = markerRadius();
+  const marker = new THREE.Mesh(
+    new THREE.SphereGeometry(rad, 16, 12),
+    new THREE.MeshBasicMaterial({ color: USER_COLOR, depthTest: true })
+  );
+  marker.position.set(data.point[0], data.point[1], data.point[2]);
+  markerGroup.add(marker);
+
+  const sprite = makeLabelSprite(id, '#e86b34');
+  sprite.position.set(data.point[0], data.point[1], data.point[2] + rad * 2.2);
+  sprite.scale.set(rad * 3, rad * 3, 1);
+  markerGroup.add(sprite);
+
+  const pin = Object.assign({ id, comment: '', marker, sprite }, data);
+  pins.push(pin);
+  renderList();
+  selectPin(id);
+  markUnsaved();
+  if (!document.body.classList.contains('panel-open')) {
+    toast('Pin #' + id + ' added — open Panel to comment', true);
+  }
+}
+
+function deletePin(id) {
+  const i = pins.findIndex((p) => p.id === id);
+  if (i < 0) return;
+  markerGroup.remove(pins[i].marker, pins[i].sprite);
+  pins[i].marker.geometry.dispose(); pins[i].marker.material.dispose();
+  pins.splice(i, 1);
+  if (selectedId === id) selectedId = null;
+  renderList();
+  markUnsaved();
+}
+
+function selectPin(id) {
+  selectedId = id;
+  pins.forEach((p) => {
+    const on = p.id === id;
+    p.marker.material.color.set(on ? USER_SEL : USER_COLOR);
+  });
+  // frame the selected pin
+  const p = pins.find((x) => x.id === id);
+  if (p) {
+    controls.target.set(p.point[0], p.point[1], p.point[2]);
+    controls.update();
+  }
+  document.querySelectorAll('.pin').forEach((el) => {
+    el.classList.toggle('sel', Number(el.dataset.id) === id);
+  });
+}
+
+const pinsDiv = document.getElementById('pins');
+function renderList() {
+  pinsDiv.innerHTML = '';
+  if (!pins.length) {
+    pinsDiv.innerHTML = '<div class="empty">No pins yet — tap “Add pin”, then tap a visible part.</div>';
+    updateStatus();
+    return;
+  }
+  pins.forEach((p) => {
+    const el = document.createElement('div');
+    el.className = 'pin' + (p.id === selectedId ? ' sel' : '');
+    el.dataset.id = p.id;
+
+    const top = document.createElement('div'); top.className = 'top';
+    const num = document.createElement('div'); num.className = 'num'; num.textContent = p.id;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.innerHTML = '<div class="part">' + p.part + ' · <span class="label">' + p.label + '</span></div>' +
+      '<div class="loc">[' + p.point[0] + ', ' + p.point[1] + ', ' + p.point[2] + '] mm</div>';
+    const del = document.createElement('button'); del.className = 'del'; del.title = 'delete'; del.textContent = '×';
+    del.addEventListener('click', (ev) => { ev.stopPropagation(); deletePin(p.id); });
+    top.append(num, meta, del);
+    top.addEventListener('click', () => selectPin(p.id));
+
+    const ta = document.createElement('textarea');
+    ta.placeholder = 'Comment for pin #' + p.id + '…';
+    ta.value = p.comment;
+    ta.addEventListener('input', () => { p.comment = ta.value; markUnsaved(); });
+    ta.addEventListener('focus', () => selectPin(p.id));
+
+    el.append(top, ta);
+    pinsDiv.appendChild(el);
+  });
+  updateStatus();
+}
+
+const statusEl = document.getElementById('status');
+let dirty = false;
+function markUnsaved() { dirty = true; updateStatus(); }
+function updateStatus() {
+  statusEl.textContent = pins.length + ' pin' + (pins.length === 1 ? '' : 's') +
+    (dirty ? ' · unsaved' : ' · submitted');
+}
+
+document.getElementById('clear').addEventListener('click', () => {
+  if (pins.length && !confirm('Delete all ' + pins.length + ' pins?')) return;
+  [...pins].forEach((p) => deletePin(p.id));
+});
+
+// ---- Agent callouts (agent -> user, read-only, polled) ----
+const agentPins = [];       // rendered markers, so we can dispose on refresh
+let agentSig = null;        // signature of last-rendered agent set (skip no-op rebuilds)
+const agentPinsDiv = document.getElementById('agentPins');
+
+function clearAgentPins() {
+  agentPins.forEach((m) => {
+    agentGroup.remove(m.marker, m.sprite);
+    m.marker.geometry.dispose(); m.marker.material.dispose();
+  });
+  agentPins.length = 0;
+}
+
+function renderAgentPins(list) {
+  clearAgentPins();
+  const rad = markerRadius();
+  list.forEach((a, i) => {
+    const p = a.point || [0, 0, 0];
+    const num = (a.id != null ? a.id : i + 1);
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(rad, 16, 12),
+      new THREE.MeshBasicMaterial({ color: AGENT_COLOR, depthTest: true })
+    );
+    marker.position.set(p[0], p[1], p[2]);
+    agentGroup.add(marker);
+    const sprite = makeLabelSprite(num, '#35c7e0');
+    sprite.position.set(p[0], p[1], p[2] + rad * 2.2);
+    sprite.scale.set(rad * 3, rad * 3, 1);
+    agentGroup.add(sprite);
+    agentPins.push({ marker, sprite, point: p });
+  });
+
+  // sidebar list
+  agentPinsDiv.innerHTML = '';
+  if (!list.length) return;
+  const hdr = document.createElement('div'); hdr.className = 'sec-hdr';
+  hdr.textContent = 'Agent callouts (' + list.length + ')';
+  agentPinsDiv.appendChild(hdr);
+  list.forEach((a, i) => {
+    const num = (a.id != null ? a.id : i + 1);
+    const p = a.point || [0, 0, 0];
+    const el = document.createElement('div'); el.className = 'apin';
+    const top = document.createElement('div'); top.className = 'top';
+    const n = document.createElement('div'); n.className = 'num'; n.textContent = num;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.innerHTML = '<div class="part">' + (a.part || 'unknown') +
+      (a.label ? ' · <span class="label">' + a.label + '</span>' : '') + '</div>' +
+      '<div class="loc">[' + p.map((v) => round(v, 2)).join(', ') + '] mm</div>';
+    top.append(n, meta);
+    const cmt = document.createElement('div'); cmt.className = 'cmt';
+    cmt.textContent = a.comment || '(no comment)';
+    el.append(top, cmt);
+    el.addEventListener('click', () => {
+      controls.target.set(p[0], p[1], p[2]); controls.update();
+    });
+    agentPinsDiv.appendChild(el);
+  });
+}
+
+async function pollAgent() {
+  try {
+    const res = await fetch('/callouts', { cache: 'no-store' });
+    if (!res.ok) return;
+    const j = await res.json();
+    const list = Array.isArray(j) ? j : (j && Array.isArray(j.annotations) ? j.annotations : []);
+    const sig = JSON.stringify(list);
+    if (sig !== agentSig) { agentSig = sig; renderAgentPins(list); }
+  } catch (e) { /* transient; try again next tick */ }
+}
+pollAgent();
+setInterval(pollAgent, 1500);
+
+// legend toggles
+document.getElementById('tgAgent').addEventListener('change', (e) => {
+  agentGroup.visible = e.target.checked;
+  agentPinsDiv.style.display = e.target.checked ? '' : 'none';
+});
+document.getElementById('tgUser').addEventListener('change', (e) => {
+  markerGroup.visible = e.target.checked;
+});
+
+function toast(msg, ok) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = ok ? 'ok' : 'err'; t.style.display = 'block';
+  clearTimeout(toast._t); toast._t = setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+
+document.getElementById('submit').addEventListener('click', async () => {
+  const payload = pins.map((p) => ({
+    id: p.id, part: p.part, label: p.label,
+    point: p.point, normal: p.normal, faceIndex: p.faceIndex,
+    comment: p.comment,
+  }));
+  try {
+    const res = await fetch('/submit', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (res.ok && j.ok) {
+      dirty = false; updateStatus();
+      toast('Submitted ' + j.count + ' annotation' + (j.count === 1 ? '' : 's'), true);
+    } else {
+      toast('Submit failed: ' + (j.error || res.status), false);
+    }
+  } catch (err) {
+    toast('Submit failed: ' + err.message, false);
+  }
+});
+
+// surface a hard failure (e.g. CDN blocked) so it isn't a silent black screen
+setTimeout(() => { if (loaded === 0) showError('No STLs loaded — is three.js reachable (CDN) and are the .stl files in the served directory?'); }, 4000);
+
+(function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+</script>
+</body>
+</html>
