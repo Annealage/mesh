@@ -14,15 +14,17 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 Annealage Mesh is a Python package with no runtime dependencies (the 3D viewer pulls three.js from a CDN in the browser), so it runs pretty much anywhere with Python 3.9+.
 
-Run it without installing anything, via uv:
+Run it straight from GitHub, nothing to install, via uv:
 
-    uvx annealage-mesh ./path/to/stls
+    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/stls
 
-Or install it properly:
+Or install it as a tool:
 
-    uv tool install annealage-mesh
+    uv tool install git+https://github.com/Annealage/mesh
     # or
-    pipx install annealage-mesh
+    pipx install git+https://github.com/Annealage/mesh
+
+Once it's up on PyPI that shortens to `uvx annealage-mesh ./stls` / `pipx install annealage-mesh`.
 
 ## Usage
 

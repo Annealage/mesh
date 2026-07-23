@@ -12,10 +12,10 @@ description: Use when reviewing or iterating on a 3D-print or CAD model (STL fil
 Run it in the background against the directory holding the STL(s) you want reviewed (e.g. a `build/` output directory):
 
 ```
-uvx annealage-mesh <dir> --no-open &
+uvx --from git+https://github.com/Annealage/mesh annealage-mesh <dir> --no-open &
 ```
 
-or, if the package is already installed:
+or, if the package is already installed (or once it's on PyPI, `uvx annealage-mesh <dir>`):
 
 ```
 annealage-mesh <dir> --no-open &
