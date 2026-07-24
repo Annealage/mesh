@@ -240,6 +240,18 @@ async function loadManifest() {
       opacity: 1.0,         // opaque: transparent + depthWrite-off mis-sorts internal faces on concave parts
       show: i === 0,        // first model shown, rest toggled off
     }));
+    // Heading shows exactly what's being reviewed: the file's absolute path for a
+    // single STL, otherwise the served directory. Left-truncate so the filename stays visible.
+    const titleEl = document.querySelector('#topbar .title');
+    const shown = (models.length === 1 ? (models[0].path || models[0].file) : (j.dir || '')) || '';
+    if (titleEl && shown) {
+      titleEl.textContent = shown;
+      titleEl.title = shown;
+      Object.assign(titleEl.style, {
+        textTransform: 'none', overflow: 'hidden', textOverflow: 'ellipsis',
+        maxWidth: '58vw', direction: 'rtl', textAlign: 'left',
+      });
+    }
     buildPartsUI();
     PARTS.forEach(loadPart);
   } catch (e) {

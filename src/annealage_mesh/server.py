@@ -97,15 +97,14 @@ def make_handler(serve_dir):
                 self._send(200, VIEWER_HTML.read_bytes(), CONTENT_TYPES[".html"])
                 return
             if path == "/manifest":
-                models = sorted(
-                    (
-                        {"name": p.stem, "file": p.name}
-                        for p in serve_dir.iterdir()
-                        if p.is_file() and p.suffix.lower() == ".stl"
-                    ),
-                    key=lambda m: m["name"],
+                stls = sorted(
+                    (p for p in serve_dir.iterdir()
+                     if p.is_file() and p.suffix.lower() == ".stl"),
+                    key=lambda p: p.name,
                 )
-                self._send(200, json.dumps({"models": models}), CONTENT_TYPES[".json"])
+                models = [{"name": p.stem, "file": p.name, "path": str(p)} for p in stls]
+                self._send(200, json.dumps({"dir": str(serve_dir), "models": models}),
+                           CONTENT_TYPES[".json"])
                 return
             if path in ("/callouts", "/callouts.json"):
                 # Agent-authored callouts. The agent writes this file directly;
