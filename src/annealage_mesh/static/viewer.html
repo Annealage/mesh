@@ -59,6 +59,16 @@
   #parts label .sw { width: 12px; height: 12px; border-radius: 2px; flex: none; border: 1px solid #0004; }
   #parts input[type=checkbox] { accent-color: #e86b34; width: 16px; height: 16px; }
 
+  #measure-sec { flex: none; padding: 10px 12px; border-bottom: 1px solid #2c313a; }
+  #measure-sec .mrow { display: flex; gap: 6px; }
+  #measure-sec select {
+    flex: 1; min-width: 0; background: #1b1e24; color: #d6d8dc; border: 1px solid #2f343d;
+    border-radius: 5px; padding: 6px 7px; font: inherit;
+  }
+  #measure-sec .mresult { margin-top: 8px; font-size: 12px; color: #cde; font-variant-numeric: tabular-nums; }
+  #measure-sec .mresult .len { font-weight: 700; color: #ffd24a; font-size: 14px; margin-top: 2px; }
+  #measure-sec .mresult .empty { color: #667; }
+
   .agentsec { flex: none; max-height: 38%; overflow-y: auto; padding: 10px 10px 0; }
   .agentsec:empty { display: none; }
   .agentsec .sec-hdr { color: #6cc; }
@@ -133,6 +143,14 @@
     <div class="sec-hdr">Parts</div>
     <div id="parts"></div>
   </div>
+  <div id="measure-sec">
+    <div class="sec-hdr">Measure</div>
+    <div class="mrow">
+      <select id="mA"><option value="">Pin A…</option></select>
+      <select id="mB"><option value="">Pin B…</option></select>
+    </div>
+    <div id="mResult" class="mresult"><span class="empty">Pick two pins to measure.</span></div>
+  </div>
   <div id="agentPins" class="agentsec"></div>
   <div id="pins"><div class="empty">No pins yet — tap “Add pin”, then tap a visible part.</div></div>
   <footer>
@@ -184,7 +202,17 @@ const fill = new THREE.DirectionalLight(0xffffff, 0.6); fill.position.set(-1, -0
 const grid = new THREE.GridHelper(400, 40, 0x3a3f47, 0x282c32);
 grid.rotation.x = Math.PI / 2;                // grid on XY (z=0)
 scene.add(grid);
-scene.add(new THREE.AxesHelper(60));          // X red, Y green, Z blue
+const AXLEN = 60;
+scene.add(new THREE.AxesHelper(AXLEN));        // X red, Y green, Z blue
+// labelled axis ends (makeLabelSprite is hoisted). Colours match the AxesHelper.
+[['X', '#ff4d4d', [AXLEN + 10, 0, 0]],
+ ['Y', '#4dd24d', [0, AXLEN + 10, 0]],
+ ['Z', '#4d8cff', [0, 0, AXLEN + 10]]].forEach(([t, col, pos]) => {
+  const s = makeLabelSprite(t, col);
+  s.position.set(pos[0], pos[1], pos[2]);
+  s.scale.set(14, 14, 1);
+  scene.add(s);
+});
 
 const loader = new STLLoader();
 const meshes = {};                            // part name -> THREE.Mesh
@@ -249,7 +277,14 @@ async function loadManifest() {
       titleEl.title = shown;
       Object.assign(titleEl.style, {
         textTransform: 'none', overflow: 'hidden', textOverflow: 'ellipsis',
-        maxWidth: '58vw', direction: 'rtl', textAlign: 'left',
+        maxWidth: '58vw', direction: 'rtl', textAlign: 'left', cursor: 'context-menu',
+      });
+      // right-click copies the shown path instead of opening the browser menu
+      titleEl.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        navigator.clipboard.writeText(shown)
+          .then(() => toast('Copied path to clipboard', true))
+          .catch((err) => toast('Copy failed: ' + err.message, false));
       });
     }
     buildPartsUI();
@@ -324,6 +359,7 @@ setPanel(matchMedia('(min-width: 900px)').matches);
 // ============================ ANNOTATION LOGIC ============================
 
 const pins = [];            // user pins: { id, part, point:[x,y,z], normal:[x,y,z], faceIndex, label, comment, marker, sprite }
+let agentList = [];         // latest agent-callout list, kept for the measure dropdowns
 let nextId = 1;
 let selectedId = null;
 const raycaster = new THREE.Raycaster();
@@ -404,6 +440,36 @@ function makeLabelSprite(text, hexColor) {
   return spr;
 }
 
+// pill-shaped text tag (vs. makeLabelSprite's round number badge) - for longer strings like a
+// measurement readout. userData.aspect (width/height of the drawn canvas) lets the caller scale
+// the sprite to a non-square size without distorting the text.
+function makeTagSprite(text, hexColor) {
+  const font = 'bold 40px system-ui, sans-serif';
+  const probe = document.createElement('canvas').getContext('2d');
+  probe.font = font;
+  const w = Math.ceil(probe.measureText(text).width) + 28;
+  const c = document.createElement('canvas'); c.width = w; c.height = 64;
+  const ctx = c.getContext('2d');
+  const pill = (inset) => {
+    const r = 14 - inset, x = inset, y = inset, ww = w - inset * 2, hh = 64 - inset * 2;
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + ww, y, x + ww, y + hh, r);
+    ctx.arcTo(x + ww, y + hh, x, y + hh, r);
+    ctx.arcTo(x, y + hh, x, y, r);
+    ctx.arcTo(x, y, x + ww, y, r);
+    ctx.closePath();
+  };
+  ctx.fillStyle = '#14161ae0'; pill(0); ctx.fill();
+  ctx.strokeStyle = hexColor; ctx.lineWidth = 3; pill(1.5); ctx.stroke();
+  ctx.fillStyle = hexColor; ctx.font = font;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, w / 2, 34);
+  const tex2 = new THREE.CanvasTexture(c); tex2.anisotropy = 4;
+  const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex2, depthTest: false, depthWrite: false }));
+  spr.userData.aspect = w / 64;
+  return spr;
+}
+
 function addPin(data) {
   const id = nextId++;
   const rad = markerRadius();
@@ -463,6 +529,7 @@ function renderList() {
   if (!pins.length) {
     pinsDiv.innerHTML = '<div class="empty">No pins yet — tap “Add pin”, then tap a visible part.</div>';
     updateStatus();
+    refreshMeasureOptions();
     return;
   }
   pins.forEach((p) => {
@@ -490,6 +557,7 @@ function renderList() {
     pinsDiv.appendChild(el);
   });
   updateStatus();
+  refreshMeasureOptions();
 }
 
 const statusEl = document.getElementById('status');
@@ -519,6 +587,8 @@ function clearAgentPins() {
 }
 
 function renderAgentPins(list) {
+  agentList = list;           // kept for the measure dropdowns
+  refreshMeasureOptions();
   clearAgentPins();
   const rad = markerRadius();
   list.forEach((a, i) => {
@@ -576,6 +646,72 @@ async function pollAgent() {
 }
 pollAgent();
 setInterval(pollAgent, 1500);
+
+// ---- Measure: straight-line distance between any two placed pins (user or agent) ----
+const mA = document.getElementById('mA');
+const mB = document.getElementById('mB');
+const mResult = document.getElementById('mResult');
+const measureGroup = new THREE.Group();
+scene.add(measureGroup);
+let measureLine = null, measureLabel = null;
+
+function measurables() {
+  const list = [];
+  pins.forEach((p) => list.push({ key: 'u' + p.id, label: 'U' + p.id + ' · ' + p.part, point: p.point }));
+  agentList.forEach((a, i) => {
+    const num = a.id != null ? a.id : i + 1;
+    list.push({ key: 'a' + num, label: 'A' + num + ' · ' + (a.part || 'unknown'), point: a.point || [0, 0, 0] });
+  });
+  return list;
+}
+
+function refreshMeasureOptions() {
+  const items = measurables();
+  [mA, mB].forEach((sel) => {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">—</option>' +
+      items.map((it) => '<option value="' + it.key + '">' + it.label + '</option>').join('');
+    sel.value = items.some((it) => it.key === prev) ? prev : '';
+  });
+  updateMeasure();
+}
+
+function clearMeasureLine() {
+  if (measureLine) { measureGroup.remove(measureLine); measureLine.geometry.dispose(); measureLine.material.dispose(); measureLine = null; }
+  if (measureLabel) { measureGroup.remove(measureLabel); measureLabel = null; }
+}
+
+function updateMeasure() {
+  const items = measurables();
+  const a = items.find((it) => it.key === mA.value);
+  const b = items.find((it) => it.key === mB.value);
+  clearMeasureLine();
+  if (!a || !b || a.key === b.key) {
+    mResult.innerHTML = '<span class="empty">Pick two pins to measure.</span>';
+    return;
+  }
+  const [x0, y0, z0] = a.point, [x1, y1, z1] = b.point;
+  const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
+  const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  mResult.innerHTML =
+    '<div>&Delta;X ' + round(dx) + ' &middot; &Delta;Y ' + round(dy) + ' &middot; &Delta;Z ' + round(dz) + ' mm</div>' +
+    '<div class="len">' + round(dist) + ' mm</div>';
+
+  const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)]);
+  const mat = new THREE.LineDashedMaterial({ color: 0xffd24a, dashSize: 3, gapSize: 2, depthTest: false });
+  measureLine = new THREE.Line(geo, mat);
+  measureLine.computeLineDistances();
+  measureGroup.add(measureLine);
+
+  const rad = markerRadius();
+  measureLabel = makeTagSprite(round(dist) + ' mm', '#ffd24a');
+  measureLabel.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2 + rad * 1.5);
+  measureLabel.scale.set(rad * 3 * measureLabel.userData.aspect, rad * 3, 1);
+  measureGroup.add(measureLabel);
+}
+
+mA.addEventListener('change', updateMeasure);
+mB.addEventListener('change', updateMeasure);
 
 // legend toggles
 document.getElementById('tgAgent').addEventListener('change', (e) => {

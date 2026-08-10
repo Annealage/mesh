@@ -39,6 +39,8 @@ It starts a local server, prints the URLs, and opens your browser at http://loca
 - Drag to orbit, scroll / pinch to zoom, right-drag or two-finger to pan.
 - Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.
 - Hit Submit. Your pins get written to `mesh-comments.json` in the served directory.
+- Need a distance between two features? Pick any two placed pins (yours or an agent's) in the
+  "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, shown as a line between them in the view.
 
 It works on a phone too, the panel folds away behind a button up top and navigation is all touch (one finger orbits, two fingers pan / zoom).
 
