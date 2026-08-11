@@ -1,0 +1,374 @@
+# Annealage Mesh: in-viewer agent chat, architecture and build plan
+
+Status: plan, not yet implemented. Branch `agent-chat`.
+
+This document is the contract for the re-architecture. It is written to be sufficient for an implementer who has this file and the repo and nothing else. Where a claim about `claude-agent-sdk` matters, it is marked VERIFIED and the verification is stated, because several of these facts are counter-intuitive and one of them contradicts the SDK's own docstrings.
+
+## 1. Goal
+
+Today Mesh is a static-file server plus two JSON side-channels. A human clicks an STL in a browser to drop pin-comments; a separately-running agent reads and writes files on disk to exchange located feedback.
+
+The target: `annealage-mesh` run in a folder scaffolds a project, launches the UI, and behaves like Claude Code in that folder, except the chat interface is a second pane beside the 3D viewer. Mesh operations are exposed to the model as tools so it can drive the viewer directly. The chat accepts image uploads and offers a sketch overlay on the 3D view. Transcript, images and models live in the project folder, which uses git by default when git is installed.
+
+## 2. Verified SDK facts that constrain the design
+
+All verified against `claude-agent-sdk` 0.2.135 with `claude` CLI 2.1.227, by source reading plus live probes. Do not re-derive these; do not trust the SDK docstrings over them.
+
+1. **The model-visible name of an in-process MCP tool is `mcp__<server>__<tool>`.** VERIFIED by probe: a tool registered as `get_model_facts` on server `mesh` arrived as `ToolUseBlock(name='mcp__mesh__get_model_facts')`. The `create_sdk_mcp_server` docstring example showing `allowed_tools=["add", "multiply"]` is misleading. Every allow-list entry, deny-list entry and hook matcher must use the namespaced form or it silently never matches.
+
+2. **Listing a tool in `allowed_tools` bypasses `can_use_tool` entirely.** VERIFIED by probe, which emitted `CanUseToolShadowedWarning: can_use_tool will not be invoked for: Read. An allowed_tools entry that allows a whole tool auto-approves it before the callback is consulted.` So `allowed_tools` is a list of decisions to never ask the human. Allow rules in settings files shadow the callback too and are invisible to the SDK, which is one reason to control `setting_sources` deliberately.
+
+3. **A permission callback may block on a browser round-trip without deadlocking.** VERIFIED by source: `_internal/query.py:273` is the single reader loop; on a `control_request` (`:297`) it calls `_spawn_control_request_handler` (`:262`) which does `spawn_task(self._handle_control_request(...))`, and `can_use_tool` is awaited inside that spawned task (`:453`). The same applies to in-process MCP tool invocations, which arrive as control requests on the same path. This is what makes both human-in-the-loop approval and browser-round-trip tools possible at all.
+
+4. **The SDK's own correlation pattern is worth mirroring.** `_internal/query.py:131` keeps `pending_control_responses: dict[str, anyio.Event]`; `_send_control_request` (`:546`) registers an event by request id and awaits it, cleans up in `finally` (`:581`, `:589`), and sweeps all pending events on shutdown (`:375`). The browser command channel should be shaped the same way.
+
+5. **Outbound user turns are written verbatim.** `client.py:216-224`: given an `AsyncIterable[dict]`, `query()` writes each dict to the transport as one JSON line, injecting only `session_id`. Nothing is validated or transformed, so any content-block shape the CLI accepts can be sent.
+
+6. **Inline base64 image blocks reach the model.** VERIFIED by probe: a user turn whose content was `[{"type":"image","source":{"type":"base64","media_type":"image/png","data":...}}, {"type":"text",...}]` produced a correct description of the image. Two caveats learned by failure: put the image block *before* the text that refers to it, and do not bury an image in a turn that also asks for unrelated tool work, or the model ignores the attachment and goes hunting the filesystem.
+
+7. **Unknown inbound content blocks are silently dropped.** `_internal/message_parser.py:95-113` and `:150-170` match on `block["type"]` with cases for `text`, `thinking`, `tool_use`, `tool_result` and no default arm. An image block in an echoed user message is discarded with no error. Consequence: delivery is not observable, and the chat pane must render sent images from its own local record, never from the echo.
+
+8. **A tool result may return an image.** `__init__.py:469-484` accepts an `image` item in a handler's returned `content` and builds `mcp.types.ImageContent`; `_internal/query.py:697-702` serialises it back with `type`, `data`, `mimeType`. So `return {"content": [{"type": "image", "data": b64, "mimeType": "image/png"}]}` is valid and a viewport capture can go to the model as a real image with no file write and no second round-trip.
+
+9. **The client is loop-affine.** `client.py:59-65`: an instance cannot be used across async runtime contexts and holds a persistent anyio task group from `connect()` to `disconnect()`. `_internal/_task_compat.py` uses plain `loop.create_task` under asyncio, so hosting the client inside our own `asyncio.run()` is supported and needs no anyio dependency of our own.
+
+10. **The wheel bundles a `claude` binary and prefers it over PATH.** `_internal/transport/subprocess_cli.py:247` `_find_cli()` calls `_find_bundled_cli()` first and returns immediately on success, only then trying `shutil.which("claude")` and a candidate path list. `_bundled/claude` is 304,282,632 bytes. Wheel tag is `py3-none-manylinux_2_17_x86_64`, so wheels are platform-specific. PyPI artifacts for 0.2.135: macOS arm64 82.3 MB, macOS x86_64 87.5 MB, manylinux aarch64 92.3 MB, manylinux x86_64 93.4 MB, win_amd64 92.4 MB, sdist 0.3 MB. `options.cli_path` overrides discovery entirely.
+
+11. **`Transport` is a six-method ABC and is injectable.** `connect`, `close`, `write`, `read_messages`, `end_input`, `is_ready`, and `ClaudeSDKClient(options=..., transport=...)` accepts an instance. A fake drives the whole client with no subprocess, no binary and no network. It carries a warning that it is an internal API exposed for custom transports, which is why the dependency gets an upper pin.
+
+12. **Token-level streaming requires `include_partial_messages=True`**, after which `StreamEvent` carries the deltas. Without it only whole assistant messages arrive, which is not acceptable for a chat pane.
+
+13. **`setting_sources` defaults to `None`, which loads no settings files at all**, so a project `CLAUDE.md` is not read unless `"project"` is listed.
+
+Observed cost: roughly $0.02 to $0.06 per trivial turn on `claude-haiku-4-5`. Per-turn cost is user-visible and belongs in the UI.
+
+## 3. Architecture
+
+### 3.1 Process topology
+
+One `annealage-mesh` process running one asyncio event loop, created by `asyncio.run()` from `cli.main()`. On that loop: the HTTP and WebSocket server, the `ClaudeSDKClient`, every in-process MCP tool handler, the `can_use_tool` broker, the event log writer, and the callouts file watcher. The only other process we own is the `claude` child the SDK spawns itself. Total at runtime: two processes plus the browser.
+
+One loop is chosen because of fact 3: tool handlers and permission callbacks already run as concurrent tasks off the SDK's read loop, so a handler that awaits a browser reply is one `asyncio.Future` resolved by the WebSocket receive task. No locks, no `run_coroutine_threadsafe`, no second cancellation model, no thread-safety audit of the pin store.
+
+Rejected: keeping `ThreadingHTTPServer` and bridging to a dedicated SDK loop thread. It is the smaller diff and the larger design, because every new object straddles the boundary (the pending-command table is written by a tool coroutine and resolved by a handler thread; the subscriber set is written by threads and read by the loop; `interrupt()` needs `run_coroutine_threadsafe`), which means two concurrency models and a permanent lock discipline to save about 200 lines.
+
+Rejected: an agent sidecar process. The genuinely risky child, the `claude` CLI, is already isolated by the SDK, and a sidecar adds a second hand-written IPC protocol beneath the browser protocol we must write anyway. The `AgentSession` protocol in 3.6 is the seam to slide one behind later if isolation is ever needed.
+
+Blocking file IO no longer gets a free thread. A 40 MB STL read on the loop stalls token streaming, so static bodies are read through `loop.run_in_executor` and git and scaffold work uses `asyncio.create_subprocess_exec`. This is a correctness trap the threading server hid and it will regress silently if a later change adds a plain `read_bytes()`.
+
+### 3.2 HTTP layer: microdot
+
+`microdot>=2.6,<3` as a base dependency. Pure Python, zero transitive dependencies, and it supplies the three things the standard library does not: an asyncio HTTP/1.1 server designed to be awaited inside an existing loop, a server-side WebSocket implementation with frame encode and decode, and an in-process `TestClient` that dispatches both HTTP requests and WebSocket sessions without opening a socket. It is also already the HTTP layer in Annealage Canvas, which keeps one framework in the product family.
+
+What it buys, concretely: request parsing, keepalive, routing, the WebSocket handshake and framing, streaming responses, and socket-free tests. Hand-rolling that is 600 to 900 lines of protocol code with a long tail of bugs that present as "the chat pane froze once", and none of it is about STL review.
+
+Rejected: starlette plus uvicorn, which is the strongest ecosystem answer but costs five or six base packages for a loopback tool and buys ASGI portability we never exercise. Rejected: aiohttp, a six-package compiled tree against microdot's zero. Rejected: hand-rolled asyncio HTTP plus SSE, which was a coherent position only while WebSocket framing was assumed to be ours to write.
+
+Known wart to document in code: microdot's body limits are class attributes and therefore process-global (default 16 KiB). `app.py` raises `Request.max_content_length` for uploads and the upload route streams to disk via `req.stream` rather than buffering, so the raised limit is not a memory amplifier on other routes.
+
+### 3.3 Browser transport: one WebSocket, versioned frames
+
+A single WebSocket at `/ws` carries all bidirectional traffic. HTTP keeps the byte-shaped and history-shaped work: model files, image assets, uploads, transcript history pages, and the unchanged `/callouts` and `/submit` routes.
+
+WebSocket rather than SSE plus POST because the load-bearing case is server-initiated requests that need replies. `get_camera`, `get_visibility`, `capture_view` and `pick_nearest_pin` are all round-trips into the page. SSE gives only the down-leg, so replies arrive as separate POSTs, which spreads correlation ids across two transports with two connection states and no ordering guarantee between a command and a racing reply. One socket gives one ordering guarantee, one liveness signal, one reconnect story and one place to enforce auth. What we give up is `EventSource`'s free reconnect, which is about 40 lines of backoff, and we need explicit sequence-based resync regardless.
+
+Every frame is JSON carrying `{"v": 1, "type": ...}`. `PROTOCOL_VERSION` is a constant in `protocol.py` and the server closes with code 4400 on mismatch, which is how a stale cached page is separated from a newer server.
+
+Server to browser:
+
+```json
+{"v":1,"type":"hello","seq":0,"session":{"id":"...","sdk_session_id":"...","cwd":"...","agent":"connecting|ready|unavailable"},"protocol":1}
+{"v":1,"type":"event","seq":128,"event":{"kind":"text_delta","turn":7,"text":"..."}}
+{"v":1,"type":"event","seq":129,"event":{"kind":"tool_use","turn":7,"tool_use_id":"tu_1","name":"mcp__mesh__set_view","input":{}}}
+{"v":1,"type":"event","seq":130,"event":{"kind":"tool_result","tool_use_id":"tu_1","is_error":false,"text":"..."}}
+{"v":1,"type":"event","seq":131,"event":{"kind":"permission_request","request_id":"pr_3","tool":"Bash","input":{},"suggestions":[]}}
+{"v":1,"type":"event","seq":140,"event":{"kind":"turn_end","turn":7,"stop_reason":"end_turn","cost_usd":0.031}}
+{"v":1,"type":"event","seq":141,"event":{"kind":"callouts_changed"}}
+{"v":1,"type":"call","id":"c_12","method":"viewer.capture_view","params":{"width":1280,"include_sketch":false}}
+{"v":1,"type":"ping","t":1750000000}
+```
+
+Browser to server:
+
+```json
+{"v":1,"type":"hello","token":"...","last_seq":128,"viewer":{"tab_id":"...","w":1600,"h":900}}
+{"v":1,"type":"turn","blocks":[{"type":"text","text":"why is this wall thin?"},{"type":"image_path","path":"images/2026-08-12T101500-sketch.png"}]}
+{"v":1,"type":"permission","request_id":"pr_3","decision":"allow|allow_always|deny","message":""}
+{"v":1,"type":"result","id":"c_12","result":{"png":"data:image/png;base64,...","camera":{}}}
+{"v":1,"type":"error","id":"c_12","error":{"code":"no_canvas","message":"..."}}
+{"v":1,"type":"interrupt"}
+{"v":1,"type":"state","state":{"camera":{},"visibility":{"lid":true},"selection":3,"mode":"annotate"}}
+```
+
+Correlation and timeouts, mirroring fact 4: `ViewerBus.call(method, params, timeout=10.0)` allocates an id, registers an `asyncio.Future` in a pending map, sends the `call` frame, and awaits with `asyncio.wait_for`. Cleanup happens in `finally`. When a connection closes, every pending future targeted at it is failed immediately rather than left to time out, so the model gets an actionable error instead of a ten-second stall. A late reply for an unknown id is logged and dropped. Domain errors come back as a `type:"error"` frame with a code, which the handler turns into `is_error: true` with the message; transport failures surface distinctly as timeout or disconnect text.
+
+Two tabs: all connected viewers are broadcast subscribers of the same session, so both show the same conversation. For `call` frames exactly one viewer is primary, elected by most recent interaction, with a `viewer_primary` event broadcast on change so the other tab can show that it is not driving. Broadcast-and-take-first-reply is wrong because two tabs have different camera poses and `get_camera` would be a coin flip. With zero viewers connected, viewer tools fail fast with `is_error: true` and the text "no viewer connected; ask the human to open <url>", because there is no state to query and a silent hang teaches the model nothing.
+
+Backpressure: per-connection outbound `asyncio.Queue(maxsize=256)` drained by one writer task. `include_partial_messages` makes token deltas the fastest producer, so the writer coalesces adjacent `text_delta` events for one turn and flushes at most every 30 ms. On overflow, drop `ping` first, then collapse pending deltas; never drop `call`, `permission_request` or `turn_end`, and if still saturated close with 1013 so the client reconnects and replays from `seq`. The policy lives in one place and is testable with a fake slow writer.
+
+### 3.4 Event log, reload and resume
+
+Every server-to-browser event carries a monotonic `seq`. `EventLog` is an append-only `events.jsonl` plus a bounded in-memory ring of 500 events. On reconnect the client sends `hello{last_seq}` and the server replays from the ring then goes live; anything older is paged over HTTP at `GET /session/<sid>/events?from=N`. Liveness on the socket, history as an HTTP resource, which makes "what did the agent say an hour ago" curl-able and cacheable rather than a replay feature of the socket.
+
+The turn is owned by the session, not the socket. The SDK pump keeps consuming and appending regardless of whether any browser is attached, so browser reload mid-turn, browser closed and reopened, and process restart are all the same mechanism. Unanswered permission requests are live futures in the broker and are re-emitted on replay, so a reload mid-prompt re-shows the prompt.
+
+Restart resumes by default. `.mesh/state.json` holds our session id and the SDK session id; startup passes `ClaudeAgentOptions(resume=sdk_session_id)`. `--new-session` starts clean and `--resume <sid>` picks one. We store the id ourselves rather than using `continue_conversation`, because that flag is implicitly cwd-scoped and we want the mapping visible on disk. If resume fails, fall back to a new session and emit `session_reset` with the reason rather than failing startup.
+
+Ctrl-C: `SIGINT` sets a shutdown event, then `await client.interrupt()`, wait up to 2 s for a terminal `ResultMessage`, fail in-flight viewer futures as tool errors, fsync the event log, close sockets with 1001, `await client.disconnect()` so the `claude` child is reaped, release the lock, exit 0. A second Ctrl-C inside that window hard-exits 130. Windows falls back from `loop.add_signal_handler` to `signal.signal` plus `call_soon_threadsafe`.
+
+Second instance in the same folder is refused. `.mesh/lock` is created `O_CREAT|O_EXCL` holding pid, port and token. If the pid is live, print the running URL and exit 3; if dead, log and reclaim. Two SDK clients resuming one session id and two writers on one `events.jsonl` is corruption, so this is a hard failure. Viewer-only mode does not lock, preserving today's ability to run several viewers.
+
+**Agent health never gates viewer health.** The HTTP server starts first and independently. A missing or unauthenticated CLI, or a dead child, becomes an `agent_error` event carrying captured stderr and remediation text plus a Retry button, while the viewer, pins and `/submit` keep working.
+
+### 3.5 CLI surface and back-compat
+
+The published MIT skill and the on-disk file contract survive unchanged. `mesh-comments.json`, `mesh-comments.log` and `mesh-callouts.json` stay at the project root with exactly the shapes `SKILL.md` documents, and new directories sit alongside them. No file gets two writers and the skill needs no edit beyond noting that a chat pane may also be present.
+
+```
+annealage-mesh [DIR]              agent mode: scaffold if needed, chat pane plus viewer. Default DIR is "."
+annealage-mesh view [DIR]         viewer only, exactly today's behaviour, no SDK import, no scaffolding, no git
+annealage-mesh init [DIR]         scaffold plus .gitignore plus git init, idempotent, no server
+annealage-mesh doctor [DIR]       print python, claude CLI path and version, git, port, lock, extras; no server
+```
+
+Flags: `--port` (8765), `--host` (**default changes from `0.0.0.0` to `127.0.0.1`**), `--no-open`, `--version`, `--model`, `--permission-mode`, `--resume SID`, `--new-session`, `--token`, `--no-git`, `--force`, `--allow-remote`, and `--no-agent` as an alias for `view`.
+
+Bare invocation is agent mode because that is the headline feature and the user's stated intent for running the tool in a folder. The compatibility risk is the skill's documented `annealage-mesh <dir> --no-open`, which would now scaffold and start an agent inside an existing agent session. Mitigation: when `CLAUDECODE` is set in the environment the default flips to viewer-only with a printed note, so a skill-driven invocation never spawns a nested agent, and `view` pins it explicitly. SKILL.md is updated in the same release to pass `view` explicitly rather than relying on detection.
+
+`--host` default change: today the server binds all interfaces and serves any file under the directory once past the traversal guard (`server.py:75-85`, `119-124`). That is already too generous for an STL folder and is indefensible for a git-tracked project root with an agent in it. This is a deliberate, user-visible regression for anyone reviewing a model from a phone on the LAN, and it needs release-note treatment; `--host 0.0.0.0 --allow-remote` restores it with a warning.
+
+### 3.6 Module layout
+
+```
+src/annealage_mesh/
+  __init__.py          5    version
+  __main__.py          5    python -m annealage_mesh
+  cli.py             230    argparse, subcommands, mode dispatch, lock, banner, signal wiring
+  paths.py           130    ProjectPaths: layout resolution, legacy vs project, serve allowlist
+  project.py         200    scaffold, .gitignore, git init and first commit, config
+  app.py             190    build microdot app, supervise root tasks, ordered shutdown, wiring
+  protocol.py        180    frame construction and validation, PROTOCOL_VERSION, error codes
+  viewers.py         230    ViewerRegistry: connections, primary election, broadcast, call plus pending futures, backpressure
+  stl.py             130    dependency-free binary and ascii STL header, bbox, triangle count
+  http/
+    routes_viewer.py 180    GET /, /manifest, /model/<rel>, /asset/<rel>, /callouts, POST /submit
+    routes_chat.py   150    GET /session/<sid>, /session/<sid>/events, POST /upload, POST /interrupt
+    ws.py            260    /ws: origin and token check, hello and replay, dispatch, writer task, ping
+  session/
+    base.py          130    AgentSession Protocol plus AgentEvent dataclasses. The fake-able seam
+    sdk.py           330    ClaudeSDKClient impl: options build, message pump, interrupt, resume, stderr capture
+    fake.py          150    scripted session for tests
+    events.py        160    EventLog: seq, append-only jsonl, ring, replay, transcript.md render
+    permissions.py   170    can_use_tool broker: futures, remembered rules, PermissionUpdate mapping
+  tools/
+    registry.py      160    @tool definitions, create_sdk_mcp_server
+    viewer_tools.py  330    camera, visibility, selection, pins, measure, capture: all via ViewerBus.call
+    review_tools.py  190    read comments, write callouts, snapshot
+    model_tools.py   130    list_models, model_info
+```
+
+Roughly 3,150 Python lines from 304 today, plus about 1,200 of tests. That is a real maintenance commitment for one maintainer and the module boundaries are chosen so it can be reviewed in pieces.
+
+`server.py` is deleted. Its manifest scan and submit writer move to `project.py`, its safe-path logic to `paths.py`.
+
+Two protocols carry the testability of the whole design:
+
+```python
+class AgentSession(Protocol):
+    state: Literal["idle", "connecting", "ready", "busy", "error"]
+    async def start(self) -> None: ...
+    async def send_turn(self, blocks: list[dict]) -> None: ...
+    async def interrupt(self) -> None: ...
+    def events(self) -> AsyncIterator[AgentEvent]: ...
+    async def close(self) -> None: ...
+```
+
+and a `ViewerBus` protocol (`async def call(method, params, timeout) -> dict`, `def broadcast(event)`) that every tool handler depends on instead of the concrete registry. So HTTP and WebSocket tests run against `session/fake.py` with no `claude` binary and no 93 MB dependency, tool tests assert exact frames against a fake bus, and `session/sdk.py` has its own tests driving the real `ClaudeSDKClient` through a fake `Transport` (fact 11).
+
+### 3.7 Front end
+
+`viewer.html` becomes a shell of about 120 lines of markup plus `<link>` and `<script type="module">`. The front end splits into native ES modules with relative imports, which every target browser loads directly, so the no-build-step property is preserved with no bundler, no transpiler and no npm in CI. What is given up is "one file", which at roughly 2,900 lines of two-pane UI plus an event bus plus a command dispatcher is a liability: every agent-driven edit would rewrite a giant file and diffs would be unreviewable.
+
+```
+static/
+  viewer.html      120   shell markup
+  css/app.css      260   panes, mobile tabs, cards, chat
+  js/main.js       120   bootstrap and wiring
+  js/store.js      180   single mutable app state plus subscribers
+  js/ws.js         180   connect, backoff, seq and replay, request and response dispatch
+  js/commands.js   260   browser side of the viewer-control protocol: the method table
+  js/three-scene.js 280  renderer, camera, lights, axes, ResizeObserver sizing
+  js/models.js     180   manifest load, part list, visibility
+  js/pins.js       300   user pins and agent callouts, markers, sprites, picking
+  js/measure.js    160
+  js/layout.js     140   pane split, mobile tab arbitration
+  js/chat.js       320   transcript render, streaming deltas, uploads, permission cards
+  js/sketch.js     160   overlay canvas, composite, upload
+  js/vendor/       three.module.js, OrbitControls.js, STLLoader.js, VERSIONS.json
+```
+
+`js/store.js` is the fix for two real defects the code audit found: per-part visibility is currently bound one-directionally (`viewer.html:250`), so a tool that hides a part cannot update the checkbox, and `agentList` would have two writers once callouts arrive by push as well as by file (`viewer.html:589-591`, `637-648`). Putting all scene-affecting state behind one writer with subscribers makes both the checkbox and the mesh `visible` flag readers, and removes the race by construction.
+
+Layout: `#app` loses `position: fixed; inset: 0` and becomes a flex child, and the renderer is sized from its container box via `ResizeObserver` rather than `innerWidth`/`innerHeight`, because opening the chat pane changes the canvas box without firing a window resize (`viewer.html:11-12`, `185-186`, `318-321`). Wide viewports get three columns; at or below 900 px the side and chat panels become tabs over the canvas, extending the existing media-query precedent rather than arbitrating two independent overlay drawers.
+
+three.js 0.160.0 is vendored and the jsdelivr importmap (`viewer.html:113-118`) is dropped. The CDN is already a known single point of failure, which is why the four-second blank-screen watchdog at `viewer.html:755` exists, and it matters more once a model scripts a viewer with nobody watching. Cost is about 700 KB in the wheel, a refresh script recording version and hash, and a `REUSE.toml` entry for three.js's MIT licence.
+
+Static serving changes shape. The general "serve anything under the directory" fallback is deleted. Viewer assets are served from the package, never the project. Model files are served by `GET /model/<rel>` resolved through the manifest index, so only paths the scan actually listed are reachable, and images by `GET /asset/<rel>` restricted to `images/`. `GET /<name>.stl` stays as an alias into the manifest index for compatibility. Manifest scanning becomes recursive with dotdir, `.git` and `.mesh` exclusion and a file-count cap.
+
+### 3.8 Project layout and git
+
+```
+<project>/
+  models/                 STL and 3MF inputs and agent-generated output
+  images/                 uploads, sketch composites, captured views, git-tracked
+  mesh-comments.json      unchanged contract, project root
+  mesh-comments.log       unchanged contract, project root
+  mesh-callouts.json      unchanged contract, project root
+  review/transcript.md    rendered transcript, rewritten at each turn end, git-tracked
+  CLAUDE.md               generated stub, kept if present, never clobbered
+  .gitignore              generated
+  .mesh/config.toml       port, host, model, permission mode, project name
+  .mesh/state.json        session ids, viewer prefs
+  .mesh/sessions/<sid>/events.jsonl   canonical event log, append-only, untracked
+  .mesh/lock
+```
+
+The jsonl log is untracked because it churns per token delta. The human-readable `review/transcript.md` is tracked, which satisfies "transcript written into the project folder" with an artifact that diffs usefully.
+
+Because `setting_sources` defaults to loading nothing (fact 13), the generated `CLAUDE.md` is only read if we pass `setting_sources=["user", "project", "local"]`, which we do, because "behaves like Claude Code run in that folder" requires it. The file is generated once if absent and never rewritten.
+
+Git: `git init` runs when git is installed and the folder is not already a repo or inside one, with one scaffold commit. Nothing is auto-committed afterwards, because a tool that silently commits a human's working folder destroys their ability to stage their own work. An explicit write-class `mesh_snapshot(message)` tool lets the model propose a commit, which routes through the permission broker. If `user.email` is unset, skip the commit and say so rather than failing or inventing an identity. Binary bloat is left to the user: `.gitignore` does not exclude `models/` or `images/`, and the scaffold notes git-lfs as an option without configuring it.
+
+### 3.9 Tool surface
+
+Flat, about fourteen tools, declared with `@tool` and registered through `create_sdk_mcp_server(name="mesh", ...)`. Flat rather than the two-tier `search_actions`/`execute_action` shape Canvas uses, because the probe showed the CLI already surfaces tools through its own deferred `ToolSearch` mechanism, so a second discovery layer would duplicate it. Tool descriptions are therefore search targets and must be written to be findable. Revisit tiering only past roughly twenty tools.
+
+Read-class, pre-allowed in `allowed_tools` so they never prompt: `mcp__mesh__list_models`, `model_info`, `get_view`, `get_visibility`, `list_comments`, `list_callouts`, `capture_view`, `measure`.
+
+Write-class, deliberately absent from `allowed_tools` so they reach the broker and therefore the human: `set_view`, `fit_view`, `set_visibility`, `set_up_axis`, `add_callout`, `delete_callout`, `select_pin`, `snapshot`.
+
+`capture_view` returns an image content block per fact 8, not a file path. Geometry facts come from `stl.py`, a small dependency-free binary and ASCII STL reader for header, bounding box and triangle count, rather than a mesh library, because that is all the model needs and it avoids a dependency. Watertightness is deliberately not offered, because computing it properly needs real topology work.
+
+Not offered as tools, deliberately: anything that types into the composer on the human's behalf, anything that submits the human's pins, and continuous camera animation. The model may move the camera, which is visible in the 3D pane, but a `paused` flag the human can set from the topbar makes all write-class mesh tools return an error, so the human can edit a pin comment without the agent mutating underneath them. That idea is lifted from Canvas's read and write classification.
+
+Ordinary Claude Code tools: `setting_sources=["user","project","local"]` and the `claude_code` tool preset, so Read, Edit and Bash are present, which is what "behaves like Claude Code in that folder" means. None of them are pre-allowed, so all of them prompt.
+
+### 3.10 Security
+
+The change in kind is the point: an HTTP endpoint on a developer's machine can now make an agent edit files and run shell commands in their project.
+
+Non-negotiable for the first release:
+
+1. Default bind `127.0.0.1`. Non-loopback requires `--allow-remote` and prints a warning.
+2. A per-run token, `secrets.token_urlsafe(16)`, generated at startup, embedded in the URL we open, echoed in the `hello` frame, and required on `/ws`, `/upload`, and `/submit` in agent mode. Viewer-only mode leaves `/submit` open so the published skill flow is unchanged.
+3. An `Origin` allowlist on the WebSocket handshake. This is not optional and not redundant with the token: **WebSocket handshakes are not subject to the same-origin policy**, so without both checks any page the human visits could open `ws://127.0.0.1:8765/ws` and drive an agent with Bash access. A bug in the `ws.py` auth path is a remote-code-execution bug, not a UI bug, and it gets its own test file.
+4. `Host` header validation, so DNS rebinding cannot turn an attacker domain into a localhost origin.
+5. Deletion of the general static-file fallback, replaced by manifest-index-resolved model serving and `images/`-restricted asset serving. The current fallback serves any file under the directory once past the traversal guard, which becomes an information-disclosure hole the moment that directory is a git-tracked project root containing `.git` and source.
+6. Upload filename sanitisation: generated names only, derived from a timestamp plus a slug, never the client-supplied name, which removes path separators, dotfiles and Windows reserved names as a class.
+7. Model text is never inserted as HTML. The chat renderer escapes, and any markdown support is a small hand-written renderer over escaped text, not `innerHTML` of model output.
+
+Deferred but recorded: a served `Content-Security-Policy`, which needs to be written against vendored assets rather than the CDN and is easier once vendoring lands; per-user authentication behind the token for the LAN case; and prompt-injection hardening for content the model reads out of STL comments and filenames, which is mitigated today only by every tool that acts being gated.
+
+Note for the transcript: `review/transcript.md` is git-tracked and will contain whatever the human typed about their hardware, plus per-turn costs and absolute paths. The scaffolded `CLAUDE.md` says so, and `--no-transcript` is an open question below rather than an assumed flag.
+
+### 3.11 Tests and CI
+
+The fake seam is two-layered on purpose. `session/fake.py` implements `AgentSession` and covers every HTTP, WebSocket, chat-pane and tool test with no SDK involvement at all. Separately, `tests/test_sdk_session.py` drives the real `ClaudeSDKClient` through a fake `Transport` (fact 11) that yields canned protocol dicts and records what `write()` receives, which is the only way to catch a break in the SDK's control protocol on an upgrade. Both are needed: the first keeps the suite fast and dependency-free, the second is the canary.
+
+Layers: unit tests for `paths`, `project`, `protocol`, `stl` and git helpers; protocol tests through microdot's in-process `TestClient`, including `TestClient.websocket()`, with no sockets; integration tests with a fake browser client speaking the real frame protocol against a fake session; and Playwright end-to-end gated by `pytest.importorskip`, limited to a handful of tests that assert what only a real browser can, namely that a tool call moves a real camera and that the three-pane layout resizes the canvas. Playwright is justified precisely because the UI is now the primary surface, but it stays a small, skippable set.
+
+Network isolation is enforced, not left to discipline: an autouse fixture points `cli_path` at a stub binary and monkeypatches the socket module for everything except the explicitly-marked `live` tests, which are deselected by default.
+
+`asyncio` tests use `pytest-asyncio`. Timeouts are tested by injecting the timeout value, never by sleeping.
+
+The pre-existing failure is fixed first: `tests/test_server.py::test_manifest_lists_stl` asserts exact dict equality while `/manifest` returns extra `dir` and `path` keys, and CI has been red since 2026-07-24. **The test is wrong, not the response.** `/manifest` is a documented contract consumed by the shipped viewer, `dir` and `path` are deliberate additions from commit `e43c065`, and removing them now would break the viewer's title rendering. The fix is a subset assertion on the keys the contract promises.
+
+CI: matrix `3.10`, `3.12`, `3.13`, with two jobs: one with base dependencies only, which proves the viewer-only path still installs light, and one with the `agent` extra on 3.12 only, so the 93 MB download happens once. The 3.9 leg is deleted along with the classifier.
+
+### 3.12 Packaging
+
+```toml
+requires-python = ">=3.10"
+dependencies = ["microdot>=2.6,<3"]
+
+[project.optional-dependencies]
+agent = ["claude-agent-sdk>=0.2.135,<0.3"]
+dev = ["pytest>=7", "pytest-asyncio>=0.23"]
+```
+
+Agent mode is an optional extra, and this is the most consequential packaging decision. Per fact 10, the SDK wheel is platform-tagged and embeds a 304 MB `claude` binary, so a hard dependency turns `uvx annealage-mesh` from about a 40 KB download into about 93 MB, platform-restricted, for someone who only wants to look at an STL. The `<0.3` cap is load-bearing because the design depends on `Transport`, documented as internal and subject to change.
+
+`anyio`, `mcp` and `sniffio` are not declared; we never import them and they arrive under the extra as the SDK's own dependencies.
+
+`README.md` and `SKILL.md` both currently advertise zero runtime dependencies, Python 3.9+ and near-instant `uvx` start. Those claims get rewritten, not quietly dropped. The honest replacement: the viewer needs one pure-Python dependency and Python 3.10+, and the chat pane additionally needs `annealage-mesh[agent]`, which is a large download because it bundles the Claude Code CLI.
+
+The single-file `force-include` of `viewer.html` in `pyproject.toml:50-51` is replaced by normal package-data inclusion of `src/annealage_mesh/static/**`. `REUSE.toml` gains an MIT entry for `static/js/vendor/*`, leaving the PolyForm-plus-MIT-skill arrangement intact.
+
+## 4. Milestones
+
+Each ends demonstrable and tested. No milestone exists only to refactor.
+
+**M1. Green baseline and the STL reader.** Fix `test_manifest_lists_stl` to a subset assertion. Add `stl.py` with binary and ASCII parsing plus `tests/test_stl.py`. Deliverable: CI green for the first time since 2026-07-24, and a dependency-free geometry reader. Demo: `pytest -q` passes and `python -m annealage_mesh.stl model.stl` prints bbox and triangle count. Retires: the risk that every later failure lands on an already-red suite.
+
+**M2. microdot port, behaviour identical.** Replace `server.py` with `app.py`, `paths.py`, `http/routes_viewer.py` on microdot, serving today's exact routes and file contract, plus recursive manifest scanning with exclusions, the manifest-index model route, and deletion of the static fallback. Port `tests/test_server.py` to `tests/test_routes_viewer.py` against microdot's `TestClient`. Deliverable: a release with no user-visible change except closing the file-disclosure hole. Demo: existing viewer works unchanged against the new server. Retires: the HTTP-layer choice, and the traversal exposure, before anything agent-shaped exists.
+
+**M3. Front-end split with no behaviour change.** `viewer.html` to shell plus ES modules, `js/store.js` as the single writer for scene state, `ResizeObserver` sizing, vendored three.js, `REUSE.toml` entry. No chat pane yet. Deliverable: identical viewer, modular source, no CDN. Demo: viewer works offline with the network disabled. Retires: the layout and state-ownership risk, and the one-directional visibility binding, before the chat pane depends on them.
+
+**M4. Event log and WebSocket, no agent.** `protocol.py`, `viewers.py`, `http/ws.py`, `session/events.py`, `session/fake.py`, plus token and `Origin` and `Host` enforcement and the loopback default. The browser connects, receives `hello`, and the 1.5 s callouts poll is replaced by a server-side mtime watcher pushing `callouts_changed`. Tests: `tests/test_protocol.py`, `tests/test_ws_auth.py`, `tests/test_viewers.py`, `tests/test_events.py`. Deliverable: live push with no agent. Demo: writing `mesh-callouts.json` by hand makes pins appear with no poll and no reload. Retires: transport, auth and replay, all testable without the SDK.
+
+**M5. Agent session and the chat pane.** `session/base.py`, `session/sdk.py`, `session/permissions.py`, `js/chat.js`, the three-pane layout, streaming, interrupt, resume, the lock file, and the permission dialog. Tests: `tests/test_sdk_session.py` through a fake `Transport`, `tests/test_permissions.py` including the browser-gone and timeout paths. Deliverable: the headline feature. Demo: type in the browser, watch tokens stream, approve a `Bash` call from the pane. Retires: the SDK integration and the human-in-the-loop flow.
+
+**M6. Mesh tools and browser remote control.** `tools/registry.py`, `viewer_tools.py`, `review_tools.py`, `model_tools.py`, `js/commands.js`, the `paused` flag. Tests: `tests/test_tools.py` against a fake bus, plus the first Playwright test asserting a real camera move. Deliverable: the model operates the viewer. Demo: ask the model to hide a part and frame a pin, and watch it happen. Retires: the round-trip protocol under real tool dispatch.
+
+**M7. Images and sketch overlay.** `POST /upload`, `images/`, composer paste, drag and drop and file picker, `js/sketch.js` with stroke capture and compositing, and the dual delivery of fact 6. Sketch ships image-only first, with stroke unprojection to 3D coordinates as a follow-on because it is the part most likely to need iteration. Tests: `tests/test_upload.py`, plus a Playwright sketch round-trip. Deliverable: point at the model by drawing on it. Demo: circle a wall, ask why it is thin, get an answer about that wall.
+
+**M8. Project scaffolding, git, docs.** `project.py`, `cli.py` subcommands, `doctor`, `CLAUDE.md` generation, `.gitignore`, `git init` plus scaffold commit, `review/transcript.md` rendering, and the README, SKILL.md, RELEASING.md and COMMERCIAL.md updates including the honest dependency claim and the `--host` release note. Tests: `tests/test_project.py`, `tests/test_cli.py`. Deliverable: `annealage-mesh` in an empty folder produces a working project. Demo: `mkdir demo && cd demo && annealage-mesh`.
+
+## 5. Decisions locked
+
+Do not relitigate these without a stated reason.
+
+- One process, one asyncio loop, hosting HTTP, WebSocket, the SDK client, tool handlers and the permission broker. No thread bridge, no sidecar.
+- microdot as the HTTP and WebSocket layer, a base dependency.
+- One WebSocket for all bidirectional traffic; HTTP for bytes and history.
+- Monotonic `seq` on every event, append-only `events.jsonl` plus a 500-event ring, replay on reconnect, history over HTTP.
+- One primary viewer receives `call` frames; chat events broadcast; zero viewers means tools fail fast.
+- Legacy JSON file contract stays at the project root, unchanged. The MIT skill keeps working.
+- Bare `annealage-mesh` is agent mode; `view` is today's behaviour; `CLAUDECODE` flips the default to viewer-only.
+- Default bind becomes `127.0.0.1`; token plus `Origin` plus `Host` checks; static fallback deleted.
+- `viewer.html` splits into native ES modules, no build step; three.js vendored.
+- `js/store.js` is the single writer for scene state.
+- Flat tool list, read-class pre-allowed via `allowed_tools`, write-class always prompting.
+- `capture_view` returns an image content block, not a path.
+- Agent mode is an optional extra; `requires-python >=3.10`; SDK pinned `>=0.2.135,<0.3`.
+- Two fake layers: `AgentSession` fake for most tests, fake `Transport` as the SDK-upgrade canary.
+- `/manifest` keeps `dir` and `path`; the test is fixed, not the response.
+- `git init` plus one scaffold commit, and never an automatic commit after that.
+
+## 6. Deferred
+
+- Stroke unprojection to 3D coordinates, after M7 ships image-only sketches.
+- `Content-Security-Policy`, easier once assets are vendored.
+- Per-user authentication for the LAN case, beyond the per-run token.
+- Two-tier tool discovery, only if the tool count passes roughly twenty.
+- Extracting a shared browser-control library across Annealage products. Canvas's ground truth was in-process LVGL state and it has no correlation table or pending-future map, so there is nothing to share yet. Revisit once Mesh's `viewers.py` and `commands.js` have proven themselves, and treat this plan's protocol as the candidate to generalise.
+- JS unit tests, which would need a node toolchain. Front-end logic rides on Playwright until that trade changes.
+
+## 7. Cut
+
+- A hand-rolled asyncio HTTP and SSE server. microdot supplies framing and a socket-free test client, which was the whole argument for owning that code.
+- SSE plus POST as the transport. It cannot carry server-initiated requests needing replies without splitting correlation across two transports.
+- An agent sidecar process.
+- `search_actions` and `execute_action` meta-tools, duplicating the CLI's own `ToolSearch`.
+- Watertightness checking in `stl.py`.
+- A `--allow-multiple` escape hatch for two instances in one folder.
+
+## 8. Open questions for the maintainer
+
+Ranked by how much they block.
+
+1. **Should the git-tracked transcript be on by default?** It satisfies the stated requirement, but it commits conversation text about client hardware, absolute paths and per-turn costs. The alternative is `.mesh/`-only by default with an opt-in to track `review/transcript.md`. Blocks M8 and the scaffolded `.gitignore`.
+2. **Is loopback-only acceptable in agent mode?** `--host 0.0.0.0 --allow-remote` is defensible with a token but exposes an agent with shell access on a LAN with no per-user authentication. Dropping non-loopback entirely in agent mode, and honouring `--host` only in `view` mode, is the safer product decision. The existing mobile CSS suggests reviewing on a phone is a real workflow, so this may be a workflow you actively use. Blocks M4's security posture.
+3. **How locked down should the agent be by default?** This plan gives the `claude_code` preset with everything prompting, that is, genuinely Claude Code in that folder. The alternative is starting with mesh tools plus Read only, with Bash denied, and requiring a flag to widen. A product-posture call, not a technical one. Blocks M5's defaults.
+4. **Is a tabbed narrow-viewport layout in scope for the first release**, or is desktop-only acceptable below about 900 px with a "too narrow for chat" message? Three columns cannot fit the existing 560 px breakpoint. Blocks M3's CSS.
+5. **Is multi-viewer collaborative or just convenience?** If two humans might review together, per-viewer identity needs to appear in the transcript and in pin authorship, which changes the event shapes and the pin schema. Cheap to decide now, expensive to retrofit.
