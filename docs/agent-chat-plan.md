@@ -56,6 +56,8 @@ Rejected: an agent sidecar process. The genuinely risky child, the `claude` CLI,
 
 Blocking file IO no longer gets a free thread. A 40 MB STL read on the loop stalls token streaming, so static bodies are read through `loop.run_in_executor` and git and scaffold work uses `asyncio.create_subprocess_exec`. This is a correctness trap the threading server hid and it will regress silently if a later change adds a plain `read_bytes()`.
 
+`stl.py` is squarely in this category and it is measured, not hypothetical: parsing 1M triangles takes about 1.8 seconds of blocking CPU. Any `mcp__mesh__model_info` handler must therefore hand it to `run_in_executor` rather than awaiting it inline, or a single `model_info` call on a large mesh freezes token streaming, every other in-flight tool, and the WebSocket writer for the better part of two seconds. Wire this from the first tool handler, not as a later optimisation.
+
 ### 3.2 HTTP layer: microdot
 
 `microdot>=2.6,<3` as a base dependency. Pure Python, zero transitive dependencies, and it supplies the three things the standard library does not: an asyncio HTTP/1.1 server designed to be awaited inside an existing loop, a server-side WebSocket implementation with frame encode and decode, and an in-process `TestClient` that dispatches both HTTP requests and WebSocket sessions without opening a socket. It is also already the HTTP layer in Annealage Canvas, which keeps one framework in the product family.
@@ -112,7 +114,13 @@ Every server-to-browser event carries a monotonic `seq`. `EventLog` is an append
 
 The turn is owned by the session, not the socket. The SDK pump keeps consuming and appending regardless of whether any browser is attached, so browser reload mid-turn, browser closed and reopened, and process restart are all the same mechanism. Unanswered permission requests are live futures in the broker and are re-emitted on replay, so a reload mid-prompt re-shows the prompt.
 
-Restart resumes by default. `.mesh/state.json` holds our session id and the SDK session id; startup passes `ClaudeAgentOptions(resume=sdk_session_id)`. `--new-session` starts clean and `--resume <sid>` picks one. We store the id ourselves rather than using `continue_conversation`, because that flag is implicitly cwd-scoped and we want the mapping visible on disk. If resume fails, fall back to a new session and emit `session_reset` with the reason rather than failing startup.
+**Restart starts a fresh session by default**, matching `claude` itself, with two explicit flags to do otherwise. A bare invocation silently reattaching to a conversation the user had forgotten is a class of surprise worth avoiding once explicit flags exist.
+
+- **`-c` / `--continue` never takes an argument.** Mesh resolves the most recent session for this project itself, from `.mesh/state.json`, falling back to scanning `.mesh/sessions/` by mtime. The user never types or looks up an id. With no prior session it exits with a message naming the folder rather than quietly starting fresh.
+- **`-r` / `--resume [SID]` is the only flag that accepts a session id.** `-r SID` resumes that session and errors if the id is unknown to this project. Bare `-r` lists sessions and exits 0 with id, start time, turn count, cost and a snippet of the first user turn, using the `list_sessions`, `get_session_info` and `project_key_for_directory` helpers. Bare `-r` never silently resumes anything, because that would duplicate `-c` and blur the two flags.
+- `-c` and `-r` are mutually exclusive.
+
+Both flags end up passing `ClaudeAgentOptions(resume=<id>)` with an id Mesh resolved, never `continue_conversation=True`. That option is implicitly scoped to the CLI's notion of cwd, our project root is not necessarily that, and a resolved id stays inspectable on disk. This is an internal detail and says nothing about what the user types. If resume fails, fall back to a new session and emit `session_reset` with the reason rather than failing startup.
 
 Ctrl-C: `SIGINT` sets a shutdown event, then `await client.interrupt()`, wait up to 2 s for a terminal `ResultMessage`, fail in-flight viewer futures as tool errors, fsync the event log, close sockets with 1001, `await client.disconnect()` so the `claude` child is reaped, release the lock, exit 0. A second Ctrl-C inside that window hard-exits 130. Windows falls back from `loop.add_signal_handler` to `signal.signal` plus `call_soon_threadsafe`.
 
@@ -131,11 +139,21 @@ annealage-mesh init [DIR]         scaffold plus .gitignore plus git init, idempo
 annealage-mesh doctor [DIR]       print python, claude CLI path and version, git, port, lock, extras; no server
 ```
 
-Flags: `--port` (8765), `--host` (**default changes from `0.0.0.0` to `127.0.0.1`**), `--no-open`, `--version`, `--model`, `--permission-mode`, `--resume SID`, `--new-session`, `--token`, `--no-git`, `--force`, `--allow-remote`, and `--no-agent` as an alias for `view`.
+Flags: `--port` (8765), `--host` (see the bind modes below), `--no-open`, `--version`, `--model`, `--permission-mode`, `-c` / `--continue`, `-r` / `--resume [SID]`, `--token`, `--no-git`, `--force`, `--settings` (print resolved settings with provenance and exit), and `--no-agent` as an alias for `view`.
+
+Three bind modes, all first-class:
+
+| `--host` | Binds | Use |
+|---|---|---|
+| `127.0.0.1` (default) | loopback only | local work |
+| `tailscale` (alias) | the host's `tailscale0` IPv4, resolved at startup | remote review over the tailnet |
+| explicit IP, or `0.0.0.0` | as given | anything else, including LAN |
+
+`--host tailscale` is the recommended remote mode. It resolves the `tailscale0` interface address in the `100.64.0.0/10` range and binds only that, which matters because `0.0.0.0` binds every interface: on a typical laptop that includes the WiFi LAN and `docker0`, exposing the tool on whatever network the machine is attached to as a side effect of wanting tailnet access. Resolution failure, whether Tailscale is absent or down, is a clear startup error naming the interface, never a silent fall back to a wider bind.
 
 Bare invocation is agent mode because that is the headline feature and the user's stated intent for running the tool in a folder. The compatibility risk is the skill's documented `annealage-mesh <dir> --no-open`, which would now scaffold and start an agent inside an existing agent session. Mitigation: when `CLAUDECODE` is set in the environment the default flips to viewer-only with a printed note, so a skill-driven invocation never spawns a nested agent, and `view` pins it explicitly. SKILL.md is updated in the same release to pass `view` explicitly rather than relying on detection.
 
-`--host` default change: today the server binds all interfaces and serves any file under the directory once past the traversal guard (`server.py:75-85`, `119-124`). That is already too generous for an STL folder and is indefensible for a git-tracked project root with an agent in it. This is a deliberate, user-visible regression for anyone reviewing a model from a phone on the LAN, and it needs release-note treatment; `--host 0.0.0.0 --allow-remote` restores it with a warning.
+The default changes from binding all interfaces to loopback, but non-loopback binding stays fully supported with no extra flag beyond `--host` itself, because remote review over Tailscale is a real workflow. What made the old default indefensible was not that it was reachable, it was that the server also served any file under the directory once past the traversal guard (`server.py:75-85`, `119-124`), which becomes an information-disclosure hole the moment the directory is a git-tracked project root with an agent in it. That fallback is deleted regardless of bind mode, and the default moves to loopback so that reaching the tool remotely is a decision rather than an accident. Release notes must call the default change out.
 
 ### 3.6 Module layout
 
@@ -204,8 +222,13 @@ static/
   js/layout.js     140   pane split, mobile tab arbitration
   js/chat.js       320   transcript render, streaming deltas, uploads, permission cards
   js/sketch.js     160   overlay canvas, composite, upload
+  js/settings.js   200   settings modal: sections, provenance display, restart-required labels
   js/vendor/       three.module.js, OrbitControls.js, STLLoader.js, VERSIONS.json
 ```
+
+The settings modal opens from a topbar gear and has sections for Server, Agent, Viewer and Export, plus a read-only Diagnostics block showing the `claude` CLI path and version, git version, Python version, project root, current session id, bind address, reachable addresses, and whether the agent extra is installed. Diagnostics duplicates `annealage-mesh doctor` deliberately, so a remote user with no terminal can self-diagnose, which is the whole point when the tool is being used from a phone. Every field is labelled with when it takes effect: bind host and port are restart-required and the panel offers no live-rebind, because rebinding a live listener is complexity with a security-relevant failure mode and a restart is cheap.
+
+**The narrow-viewport layout is required, not optional.** Remote review over Tailscale from a phone or tablet is a real workflow, so at or below 900 px the side and chat panels become tabs over the canvas rather than showing a "too narrow for chat" message.
 
 `js/store.js` is the fix for two real defects the code audit found: per-part visibility is currently bound one-directionally (`viewer.html:250`), so a tool that hides a part cannot update the checkbox, and `agentList` would have two writers once callouts arrive by push as well as by file (`viewer.html:589-591`, `637-648`). Putting all scene-affecting state behind one writer with subscribers makes both the checkbox and the mesh `visible` flag readers, and removes the race by construction.
 
@@ -224,16 +247,34 @@ Static serving changes shape. The general "serve anything under the directory" f
   mesh-comments.json      unchanged contract, project root
   mesh-comments.log       unchanged contract, project root
   mesh-callouts.json      unchanged contract, project root
-  review/transcript.md    rendered transcript, rewritten at each turn end, git-tracked
+  review/                 created lazily by the first transcript export, not scaffolded
   CLAUDE.md               generated stub, kept if present, never clobbered
   .gitignore              generated
-  .mesh/config.toml       port, host, model, permission mode, project name
+  .mesh/config.toml       per-project overrides, committed
   .mesh/state.json        session ids, viewer prefs
+  .mesh/permissions.toml  project-scoped allow-always grants
   .mesh/sessions/<sid>/events.jsonl   canonical event log, append-only, untracked
-  .mesh/lock
+  .mesh/lock              pid, port, per-run token
 ```
 
-The jsonl log is untracked because it churns per token delta. The human-readable `review/transcript.md` is tracked, which satisfies "transcript written into the project folder" with an artifact that diffs usefully.
+Plus one file outside the project, at `platformdirs.user_config_dir("annealage-mesh")/settings.toml`, on Linux `~/.config/annealage-mesh/settings.toml`, holding person and machine preferences.
+
+**No human-readable transcript is written unless asked for.** `.mesh/sessions/<sid>/events.jsonl` is the canonical log that scrollback, reconnect replay and resume all read, and it stays untracked because it churns per token delta. Nothing conversational is committed by default. Export is on demand through two entry points over one implementation in `session/events.py`: the `export_transcript` tool for the model, and a button in the chat pane header posting to `POST /session/<sid>/export` for the human. Default target is `review/transcript-<ISO8601>.md`, with `format` of `markdown` or `jsonl` and `include` of `text` or `full`. The tool is write-class so it prompts; the button is not, because a human initiating an export directly needs no approval.
+
+`.gitignore` ignores `.mesh/` with a negation for `.mesh/config.toml`, which is shareable project configuration and holds no secret, since the per-run token lives in `.mesh/lock` and is regenerated every start. `models/` and `images/` stay tracked.
+
+### Settings, three layers with visible provenance
+
+Precedence, highest first: CLI flag, project `.mesh/config.toml`, user `settings.toml`, built-in default.
+
+- **User settings** carry defaults for bind host, port, auto-open, model, effort, up-axis, upload size cap, sketch stroke defaults, chat pane width, and whether tool cards start collapsed.
+- **Project config** carries model, permission mode, project name and default part visibility.
+
+`GET /settings` returns each effective value together with the layer that supplied it, so the settings window can say "port 8765, from user settings" versus "from a command-line flag, not editable this run". Provenance is what makes a three-layer scheme comprehensible rather than mystifying, so it is part of the contract rather than a nicety.
+
+**Never persisted, in either file.** `permission_mode: bypassPermissions` is accepted only as a single-run CLI flag with a printed warning, and is rejected with an explicit error if found in a config file; persisting "never ask me again" for an agent with shell access turns one careless moment into a standing vulnerability, and the settings window does not offer it. The per-run token is never written to config. Derived values such as a resolved Tailscale address are recomputed each run because they change.
+
+Allow-always permission grants persist to `.mesh/permissions.toml`, project-scoped, never user-scoped, and never for `Bash`, so a broad grant made in a scratch folder cannot silently apply to real work.
 
 Because `setting_sources` defaults to loading nothing (fact 13), the generated `CLAUDE.md` is only read if we pass `setting_sources=["user", "project", "local"]`, which we do, because "behaves like Claude Code run in that folder" requires it. The file is generated once if absent and never rewritten.
 
@@ -245,7 +286,9 @@ Flat, about fourteen tools, declared with `@tool` and registered through `create
 
 Read-class, pre-allowed in `allowed_tools` so they never prompt: `mcp__mesh__list_models`, `model_info`, `get_view`, `get_visibility`, `list_comments`, `list_callouts`, `capture_view`, `measure`.
 
-Write-class, deliberately absent from `allowed_tools` so they reach the broker and therefore the human: `set_view`, `fit_view`, `set_visibility`, `set_up_axis`, `add_callout`, `delete_callout`, `select_pin`, `snapshot`.
+Write-class, deliberately absent from `allowed_tools` so they reach the broker and therefore the human: `set_view`, `fit_view`, `set_visibility`, `set_up_axis`, `add_callout`, `delete_callout`, `select_pin`, `snapshot`, `export_transcript`.
+
+`export_transcript` is write-class because an exported transcript may then be committed and can carry whatever was typed about the hardware under review, plus absolute paths and per-turn costs. The human's own export button bypasses the broker entirely, which is the right asymmetry.
 
 `capture_view` returns an image content block per fact 8, not a file path. Geometry facts come from `stl.py`, a small dependency-free binary and ASCII STL reader for header, bounding box and triangle count, rather than a mesh library, because that is all the model needs and it avoids a dependency. Watertightness is deliberately not offered, because computing it properly needs real topology work.
 
@@ -259,9 +302,9 @@ The change in kind is the point: an HTTP endpoint on a developer's machine can n
 
 Non-negotiable for the first release:
 
-1. Default bind `127.0.0.1`. Non-loopback requires `--allow-remote` and prints a warning.
-2. A per-run token, `secrets.token_urlsafe(16)`, generated at startup, embedded in the URL we open, echoed in the `hello` frame, and required on `/ws`, `/upload`, and `/submit` in agent mode. Viewer-only mode leaves `/submit` open so the published skill flow is unchanged.
-3. An `Origin` allowlist on the WebSocket handshake. This is not optional and not redundant with the token: **WebSocket handshakes are not subject to the same-origin policy**, so without both checks any page the human visits could open `ws://127.0.0.1:8765/ws` and drive an agent with Bash access. A bug in the `ws.py` auth path is a remote-code-execution bug, not a UI bug, and it gets its own test file.
+1. Default bind `127.0.0.1`, with `tailscale` and explicit non-loopback binds fully supported as deliberate choices. The startup banner prints the effective exposure **every run**, naming the bound address and the interfaces it is reachable on, because a persisted setting means the user is no longer typing a flag that would remind them.
+2. A per-run token, `secrets.token_urlsafe(16)`, generated at startup, embedded in the URL we open, echoed in the `hello` frame, and required on `/ws`, `/upload`, `/settings` and `/submit` in agent mode. Viewer-only mode leaves `/submit` open so the published skill flow is unchanged. On any non-loopback bind the token stops being defence in depth and becomes the primary control.
+3. An `Origin` allowlist on the WebSocket handshake, computed from the resolved bind rather than hardcoded to localhost, or remote access breaks. This is not optional and not redundant with the token: **WebSocket handshakes are not subject to the same-origin policy**, so without both checks any page the human visits could open `ws://127.0.0.1:8765/ws` and drive an agent with Bash access. A bug in the `ws.py` auth path is a remote-code-execution bug, not a UI bug, and it gets its own test file.
 4. `Host` header validation, so DNS rebinding cannot turn an attacker domain into a localhost origin.
 5. Deletion of the general static-file fallback, replaced by manifest-index-resolved model serving and `images/`-restricted asset serving. The current fallback serves any file under the directory once past the traversal guard, which becomes an information-disclosure hole the moment that directory is a git-tracked project root containing `.git` and source.
 6. Upload filename sanitisation: generated names only, derived from a timestamp plus a slug, never the client-supplied name, which removes path separators, dotfiles and Windows reserved names as a class.
@@ -269,13 +312,21 @@ Non-negotiable for the first release:
 
 Deferred but recorded: a served `Content-Security-Policy`, which needs to be written against vendored assets rather than the CDN and is easier once vendoring lands; per-user authentication behind the token for the LAN case; and prompt-injection hardening for content the model reads out of STL comments and filenames, which is mitigated today only by every tool that acts being gated.
 
-Note for the transcript: `review/transcript.md` is git-tracked and will contain whatever the human typed about their hardware, plus per-turn costs and absolute paths. The scaffolded `CLAUDE.md` says so, and `--no-transcript` is an open question below rather than an assumed flag.
+**There is no TLS, and what that costs depends on the bind.** On the tailnet it is acceptable, because WireGuard encrypts the transport and the token in the URL is protected in transit. On a plain LAN bind it is not: the token, the STL content and the conversation all travel in cleartext and are readable by anyone on that network. The banner says so explicitly for non-loopback, non-Tailscale binds. Documented as the recommended remote path, costing us no code: `tailscale serve https / http://127.0.0.1:8765` fronts a loopback-bound Mesh with TLS and tailnet device identity, which is strictly stronger than binding the tailnet address directly.
+
+`PUT /settings` can change the bind address for the next run, so it is privilege-relevant. It validates and rejects unknown keys rather than merging blindly, refuses `bypassPermissions`, refuses any attempt to write a token, and gets its own tests alongside `tests/test_ws_auth.py`.
+
+Nothing conversational is committed by default, so the transcript is no longer a standing disclosure risk. An exported transcript carries the warning at the point of export instead.
 
 ### 3.11 Tests and CI
 
 The fake seam is two-layered on purpose. `session/fake.py` implements `AgentSession` and covers every HTTP, WebSocket, chat-pane and tool test with no SDK involvement at all. Separately, `tests/test_sdk_session.py` drives the real `ClaudeSDKClient` through a fake `Transport` (fact 11) that yields canned protocol dicts and records what `write()` receives, which is the only way to catch a break in the SDK's control protocol on an upgrade. Both are needed: the first keeps the suite fast and dependency-free, the second is the canary.
 
-Layers: unit tests for `paths`, `project`, `protocol`, `stl` and git helpers; protocol tests through microdot's in-process `TestClient`, including `TestClient.websocket()`, with no sockets; integration tests with a fake browser client speaking the real frame protocol against a fake session; and Playwright end-to-end gated by `pytest.importorskip`, limited to a handful of tests that assert what only a real browser can, namely that a tool call moves a real camera and that the three-pane layout resizes the canvas. Playwright is justified precisely because the UI is now the primary surface, but it stays a small, skippable set.
+Layers: unit tests for `paths`, `project`, `protocol`, `stl`, settings and git helpers; protocol tests through microdot's in-process `TestClient`, including `TestClient.websocket()`, with no sockets; integration tests with a fake browser client speaking the real frame protocol against a fake session; and Playwright end-to-end gated by `pytest.importorskip`, limited to a handful of tests that assert what only a real browser can, namely that a tool call moves a real camera and that the three-pane layout resizes the canvas.
+
+`tests/test_settings.py` covers the three-layer precedence, the provenance reported by `GET /settings`, rejection of unknown keys, refusal of `bypassPermissions` in either config file, and refusal of any attempt to write a token through `PUT /settings`.
+
+Roles by model tier, for any agent-driven work on this plan: implementation and test authoring on sonnet, running the suite and building the wheel on haiku, standard and adversarial review on opus, with findings looped back to sonnet until reviews are clean and tests pass. A milestone is not done because the suite is green; it is done when the suite is green **and** review findings are cleared. Milestone 1 shipped with known majors precisely because its commit gate checked only the exit code. Playwright is justified precisely because the UI is now the primary surface, but it stays a small, skippable set.
 
 Network isolation is enforced, not left to discipline: an autouse fixture points `cli_path` at a stub binary and monkeypatches the socket module for everything except the explicitly-marked `live` tests, which are deselected by default.
 
@@ -289,12 +340,14 @@ CI: matrix `3.10`, `3.12`, `3.13`, with two jobs: one with base dependencies onl
 
 ```toml
 requires-python = ">=3.10"
-dependencies = ["microdot>=2.6,<3"]
+dependencies = ["microdot>=2.6,<3", "platformdirs>=4,<5"]
 
 [project.optional-dependencies]
 agent = ["claude-agent-sdk>=0.2.135,<0.3"]
 dev = ["pytest>=7", "pytest-asyncio>=0.23"]
 ```
+
+`platformdirs` 4.11.2 is MIT, pure Python with zero dependencies of its own, and its `requires-python >=3.10` matches our floor exactly. It is a base dependency rather than agent-only because viewer-only mode reads the same user settings for bind host and port. `appdirs` is the better-known name but its last release was 2020; `platformdirs` is its maintained successor with the same API shape.
 
 Agent mode is an optional extra, and this is the most consequential packaging decision. Per fact 10, the SDK wheel is platform-tagged and embeds a 304 MB `claude` binary, so a hard dependency turns `uvx annealage-mesh` from about a 40 KB download into about 93 MB, platform-restricted, for someone who only wants to look at an STL. The `<0.3` cap is load-bearing because the design depends on `Transport`, documented as internal and subject to change.
 
@@ -312,17 +365,17 @@ Each ends demonstrable and tested. No milestone exists only to refactor.
 
 **M2. microdot port, behaviour identical.** Replace `server.py` with `app.py`, `paths.py`, `http/routes_viewer.py` on microdot, serving today's exact routes and file contract, plus recursive manifest scanning with exclusions, the manifest-index model route, and deletion of the static fallback. Port `tests/test_server.py` to `tests/test_routes_viewer.py` against microdot's `TestClient`. Deliverable: a release with no user-visible change except closing the file-disclosure hole. Demo: existing viewer works unchanged against the new server. Retires: the HTTP-layer choice, and the traversal exposure, before anything agent-shaped exists.
 
-**M3. Front-end split with no behaviour change.** `viewer.html` to shell plus ES modules, `js/store.js` as the single writer for scene state, `ResizeObserver` sizing, vendored three.js, `REUSE.toml` entry. No chat pane yet. Deliverable: identical viewer, modular source, no CDN. Demo: viewer works offline with the network disabled. Retires: the layout and state-ownership risk, and the one-directional visibility binding, before the chat pane depends on them.
+**M3. Front-end split with no behaviour change.** `viewer.html` to shell plus ES modules, `js/store.js` as the single writer for scene state, `ResizeObserver` sizing, the tabbed narrow-viewport layout at or below 900 px, vendored three.js, `REUSE.toml` entry. No chat pane yet. Deliverable: identical viewer, modular source, no CDN, usable on a phone. Demo: viewer works offline with the network disabled, and the narrow layout tabs correctly at 390 px. Retires: the layout and state-ownership risk, and the one-directional visibility binding, before the chat pane depends on them.
 
-**M4. Event log and WebSocket, no agent.** `protocol.py`, `viewers.py`, `http/ws.py`, `session/events.py`, `session/fake.py`, plus token and `Origin` and `Host` enforcement and the loopback default. The browser connects, receives `hello`, and the 1.5 s callouts poll is replaced by a server-side mtime watcher pushing `callouts_changed`. Tests: `tests/test_protocol.py`, `tests/test_ws_auth.py`, `tests/test_viewers.py`, `tests/test_events.py`. Deliverable: live push with no agent. Demo: writing `mesh-callouts.json` by hand makes pins appear with no poll and no reload. Retires: transport, auth and replay, all testable without the SDK.
+**M4. Event log and WebSocket, no agent.** `protocol.py`, `viewers.py`, `http/ws.py`, `session/events.py`, `session/fake.py`, plus the three bind modes with `tailscale` resolution, the always-printed exposure banner, the `Origin` allowlist computed from the resolved bind, `Host` validation and the token. The browser connects, receives `hello`, and the 1.5 s callouts poll is replaced by a server-side mtime watcher pushing `callouts_changed`. Tests: `tests/test_protocol.py`, `tests/test_ws_auth.py`, `tests/test_viewers.py`, `tests/test_events.py`, `tests/test_bind_modes.py`. Deliverable: live push with no agent, reachable over the tailnet. Demo: writing `mesh-callouts.json` by hand makes pins appear with no poll and no reload, from a phone over Tailscale. Retires: transport, auth, bind modes and replay, all testable without the SDK.
 
-**M5. Agent session and the chat pane.** `session/base.py`, `session/sdk.py`, `session/permissions.py`, `js/chat.js`, the three-pane layout, streaming, interrupt, resume, the lock file, and the permission dialog. Tests: `tests/test_sdk_session.py` through a fake `Transport`, `tests/test_permissions.py` including the browser-gone and timeout paths. Deliverable: the headline feature. Demo: type in the browser, watch tokens stream, approve a `Bash` call from the pane. Retires: the SDK integration and the human-in-the-loop flow.
+**M5. Agent session and the chat pane.** `session/base.py`, `session/sdk.py`, `session/permissions.py`, `js/chat.js`, the three-pane layout, streaming, interrupt, the lock file, the permission dialog, and session control: fresh by default with `-c` and `-r` as specified in 3.4. Tests: `tests/test_sdk_session.py` through a fake `Transport`, `tests/test_permissions.py` including the browser-gone and timeout paths, `tests/test_session_flags.py` covering `-c` with no prior session, `-r` with an unknown id, bare `-r` listing, and mutual exclusion. Deliverable: the headline feature. Demo: type in the browser, watch tokens stream, approve a `Bash` call from the pane, restart with `-c` and continue. Retires: the SDK integration and the human-in-the-loop flow.
 
 **M6. Mesh tools and browser remote control.** `tools/registry.py`, `viewer_tools.py`, `review_tools.py`, `model_tools.py`, `js/commands.js`, the `paused` flag. Tests: `tests/test_tools.py` against a fake bus, plus the first Playwright test asserting a real camera move. Deliverable: the model operates the viewer. Demo: ask the model to hide a part and frame a pin, and watch it happen. Retires: the round-trip protocol under real tool dispatch.
 
 **M7. Images and sketch overlay.** `POST /upload`, `images/`, composer paste, drag and drop and file picker, `js/sketch.js` with stroke capture and compositing, and the dual delivery of fact 6. Sketch ships image-only first, with stroke unprojection to 3D coordinates as a follow-on because it is the part most likely to need iteration. Tests: `tests/test_upload.py`, plus a Playwright sketch round-trip. Deliverable: point at the model by drawing on it. Demo: circle a wall, ask why it is thin, get an answer about that wall.
 
-**M8. Project scaffolding, git, docs.** `project.py`, `cli.py` subcommands, `doctor`, `CLAUDE.md` generation, `.gitignore`, `git init` plus scaffold commit, `review/transcript.md` rendering, and the README, SKILL.md, RELEASING.md and COMMERCIAL.md updates including the honest dependency claim and the `--host` release note. Tests: `tests/test_project.py`, `tests/test_cli.py`. Deliverable: `annealage-mesh` in an empty folder produces a working project. Demo: `mkdir demo && cd demo && annealage-mesh`.
+**M8. Project scaffolding, settings, git, docs.** `project.py`, `cli.py` subcommands, `doctor`, `CLAUDE.md` generation, `.gitignore`, `git init` plus scaffold commit, the settings window and `GET`/`PUT /settings` with `platformdirs` wiring and provenance, the `export_transcript` tool plus `POST /session/<sid>/export` plus the pane button, and the README, SKILL.md, RELEASING.md and COMMERCIAL.md updates including the honest dependency claim, the `--host` release note and a section on `tailscale serve`. Tests: `tests/test_project.py`, `tests/test_cli.py`, `tests/test_settings.py`, `tests/test_export.py`. Deliverable: `annealage-mesh` in an empty folder produces a working project, configurable from the browser. Demo: `mkdir demo && cd demo && annealage-mesh`, then change the model from the settings panel and export a transcript.
 
 ## 5. Decisions locked
 
@@ -335,6 +388,12 @@ Do not relitigate these without a stated reason.
 - One primary viewer receives `call` frames; chat events broadcast; zero viewers means tools fail fast.
 - Legacy JSON file contract stays at the project root, unchanged. The MIT skill keeps working.
 - Bare `annealage-mesh` is agent mode; `view` is today's behaviour; `CLAUDECODE` flips the default to viewer-only.
+- A bare invocation starts a fresh session. `-c` continues the most recent and never takes an argument; `-r` is the only flag accepting a session id, and bare `-r` lists and exits. Mutually exclusive.
+- No human-readable transcript is written by default. Export is on demand, as a write-class tool for the model and an unprompted button for the human.
+- Three bind modes: loopback default, `tailscale` resolving `tailscale0`, and explicit or `0.0.0.0`. Non-loopback is supported, not gated behind a scare-flag, and the exposure banner prints every run.
+- Settings live in three layers, CLI over project over user over default, and `GET /settings` reports provenance per value.
+- `bypassPermissions` is never persistable; the per-run token is never written to config; allow-always grants are project-scoped and never cover `Bash`.
+- Narrow-viewport tabbed layout is required, because phone review over Tailscale is a real workflow.
 - Default bind becomes `127.0.0.1`; token plus `Origin` plus `Host` checks; static fallback deleted.
 - `viewer.html` splits into native ES modules, no build step; three.js vendored.
 - `js/store.js` is the single writer for scene state.
@@ -349,7 +408,9 @@ Do not relitigate these without a stated reason.
 
 - Stroke unprojection to 3D coordinates, after M7 ships image-only sketches.
 - `Content-Security-Policy`, easier once assets are vendored.
-- Per-user authentication for the LAN case, beyond the per-run token.
+- Per-user authentication for the LAN case, beyond the per-run token. `tailscale serve` covers the remote case better in the meantime.
+- `--fork`, mapping to `fork_session=True`, for branching a resumed session.
+- An in-pane session picker, replacing the `-r` terminal listing. Wanted eventually, because a phone user has no terminal.
 - Two-tier tool discovery, only if the tool count passes roughly twenty.
 - Extracting a shared browser-control library across Annealage products. Canvas's ground truth was in-process LVGL state and it has no correlation table or pending-future map, so there is nothing to share yet. Revisit once Mesh's `viewers.py` and `commands.js` have proven themselves, and treat this plan's protocol as the candidate to generalise.
 - JS unit tests, which would need a node toolchain. Front-end logic rides on Playwright until that trade changes.
@@ -365,10 +426,7 @@ Do not relitigate these without a stated reason.
 
 ## 8. Open questions for the maintainer
 
-Ranked by how much they block.
+Ranked by how much they block. Three earlier questions are now answered and recorded in section 5: the transcript is export-only, non-loopback binding stays supported with `--host tailscale` recommended, and the narrow-viewport layout is in scope.
 
-1. **Should the git-tracked transcript be on by default?** It satisfies the stated requirement, but it commits conversation text about client hardware, absolute paths and per-turn costs. The alternative is `.mesh/`-only by default with an opt-in to track `review/transcript.md`. Blocks M8 and the scaffolded `.gitignore`.
-2. **Is loopback-only acceptable in agent mode?** `--host 0.0.0.0 --allow-remote` is defensible with a token but exposes an agent with shell access on a LAN with no per-user authentication. Dropping non-loopback entirely in agent mode, and honouring `--host` only in `view` mode, is the safer product decision. The existing mobile CSS suggests reviewing on a phone is a real workflow, so this may be a workflow you actively use. Blocks M4's security posture.
-3. **How locked down should the agent be by default?** This plan gives the `claude_code` preset with everything prompting, that is, genuinely Claude Code in that folder. The alternative is starting with mesh tools plus Read only, with Bash denied, and requiring a flag to widen. A product-posture call, not a technical one. Blocks M5's defaults.
-4. **Is a tabbed narrow-viewport layout in scope for the first release**, or is desktop-only acceptable below about 900 px with a "too narrow for chat" message? Three columns cannot fit the existing 560 px breakpoint. Blocks M3's CSS.
-5. **Is multi-viewer collaborative or just convenience?** If two humans might review together, per-viewer identity needs to appear in the transcript and in pin authorship, which changes the event shapes and the pin schema. Cheap to decide now, expensive to retrofit.
+1. **How locked down should the agent be by default?** This plan gives the `claude_code` preset with everything prompting, that is, genuinely Claude Code in that folder. The alternative is starting with mesh tools plus Read only, with Bash denied, and requiring a flag to widen. A product-posture call, not a technical one. Blocks M5's defaults.
+2. **Is multi-viewer collaborative or just convenience?** If two humans might review together, per-viewer identity needs to appear in the transcript and in pin authorship, which changes the event shapes and the pin schema. Cheap to decide now, expensive to retrofit.
