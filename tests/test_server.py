@@ -96,12 +96,21 @@ def test_index_serves_viewer_html(running_server):
 
 
 def test_manifest_lists_stl(running_server):
-    base, _ = running_server
+    base, served_dir = running_server
     code, headers, body = _get(base + "/manifest")
     assert code == 200
     assert "application/json" in headers.get("Content-Type", "")
     data = json.loads(body.decode("utf-8"))
-    assert data == {"models": [{"name": "widget", "file": "widget.stl"}]}
+    assert data["dir"] == str(served_dir)
+    models = data["models"]
+    assert len(models) == 1
+    model = models[0]
+    # /manifest is a documented contract the shipped viewer consumes (it
+    # reads "path" for the heading); assert the promised keys as a subset
+    # rather than exact equality so additive keys don't break this test.
+    assert model["name"] == "widget"
+    assert model["file"] == "widget.stl"
+    assert model["path"] == str(served_dir / "widget.stl")
 
 
 def test_get_stl_file(running_server):
