@@ -45,7 +45,6 @@ import json
 import os
 import stat
 import sys
-import tempfile
 import time
 from pathlib import Path
 from urllib.parse import unquote
@@ -450,46 +449,20 @@ def _write_comments(record, comments_json, log_fd):
     submit does not stall the event loop's other connections for the
     duration of the write.
 
-    The JSON record is written to a temporary file in the same directory and
-    moved into place with ``os.replace``, which is atomic on POSIX and on
-    Windows. Two submissions arriving together therefore leave one complete
-    record rather than one record's bytes overlaid on another's, and a
-    reader never observes a half-written file. The temporary name is
-    dot-prefixed so the model scan skips it if a crash leaves one behind.
+    The JSON record goes through ``paths.atomic_replace``, so two submissions
+    arriving together leave one complete record rather than one record's bytes
+    overlaid on another's, and a reader never observes a half-written file.
 
     ``log_fd`` is a descriptor the caller opened and validated once, and
     holds for the process's lifetime; see
     ``paths.open_fixed_file_for_append`` for why the name is not resolved per
-    write. The record needs no such treatment: it goes to a fresh ``mkstemp``
+    write. The record needs no such treatment: it goes to a fresh temporary
     file and is moved into place with ``os.replace``, which acts on the
     directory entry and writes through neither a symlink nor a hardlink
     sitting at the destination.
     """
     payload = json.dumps(record, indent=2) + "\n"
-
-    fd, tmp_name = tempfile.mkstemp(
-        dir=str(comments_json.parent), prefix=".mesh-comments-", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(payload)
-            fh.flush()
-            os.fsync(fh.fileno())
-        # mkstemp creates 0600 and os.replace carries the mode across, so
-        # without this the record would silently narrow on every submit. An
-        # existing record keeps whatever mode it already has, so a deliberate
-        # choice by the operator survives; a new one gets the default.
-        try:
-            os.chmod(tmp_name, stat.S_IMODE(
-                os.stat(comments_json, follow_symlinks=False).st_mode))
-        except OSError:
-            os.chmod(tmp_name, _RECORD_FILE_MODE)
-        os.replace(tmp_name, comments_json)
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    paths.atomic_replace(comments_json, payload.encode("utf-8"), _RECORD_FILE_MODE)
 
     # One O_APPEND write per line. O_APPEND makes the seek and the write one
     # operation, so concurrent submissions interleave between lines and never

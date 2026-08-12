@@ -274,6 +274,36 @@ async def test_options_wired_into_the_real_client():
 
 @pytest.mark.asyncio
 @pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
+    """The key in ``mcp_servers`` is what the model-visible
+    ``mcp__<key>__<tool>`` name is built from (fact 1), so a key that
+    disagreed with the server's own name would leave every pre-allowed
+    read-class name matching nothing and every one of those tools prompting.
+    ``MeshTools`` owns that mapping; this asserts nothing rewrites it on the
+    way through, and that the tool count is the sixteen M6 ships."""
+    from annealage_mesh.tools.registry import MeshTools
+
+    class _StubBus:
+        paused = False
+
+        async def call(self, method, params=None, *, timeout=None):
+            raise AssertionError("not exercised by this test")
+
+    mesh_tools = MeshTools(_StubBus(), "/proj/root")
+    session, _transport, _recorder = await _started_session(
+        mcp_servers=mesh_tools.mcp_servers)
+    try:
+        servers = session._client.options.mcp_servers
+        assert list(servers) == ["mesh"]
+        assert servers["mesh"]["type"] == "sdk"
+        assert servers["mesh"]["name"] == "mesh"
+        assert len(mesh_tools.tools) == 16
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
 async def test_no_tripwire_hook_without_an_accepted_digest():
     """A session given no accepted digest installs no hook, so a caller that
     never ran the gate does not get a control that would deny every call."""

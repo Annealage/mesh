@@ -132,6 +132,11 @@ def test_build_hello_round_trips():
             "sdk_session_id": "sdk-1",
             "cwd": "/tmp/proj",
             "agent": "ready",
+            # Defaulted, and present rather than omitted: a page that found no
+            # `paused` key would have to guess, and the safe guess (not paused)
+            # is the one that shows the human a control claiming the agent may
+            # drive the viewer when it may not.
+            "paused": False,
         },
         "protocol": PROTOCOL_VERSION,
     }
@@ -212,6 +217,8 @@ VALID_FRAMES = [
     {"v": PROTOCOL_VERSION, "type": "state",
      "state": {"camera": {}, "visibility": {"lid": True}, "selection": 3,
                "mode": "annotate"}},
+    {"v": PROTOCOL_VERSION, "type": "pause", "paused": True},
+    {"v": PROTOCOL_VERSION, "type": "pause", "paused": False},
 ]
 
 
@@ -362,6 +369,22 @@ def test_validate_inbound_rejects_state_with_an_unknown_key():
         {"v": PROTOCOL_VERSION, "type": "state", "state": {"zoom": 2}})
     assert ok is False
     assert "zoom" in reason
+
+
+def test_validate_inbound_rejects_pause_that_is_not_a_boolean():
+    ok, reason = validate_inbound(
+        {"v": PROTOCOL_VERSION, "type": "pause", "paused": "yes"})
+    assert ok is False
+    assert "true or false" in reason
+
+
+def test_validate_inbound_rejects_a_numeric_pause_value():
+    """``isinstance(True, int)`` is true, so the bool check has to be explicit
+    in this direction. Refused rather than coerced, like every other value
+    here: a client sending something adjacent to the contract is told, instead
+    of having its value read whichever way this server happens to prefer."""
+    ok, _reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "pause", "paused": 1})
+    assert ok is False
 
 
 def test_validate_inbound_rejects_state_value_that_is_not_an_object():

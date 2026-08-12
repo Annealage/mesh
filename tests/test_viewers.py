@@ -43,6 +43,7 @@ from annealage_mesh.viewers import (
     NO_VIEWER_MESSAGE,
     CallError,
     NoViewerConnected,
+    ViewerBus,
     ViewerGone,
     ViewerRegistry,
 )
@@ -659,3 +660,44 @@ async def test_writer_send_failure_removes_the_connection_and_broadcasts_the_new
     frame = json.loads(conn_a.ws.sent[-1][0])
     assert frame["event"]["kind"] == "viewer_primary"
     assert frame["event"]["primary"] == "a"
+
+
+# --- ViewerBus: what the tool layer sees, and the pause switch it holds ------
+
+
+async def test_the_bus_binds_the_timeout_and_the_url_a_tool_should_not_have_to_carry():
+    registry = ViewerRegistry()
+    seen = {}
+
+    async def fake_call(method, params, *, timeout, url):
+        seen.update(method=method, params=params, timeout=timeout, url=url)
+        return {"ok": True}
+
+    registry.call = fake_call
+    bus = ViewerBus(registry, url="http://127.0.0.1:8765/#t=tok", timeout=3.5)
+
+    assert await bus.call("viewer.get_view") == {"ok": True}
+    assert seen == {"method": "viewer.get_view", "params": {},
+                    "timeout": 3.5, "url": "http://127.0.0.1:8765/#t=tok"}
+
+
+async def test_the_bus_reports_no_viewer_with_the_url_to_open():
+    """The wording and the URL are what reach the model as the tool's error, so
+    the bus has to be the thing that knows the URL: a tool handler has no idea
+    what this process bound to."""
+    bus = ViewerBus(ViewerRegistry(), url="http://100.101.1.2:8765/#t=tok")
+    with pytest.raises(NoViewerConnected, match="http://100.101.1.2:8765/#t=tok"):
+        await bus.call("viewer.fit_view")
+
+
+async def test_the_pause_switch_reports_only_a_real_change():
+    """The return value is what stops a redundant `pause_changed` event going
+    out for a click that set the flag to what it already was, which two tabs
+    racing one control produce routinely."""
+    bus = ViewerBus(ViewerRegistry(), url="http://127.0.0.1:8765/#t=tok")
+    assert bus.paused is False
+    assert bus.set_paused(True) is True
+    assert bus.paused is True
+    assert bus.set_paused(True) is False
+    assert bus.set_paused(False) is True
+    assert bus.paused is False

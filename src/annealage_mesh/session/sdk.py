@@ -71,6 +71,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from ..tools import registry
 from . import workspace_trust
 
 from .base import (
@@ -94,16 +95,13 @@ from .base import (
 # MCP tool is visible to the model as ``mcp__<server>__<tool>`` and a bare name
 # in this list silently matches nothing. The write-class tools are deliberately
 # absent: their whole point is that they reach the human.
-READ_CLASS_MESH_TOOLS = (
-    "mcp__mesh__list_models",
-    "mcp__mesh__model_info",
-    "mcp__mesh__get_view",
-    "mcp__mesh__get_visibility",
-    "mcp__mesh__list_comments",
-    "mcp__mesh__list_callouts",
-    "mcp__mesh__capture_view",
-    "mcp__mesh__measure",
-)
+#
+# Re-exported from ``tools/registry.py`` rather than restated, so the list this
+# file pre-allows and the list that module refuses to build without cannot
+# disagree. A name here that no tool answers to would be a pre-allowed tool
+# that does not exist; a write-class name reaching this list would silently
+# remove the human's approval card.
+READ_CLASS_MESH_TOOLS = registry.READ_CLASS_MESH_TOOLS
 
 # Settings files this session reads. "Behaves like Claude Code in that folder"
 # requires it: the default is to load none at all, so a project CLAUDE.md would

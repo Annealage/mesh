@@ -14,15 +14,25 @@ matching the decision already made for ``PUT /settings``. A refusal
 always carries a reason, because a frame refused with no explanation is a
 debugging dead end for a phone user with no terminal.
 
-One outbound shape here is not in plan section 3.3's catalogue:
-``build_refused``. The plan's frame list has no shape for "the server
+Two shapes here are not in plan section 3.3's catalogue, and both are
+flagged rather than buried since they are this module's own additions to
+the contract.
+
+``build_refused``: the plan's frame list has no shape for "the server
 refused one inbound frame and the connection stays open"; the M4 brief
 requires that reason reach the client regardless, and reusing the
 existing browser-to-server ``error`` shape (which always carries a call
 ``id``) would make an uncorrelated protocol refusal look like a failed
 reply to some particular ``call``. ``build_refused`` is a new, minimal
-type for exactly that one purpose; flagged here for review since it is
-the one addition to the contract this module makes.
+type for exactly that one purpose.
+
+The inbound ``pause`` frame: the human's pause switch is enforced in the
+server, because the tools it gates run there, so the browser's control has
+to be able to say what the human chose. Neither addition changes
+``PROTOCOL_VERSION``, and neither needs to: an older page never sends a
+``pause`` frame and simply ignores an event kind or frame type it does not
+recognise, which is the same tolerance every other addition to this
+protocol relies on.
 """
 
 from __future__ import annotations
@@ -120,6 +130,7 @@ def build_hello(
     sdk_session_id: Optional[str],
     cwd: str,
     agent_status: str,
+    paused: bool = False,
 ) -> dict:
     """The greeting sent once, immediately after a successful upgrade.
 
@@ -127,6 +138,13 @@ def build_hello(
     in the stream this connection is starting from, with nothing before
     it left to replay on this send (a separate replay of ring-held events
     follows, driven by the client's own ``last_seq``, not by this frame).
+
+    ``paused`` carries the current state of the human's pause switch, so a
+    tab opened long after it was set shows it. A ``pause_changed`` event
+    announces every later change, but such an event only reaches a client
+    that was connected when it happened: replay reaches back 500 events and
+    a fresh tab replays nothing at all, so the value belongs in the greeting
+    rather than being inferred from the event stream.
     """
     return {
         "v": PROTOCOL_VERSION,
@@ -137,6 +155,7 @@ def build_hello(
             "sdk_session_id": sdk_session_id,
             "cwd": cwd,
             "agent": agent_status,
+            "paused": bool(paused),
         },
         "protocol": PROTOCOL_VERSION,
     }
@@ -239,6 +258,17 @@ def _check_error(frame: dict) -> Optional[str]:
                           "error.error")
 
 
+def _check_pause(frame: dict) -> Optional[str]:
+    # ``isinstance(1, bool)`` is False while ``isinstance(True, int)`` is True,
+    # so checking for bool specifically refuses a numeric 0 or 1 here. That
+    # matches every other check in this module: a client sending something
+    # adjacent to the contract is told, rather than having its value coerced
+    # into whichever reading this server happens to prefer.
+    if not isinstance(frame.get("paused"), bool):
+        return "pause.paused must be true or false"
+    return None
+
+
 def _check_state(frame: dict) -> Optional[str]:
     return _object_error(
         frame.get("state"), {"camera", "visibility", "selection", "mode"}, set(),
@@ -252,7 +282,8 @@ class _Spec:
     check: Optional[Callable[[dict], Optional[str]]] = None
 
 
-# One entry per inbound frame type (plan section 3.3, browser to server).
+# One entry per inbound frame type (plan section 3.3, browser to server,
+# plus ``pause``; see this module's docstring).
 # ``allowed``/``required`` cover the keys beyond ``v``/``type``, which
 # every type carries and neither set repeats. ``check`` runs only once the
 # flat key shape already passed, for the shapes that need to look inside a
@@ -267,6 +298,7 @@ _INBOUND_SPECS = {
     "error": _Spec({"id", "error"}, {"id", "error"}, _check_error),
     "interrupt": _Spec(set(), set()),
     "state": _Spec({"state"}, {"state"}, _check_state),
+    "pause": _Spec({"paused"}, {"paused"}, _check_pause),
 }
 
 

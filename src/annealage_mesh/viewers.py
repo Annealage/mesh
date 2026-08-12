@@ -42,6 +42,12 @@ FLUSH_INTERVAL = 0.03
 
 NO_VIEWER_MESSAGE = "no viewer connected; ask the human to open {url}"
 
+# How long one call into the browser is given to come back (plan section 3.3).
+# Generous enough for a phone over a tailnet to encode a viewport capture, and
+# short enough that a model waiting on a page that will never answer learns so
+# while the human is still watching the same turn.
+CALL_TIMEOUT = 10.0
+
 
 class NoViewerConnected(Exception):
     """Raised by ``ViewerRegistry.call`` when no connection is registered
@@ -639,3 +645,69 @@ class ViewerRegistry:
             if changed:
                 await self._broadcast_primary()
             return False
+
+
+class ViewerBus:
+    """What the tool layer sees of the browser: one correlated call into the
+    primary viewer, and the human's pause switch.
+
+    Every mesh tool handler depends on this rather than on ``ViewerRegistry``,
+    which is what lets ``tests/test_tools.py`` drive all of them against a
+    recorder with the same two members and no socket at all. It also means no
+    handler has to carry the viewer URL that ``NoViewerConnected`` names, or
+    decide a timeout: both are properties of the run, fixed here once.
+
+    **The pause switch lives here, in the server, and that is the whole
+    point of it.** A flag the browser kept would not be enforcement: the tools
+    run in this process, and a page is free to be old, cached, or simply a
+    second tab that never saw the click. The browser's control sends an
+    inbound ``pause`` frame, ``http/ws.py`` sets the flag through this object,
+    and the tool registry reads it before it runs any write-class tool. What
+    the human sees in the topbar is then a display of a decision recorded
+    here, not the decision itself.
+
+    Read-class tools are deliberately not gated. Pausing exists so the human
+    can edit a pin comment without the agent moving the camera out from under
+    them; a model that goes on reading the view while paused is doing no harm
+    and is better informed when the pause lifts.
+    """
+
+    def __init__(self, registry: ViewerRegistry, *, url: str,
+                 timeout: float = CALL_TIMEOUT):
+        self._registry = registry
+        self._url = url
+        self._timeout = timeout
+        self._paused = False
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    def set_paused(self, paused: bool) -> bool:
+        """Record the human's choice; return True if it changed anything.
+
+        The return value is what stops a redundant ``pause_changed`` event
+        going out for a click that set the flag to what it already was, which
+        two tabs racing the same control produce routinely.
+        """
+        paused = bool(paused)
+        if paused == self._paused:
+            return False
+        self._paused = paused
+        return True
+
+    async def call(self, method: str, params: Optional[dict] = None, *,
+                   timeout: Optional[float] = None) -> Any:
+        """Ask the primary viewer to run ``method`` and return its reply.
+
+        Raises what ``ViewerRegistry.call`` raises, untranslated:
+        ``NoViewerConnected``, ``ViewerGone``, ``CallError`` and
+        ``asyncio.TimeoutError``. Turning those into tool errors is the
+        registry's job (``tools/registry.py``), in one place, because the four
+        of them mean four different things to a model and a wrapper here would
+        have to flatten them to say anything at all.
+        """
+        return await self._registry.call(
+            method, params or {},
+            timeout=self._timeout if timeout is None else timeout,
+            url=self._url)

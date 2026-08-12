@@ -23,7 +23,7 @@ from .http.routes_viewer import register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import CalloutsChanged, ModelsChanged
 from .session.events import EventLog
-from .viewers import ViewerRegistry
+from .viewers import ViewerBus, ViewerRegistry
 
 # The port used when a caller does not name one. Kept here rather than only in
 # argparse so an app built directly, as the tests do, computes the same
@@ -138,6 +138,14 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
         str(sessions.events_path(serve_dir, mesh_session_id))
         if mesh_session_id is not None else None)
     registry = ViewerRegistry(event_log=event_log, on_presence=_presence)
+    # The tool layer's view of the browser, and the holder of the human's pause
+    # switch. Built here rather than by the session factory because both halves
+    # of it are properties of this app: the registry it calls through, and the
+    # URL a tool has to name when it reports that no viewer is attached. It
+    # imports no SDK, so a viewer-only run pays nothing for it, and ``ws.py``
+    # needs it whether or not a session exists in order to answer a browser's
+    # pause control.
+    bus = ViewerBus(registry, url=net.viewer_url(bind, port, token))
     session_info = {
         "id": mesh_session_id if mesh_session_id is not None else "viewer-only",
         "sdk_session_id": None,
@@ -146,15 +154,17 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     }
     app.mesh_registry = registry
     app.mesh_event_log = event_log
+    app.mesh_bus = bus
 
     # ``build_session`` is called with the callback a session must use to
-    # publish an event, and returns the session or None for viewer-only. It is
-    # a factory rather than a constructed object so that the event callback,
-    # which needs the registry and the log built above, exists before the
-    # session that will call it, without either module importing the other.
+    # publish an event, plus the bus its tools drive the browser through, and
+    # returns the session or None for viewer-only. It is a factory rather than a
+    # constructed object so that both of those, which need the registry and the
+    # log built above, exist before the session that will use them, without
+    # either module importing the other.
     session = None
     if build_session is not None:
-        session = build_session(_event_publisher(registry, event_log))
+        session = build_session(_event_publisher(registry, event_log), bus=bus)
         presence_listener.append(session.on_viewer_presence)
     app.mesh_session = session
     if session is not None:
@@ -165,7 +175,8 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
 
     register_ws(app, token=token, allowed_origins=allowed_origins,
                 allowed_hosts=allowed_hosts, registry=registry,
-                event_log=event_log, session_info=session_info, session=session)
+                event_log=event_log, session_info=session_info, session=session,
+                bus=bus if session is not None else None)
 
     @app.errorhandler(413)
     async def _payload_too_large(req):

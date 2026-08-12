@@ -1,9 +1,17 @@
 /**
  * Renderer, camera, controls, lights, grid, axes, sizing and the render
- * loop. Fit view and the up-axis toggle live here because both act on the
- * camera; they take no mesh table of their own, instead calling the
- * `getMeshes` callback the caller supplies, since the loaded meshes are a
- * side table owned by models.js, not scene state.
+ * loop. Fit view, the up-axis toggle, reading and setting the camera and
+ * capturing the canvas all live here because every one of them acts on the
+ * camera or the renderer; they take no mesh table of their own, instead
+ * calling the `getMeshes` callback the caller supplies, since the loaded
+ * meshes are a side table owned by models.js, not scene state.
+ *
+ * `cameraState`, `setView` and `captureView` are what js/commands.js answers
+ * the server's camera and capture calls with. They are here rather than there
+ * so that no second module does arithmetic on the camera: the depth range
+ * after a move and the drawing-buffer rules for a screenshot are both
+ * properties of this renderer, and a caller reasoning about them from outside
+ * would be reasoning about state it cannot see.
  */
 
 import * as THREE from "three";
@@ -82,9 +90,14 @@ export function initScene(container, { getMeshes }) {
     return Math.max(1.5, r * 0.018);
   }
 
+  // Returns whether it actually framed anything, which is false when no mesh
+  // is both loaded and visible. The click handler and the keyboard shortcut
+  // ignore that; a tool call reports it, because "fitted" and "there was
+  // nothing to fit" are different answers and the camera looks identical
+  // either way.
   function fitView() {
     const sph = visibleBounds();
-    if (!sph) return;
+    if (!sph) return false;
     const r = sph.radius || 100;
     controls.target.copy(sph.center);
     const dir = new THREE.Vector3(1.1, -1.2, 0.75).normalize();
@@ -93,6 +106,97 @@ export function initScene(container, { getMeshes }) {
     camera.far = r * 50;
     camera.updateProjectionMatrix();
     controls.update();
+    return true;
+  }
+
+  function round(v, d = 3) {
+    const f = Math.pow(10, d);
+    return Math.round(v * f) / f;
+  }
+
+  /**
+   * The camera as plain numbers, for a tool to read and for the reply to
+   * every command that moves it. Rounded, because a camera position is read
+   * by a model and by a human, and seventeen significant figures of float
+   * noise is not information either of them wants.
+   */
+  function cameraState() {
+    return {
+      position: [round(camera.position.x), round(camera.position.y), round(camera.position.z)],
+      target: [round(controls.target.x), round(controls.target.y), round(controls.target.z)],
+      up_axis: store.getState().upAxis,
+      fov: camera.fov,
+      size: { width: renderer.domElement.width, height: renderer.domElement.height },
+    };
+  }
+
+  /**
+   * Move the camera, its target, or both, and keep the depth range usable.
+   *
+   * `near` and `far` are recomputed from the new eye-to-target distance in
+   * the same proportions `fitView` uses (there, distance is `r * 2.6`, near
+   * is `r / 50` and far is `r * 50`). Without that, a camera moved from a
+   * fit on a 10 mm part out to look at a 400 mm one keeps the previous
+   * fit's `far` and the part is simply clipped away, which reads as an
+   * empty view rather than as a camera in the wrong place.
+   */
+  function setView({ position, target }) {
+    if (target) controls.target.set(target[0], target[1], target[2]);
+    if (position) camera.position.set(position[0], position[1], position[2]);
+    const dist = camera.position.distanceTo(controls.target) || 1;
+    camera.near = dist / 130;
+    camera.far = dist * 20;
+    camera.updateProjectionMatrix();
+    controls.update();
+    return cameraState();
+  }
+
+  /**
+   * Render one frame and return it as a data URL, plus the encoding used.
+   *
+   * Synchronous from the render to the last `toDataURL`, and that is
+   * load-bearing rather than incidental: the renderer is created without
+   * `preserveDrawingBuffer`, so the drawing buffer is cleared when the
+   * browser next composites, and any `await` in here would let a
+   * `requestAnimationFrame` land in between and hand back a blank image.
+   *
+   * `encodings` is tried in order and the first result within `maxChars` is
+   * returned, so an ordinary view comes back as lossless PNG and a busy one
+   * falls back to JPEG rather than producing a frame the server's inbound
+   * ceiling would reject (see `http/ws.py`'s MAX_WS_MESSAGE: an oversized
+   * frame is not refused, it drops the connection). Returns null when even
+   * the last encoding is too large, which the caller reports as a failure.
+   *
+   * `width`, when given, is the exact pixel width of the returned image:
+   * the device pixel ratio is set to 1 for the capture, because otherwise a
+   * request for 1024 would return 2048 pixels on a retina display and quietly
+   * pass whatever cap the caller thought it was setting.
+   */
+  function captureView({ width, encodings, maxChars }) {
+    const canvas = renderer.domElement;
+    const cssSize = renderer.getSize(new THREE.Vector2());
+    const previousRatio = renderer.getPixelRatio();
+    const resize = !!width && width !== canvas.width;
+    if (resize) {
+      const height = Math.max(1, Math.round((width * canvas.height) / canvas.width));
+      renderer.setPixelRatio(1);
+      renderer.setSize(width, height, false);
+    }
+    try {
+      renderer.render(scene, camera);
+      for (const [format, quality] of encodings) {
+        const image = canvas.toDataURL("image/" + format, quality);
+        if (image.length <= maxChars) {
+          return { image, format, width: canvas.width, height: canvas.height };
+        }
+      }
+      return null;
+    } finally {
+      if (resize) {
+        renderer.setPixelRatio(previousRatio);
+        renderer.setSize(cssSize.x, cssSize.y, false);
+      }
+    }
   }
 
   document.getElementById("fit").addEventListener("click", fitView);
@@ -149,5 +253,6 @@ export function initScene(container, { getMeshes }) {
     if (haveSize) renderer.render(scene, camera);
   })();
 
-  return { scene, camera, renderer, controls, fitView, markerRadius };
+  return { scene, camera, renderer, controls, fitView, markerRadius, cameraState,
+           setView, captureView };
 }

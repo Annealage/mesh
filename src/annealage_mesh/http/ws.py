@@ -32,7 +32,7 @@ from microdot import Response
 from microdot.websocket import WebSocket, WebSocketError, websocket_upgrade
 
 from .. import protocol
-from ..session.base import UnknownRequest
+from ..session.base import PauseChanged, UnknownRequest
 from ..viewers import ViewerRegistry
 
 # Inbound frame ceiling. Set explicitly because microdot's default,
@@ -40,11 +40,19 @@ from ..viewers import ViewerRegistry
 # which app.py raises to 8 MiB for pin submissions: without this line, an
 # unrelated route's upload allowance silently becomes the per-frame buffer
 # ceiling on every socket, and a frame is buffered whole before it is
-# validated. 256 KiB comfortably holds the largest frame the protocol
-# defines, a turn of text plus a permission decision; images arrive over
-# POST /upload rather than over the socket, so nothing legitimate here is
-# anywhere near this size.
-MAX_WS_MESSAGE = 256 * 1024
+# validated.
+#
+# 4 MiB rather than something tighter because of one frame kind: the ``result``
+# answering a ``capture_view`` call carries a screenshot of the 3D canvas as a
+# base64 data URL, and a 1568-pixel-wide render of a shaded part does not fit
+# in the few hundred kilobytes every other frame needs. The consequence of
+# getting this wrong is worse than a large buffer: microdot raises
+# ``WebSocketError('Message too large')`` on an oversized frame, which this
+# route cannot answer, so the connection simply drops and the human's tab
+# reconnects with no explanation. ``static/js/commands.js`` keeps its own,
+# smaller cap and re-encodes a capture until it fits, so a reply that would
+# hit this limit is not supposed to be sent at all; this is the backstop.
+MAX_WS_MESSAGE = 4 * 1024 * 1024
 
 # How often every connected viewer is pinged.
 #
@@ -95,7 +103,7 @@ def host_is_allowed(req, allowed_hosts):
 
 
 def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
-                event_log, session_info, session=None):
+                event_log, session_info, session=None, bus=None):
     """Register ``/ws`` on ``app``.
 
     ``token`` of ``None`` means no token was configured for this process, and
@@ -104,6 +112,12 @@ def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
     that should not open, and the command-line entry point always generates a
     token, so the only way to reach this state is a caller that built an app
     without one.
+
+    ``bus`` is the ``ViewerBus`` holding the human's pause switch, and is
+    ``None`` in viewer-only mode, where there are no mesh tools to pause. It is
+    read for the ``hello`` frame and written by an inbound ``pause`` frame; this
+    module never calls through it, because a ``call`` originates with a tool,
+    never with a socket.
     """
 
     @app.get("/ws")
@@ -134,11 +148,12 @@ def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
                 session_info.get("sdk_session_id"),
                 session_info["cwd"],
                 session_info.get("agent", "unavailable"),
+                paused=bus.paused if bus is not None else False,
             )))
             if not await _greet(ws, event_log, token):
                 return Response.already_handled
             conn = await registry.add(ws)
-            await _serve_connection(ws, conn, registry, event_log, token, session)
+            await _serve_connection(ws, conn, registry, event_log, token, session, bus)
         except WebSocketError:
             # The peer closed, or sent a frame microdot could not read. Not
             # an error worth reporting: a browser tab closing is the ordinary
@@ -289,7 +304,7 @@ async def _parse(ws, raw):
     return result
 
 
-async def _serve_connection(ws, conn, registry, event_log, token, session=None):
+async def _serve_connection(ws, conn, registry, event_log, token, session=None, bus=None):
     """Read and dispatch frames until the peer goes away.
 
     Every frame this sends is either a ``refused``, which carries no seq, or a
@@ -307,10 +322,10 @@ async def _serve_connection(ws, conn, registry, event_log, token, session=None):
             continue
         if frame is _CLOSED:
             return
-        await _dispatch(ws, conn, registry, event_log, token, frame, session)
+        await _dispatch(ws, conn, registry, event_log, token, frame, session, bus)
 
 
-async def _dispatch(ws, conn, registry, event_log, token, frame, session=None):
+async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, bus=None):
     """Route one validated inbound frame."""
     kind = frame["type"]
     if kind == "hello":
@@ -328,6 +343,29 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None):
         return
     if kind == "state":
         await registry.touch(conn)
+        return
+    if kind == "pause":
+        if bus is None:
+            # Viewer-only: there are no mesh tools to pause, so a control that
+            # appeared to work would be worse than one that says so.
+            await ws.send(json.dumps(protocol.build_refused(
+                "this server is running viewer-only, so there are no agent tools "
+                "to pause")))
+            return
+        await registry.touch(conn)
+        if not bus.set_paused(frame["paused"]):
+            # Already in that state, which two tabs racing the same control
+            # produce routinely. Nothing changed, so nothing is announced: an
+            # event per redundant click would make every other tab re-render for
+            # no reason.
+            return
+        # Announced to every viewer, not answered to this one, because the
+        # switch is one property of the server and each tab has a control
+        # showing it. Through the log, so the seq stays part of the one
+        # monotonic stream a reconnecting client replays from.
+        event = PauseChanged(paused=bus.paused)
+        seq = event_log.append(event)
+        await registry.broadcast(protocol.build_event(seq, event.to_wire()))
         return
     if kind in ("turn", "interrupt", "permission"):
         if session is None:

@@ -12,14 +12,17 @@ Files this module reads:
 
 Files this module opens for the caller to write, without writing itself:
     mesh-comments.log    opened once by ``open_fixed_file_for_append``
+    images/*.png         created by ``create_image_file`` for a captured view
 
 Files this module only locates, so writer and resolver agree where they live:
     mesh-comments.json   human submissions, replaced atomically by the caller
 """
 
 import os
+import re
 import stat
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
@@ -145,6 +148,20 @@ _MAX_FIXED_FILE_BYTES = 4 * 1024 * 1024
 # Neither flag sees a hardlink, because a hardlink is not a link at the path
 # level; the fstat check on the resulting descriptor covers that.
 OPEN_GUARD_FLAGS = getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+
+# What a file this package creates under ``images/`` may be called. A single
+# component of the ordinary filename characters, not starting with a dot, and
+# ending in one of the extensions the /asset route already serves: a name this
+# pattern accepts is one that route can hand back, so nothing is ever written
+# that cannot then be looked at. The pattern is the whole containment check for
+# a model-supplied name, which is why it is a whitelist and not a blacklist of
+# ``..`` and ``/``.
+_IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.(png|jpg|jpeg|webp)$",
+                            re.IGNORECASE)
+
+# Mode for an image this package creates. Matches the record files rather than
+# mkstemp's 0600, because these are meant to be committed and looked at.
+_IMAGE_FILE_MODE = 0o644
 
 
 def resolve_serve_dir(path):
@@ -865,6 +882,94 @@ def read_fixed_file(serve_dir, name):
         return None
     finally:
         os.close(fd)
+
+
+def atomic_replace(target, data, default_mode=0o644):
+    """Write ``data`` to ``target`` so a reader never sees a partial file.
+
+    The bytes go to a temporary file in ``target``'s own directory and are
+    moved into place with ``os.replace``, which is atomic on POSIX and on
+    Windows. Two writers therefore leave one complete file rather than one's
+    bytes overlaid on the other's, and a reader either sees the old contents or
+    the new ones. That matters for every file in the served directory that
+    something else polls: the callouts watcher samples a digest several times a
+    second, and the viewer fetches the file the moment it changes.
+
+    ``os.replace`` acts on the directory entry, so it writes through neither a
+    symlink nor a hardlink sitting at the destination; ``safe_fixed_file``'s
+    checks are about what a *reader* would follow and what an appending writer
+    would land on, not about this path.
+
+    The temporary name is dot-prefixed so the model scan skips one left behind
+    by a crash. An existing file's mode is carried across, so a deliberate
+    choice by the operator survives a rewrite, and ``default_mode`` applies
+    only to a file this call creates: ``mkstemp`` makes 0600 and ``os.replace``
+    would otherwise silently narrow the file on every write.
+
+    Raises ``OSError``; the caller decides what a failed write means.
+    """
+    target = Path(target)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(target.parent), prefix=".%s." % target.name, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        try:
+            os.chmod(tmp_name, stat.S_IMODE(os.stat(target, follow_symlinks=False).st_mode))
+        except OSError:
+            os.chmod(tmp_name, default_mode)
+        os.replace(tmp_name, target)
+    except BaseException:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
+    return target
+
+
+def create_image_file(serve_dir, name):
+    """Create ``serve_dir``/images/``name`` for writing and return its descriptor.
+
+    Returns None when the name is not one this package will write or the
+    ``images`` entry is not something safe to write into, and raises
+    ``FileExistsError`` when that exact name is already taken, which the caller
+    is expected to answer by choosing another one rather than by overwriting:
+    every image under ``images/`` is git-tracked evidence of what a part looked
+    like at some moment, and silently replacing one loses that.
+
+    ``name`` is a single path component matching ``_IMAGE_NAME_RE``, so it
+    cannot traverse, cannot be hidden, and cannot arrive with a suffix this
+    package does not serve. That matters because the name may come from the
+    model: a snapshot tool takes one so the file is findable afterwards, and a
+    model-supplied string is exactly the input a containment check exists for.
+
+    ``images/`` is created if absent, and refused if it is a symlink. Refusing
+    the link matches ``resolve_asset``'s rule and is not paranoia about reading:
+    a link named ``images`` makes this a writer into whatever it points at,
+    which is a way to have this process create files anywhere its user can.
+    The open carries ``O_EXCL`` and ``O_NOFOLLOW`` so the descriptor is a file
+    this call created, at this name, rather than whatever appeared there while
+    the checks above were running.
+    """
+    serve_dir = resolve_serve_dir(serve_dir)
+    if not _IMAGE_NAME_RE.match(name or ""):
+        return None
+    images_dir = serve_dir / IMAGES_DIRNAME
+    if images_dir.is_symlink():
+        return None
+    try:
+        images_dir.mkdir(exist_ok=True)
+    except OSError:
+        return None
+    if not images_dir.is_dir():
+        return None
+    target = images_dir / name
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(target, flags, _IMAGE_FILE_MODE)
+    return fd, target
 
 
 def safe_join(base, rel):

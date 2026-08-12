@@ -320,14 +320,15 @@ def main(argv=None):
     # below runs inside create_app, after this closure is defined.
     built_session = []
 
-    def build_session(on_event):
+    def build_session(on_event, *, bus):
         """Construct the agent session, or None for viewer-only mode.
 
         Called by ``create_app`` with the callback that appends an event to the
-        log and broadcasts it, which is why this is a factory: the session must
-        not exist before the log and registry it publishes through.
+        log and broadcasts it, plus the ``ViewerBus`` the mesh tools drive the
+        browser through, which is why this is a factory: the session must not
+        exist before either of the things it uses.
 
-        Imported here rather than at module scope so that ``view`` mode, and
+        Imported here rather than at module scope so that viewer-only mode, and
         anything that only wants the CLI's argument parsing, never pays for
         importing the SDK.
         """
@@ -335,6 +336,7 @@ def main(argv=None):
             return None
         from .session.permissions import PermissionBroker
         from .session.sdk import SdkSession
+        from .tools.registry import MeshTools
 
         broker = PermissionBroker(
             on_event,
@@ -346,6 +348,11 @@ def main(argv=None):
             cwd=serve_dir,
             session_id=mesh_sid,
             broker=broker,
+            # The mesh tool server. Its read-class tools are already in the
+            # session's own allow list, so nothing further is passed for them;
+            # the write-class ones are absent from every allow list, which is
+            # what makes them reach the broker above and therefore the human.
+            mcp_servers=MeshTools(bus, serve_dir).mcp_servers,
             model=args.model,
             permission_mode=args.permission_mode,
             # The SDK resumes only a conversation it already knows; a

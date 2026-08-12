@@ -236,6 +236,25 @@ class ModelsChanged(AgentEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class PauseChanged(AgentEvent):
+    """The human's pause switch moved, and write-class mesh tools now refuse
+    (or have stopped refusing).
+
+    Broadcast rather than answered to the tab that flipped it, because the
+    switch is one property of the running server and every attached view has a
+    control showing it: a phone still offering to pause something the laptop
+    already paused invites a click that changes nothing.
+
+    The current value also travels in the ``hello`` frame, since a tab that
+    connects later has no event to learn it from.
+    """
+
+    kind: ClassVar[str] = "pause_changed"
+    paused: bool = False
+    viewer: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ViewerPrimary(AgentEvent):
     """Announces which connection now receives ``call`` frames.
 

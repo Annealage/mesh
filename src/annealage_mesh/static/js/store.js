@@ -55,6 +55,14 @@
  *                 layout.js's TABS entries.
  *   panelOpen     boolean
  *                 whether the side panel is shown at wide viewports.
+ *   paused        boolean
+ *                 whether the human has paused the agent's control of this
+ *                 viewer. Written only from what the server reports (the
+ *                 hello frame's `session.paused` and every `pause_changed`
+ *                 event), never optimistically from the click that asked for
+ *                 the change: the flag is enforced in the server, where the
+ *                 tools it gates run, so a local value could show "paused"
+ *                 while they were still running.
  *   connection    'connecting' | 'live' | 'polling' | 'refused'
  *                 ws.js's view of the /ws socket, read by the topbar
  *                 indicator. 'live' means callouts arrive by push;
@@ -105,6 +113,7 @@ let state = Object.freeze({
   measure: Object.freeze({ a: "", b: "" }),
   activeTab: "model",
   panelOpen: false,
+  paused: false,
   connection: "connecting",
   chat: Object.freeze({
     turns: Object.freeze([]),
@@ -294,6 +303,12 @@ function setConnection(v) {
   commit(() => {
     state = { ...state, connection: v };
   }, ["connection"]);
+}
+
+function setPaused(v) {
+  commit(() => {
+    state = { ...state, paused: !!v };
+  }, ["paused"]);
 }
 
 // Finds the turn record for `turn` in `chat.turns`, or builds one, pairing it
@@ -498,6 +513,7 @@ export const store = {
   setActiveTab,
   setPanelOpen,
   setConnection,
+  setPaused,
   appendChatTextDelta,
   addChatToolUse,
   setChatToolResult,

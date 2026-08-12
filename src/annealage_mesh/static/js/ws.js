@@ -20,12 +20,19 @@
  * `onHello` and `onAgentEvent` are the chat pane's two inbound hooks:
  * `onHello` receives the hello frame's `session` object once per connection
  * (including every reconnect, since agent status can change between them),
- * and `onAgentEvent` receives every event whose kind is not
- * `callouts_changed`. Neither is called from here except at those two
- * points; chat.js, not this module, decides what an event means. The
- * returned `send` is this module's only outbound capability, so a turn,
- * permission or interrupt frame still goes out over the one socket this
- * closure owns, with no second connection or second reconnect policy.
+ * and `onAgentEvent` receives every event whose kind this module does not
+ * handle itself. Neither is called from here except at those two points;
+ * chat.js, not this module, decides what an event means. The returned `send`
+ * is this module's only outbound capability, so a turn, permission, pause or
+ * interrupt frame still goes out over the one socket this closure owns, with
+ * no second connection or second reconnect policy.
+ *
+ * `dispatchCall` is commands.js's method table, and it is what makes a `call`
+ * frame do something: this module owns the correlation (answer the id, exactly
+ * once, whatever happened) and knows nothing about what any method means.
+ * `onPaused` receives the pause flag from both places it can arrive, the hello
+ * frame and a `pause_changed` event, so its caller has one path to reconcile
+ * rather than two.
  */
 
 import { store } from "./store.js";
@@ -133,6 +140,8 @@ export function initWs({
   refetchModels,
   onHello = () => {},
   onAgentEvent = () => {},
+  onPaused = () => {},
+  dispatchCall = null,
 }) {
   let ws = null;
   let opened = false; // true once this attempt's WebSocket has reached readyState OPEN
@@ -250,6 +259,8 @@ export function initWs({
       handleHello(frame);
     } else if (frame.type === "event") {
       handleEvent(frame);
+    } else if (frame.type === "call") {
+      handleCall(frame);
     } else if (frame.type === "refused") {
       // Always sent in answer to something this page sent, and always
       // carrying a reason. Dropping it would leave the human watching for an
@@ -257,9 +268,49 @@ export function initWs({
       // discarded one layer below the UI.
       toast(frame.reason || "the server refused that request", false);
     }
-    // "call" and "ping": no handler yet. An unrecognised type from a
-    // same-version server is simply a frame this build of the page has no
-    // use for, not an error.
+    // "ping": nothing to do beyond the liveness reset above, which every
+    // inbound frame already did. An unrecognised type from a same-version
+    // server is simply a frame this build of the page has no use for, not an
+    // error.
+  }
+
+  /**
+   * Run one server-initiated `call` and answer it, exactly once.
+   *
+   * Every path builds a reply, and that is the point: the server holds a
+   * pending future per call id with a model waiting on it, so a call this page
+   * cannot serve has to say so rather than be left to time out. `dispatchCall`
+   * is optional for the same reason, rather than assumed present.
+   *
+   * Not awaited by the caller: `handleMessage` must return to the socket's
+   * message loop immediately, or a capture that takes 200 ms would stall every
+   * event queued behind it, including the `turn_end` ending the very turn this
+   * call belongs to. Nothing in here may therefore reject, since there is no
+   * caller left to catch it.
+   */
+  async function handleCall(frame) {
+    let reply;
+    try {
+      if (!dispatchCall) throw new Error("this viewer does not serve calls");
+      const result = await dispatchCall(frame.method, frame.params);
+      // `result` is a required key on this frame, and `undefined` would drop
+      // out of JSON.stringify entirely and be refused by the server's
+      // whitelist validation, so a method that returns nothing sends {}.
+      reply = { v: PROTOCOL_VERSION, type: "result", id: frame.id,
+                result: result === undefined ? {} : result };
+    } catch (err) {
+      reply = { v: PROTOCOL_VERSION, type: "error", id: frame.id,
+                error: { code: (err && err.code) || "viewer_failed",
+                         message: String((err && err.message) || err) } };
+    }
+    try {
+      send(reply);
+    } catch (err) {
+      // The socket went between the guard inside `send` and the write itself.
+      // Nothing to do and nothing lost: the server fails every call pending on
+      // a closed connection the moment it notices, without waiting out the
+      // timeout.
+    }
   }
 
   function handleHello(frame) {
@@ -284,6 +335,10 @@ export function initWs({
     // act on, so a part regenerated during the gap would otherwise stay stale
     // until something else changed.
     refetchModels();
+    // The pause flag comes with the greeting for the same reason: this tab may
+    // have connected long after it was set, and `pause_changed` only reaches a
+    // client that was attached when it happened.
+    onPaused(!!(frame.session && frame.session.paused));
     onHello(frame.session);
   }
 
@@ -294,6 +349,8 @@ export function initWs({
       refetchCallouts();
     } else if (kind === "models_changed") {
       refetchModels();
+    } else if (kind === "pause_changed") {
+      onPaused(!!frame.event.paused);
     } else {
       onAgentEvent(frame.event);
     }

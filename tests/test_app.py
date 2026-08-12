@@ -148,7 +148,7 @@ async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_
     sid = sessions.create_session(tmp_path)
     built = []
 
-    def build_session(on_event):
+    def build_session(on_event, *, bus):
         session = FakeSession(on_event, session_id=sid)
         built.append(session)
         return session

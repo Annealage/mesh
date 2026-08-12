@@ -18,6 +18,8 @@ these for real with:
         python -m pytest tests/test_viewer_e2e.py -q
 """
 
+import asyncio
+import base64
 import glob
 import json
 import os
@@ -119,8 +121,6 @@ class _ServerThread:
 
     def start(self):
         def _run():
-            import asyncio
-
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
@@ -320,14 +320,21 @@ def chat_server(tmp_path_factory):
     d = tmp_path_factory.mktemp("mesh_e2e_chat")
     (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
     sessions = []
+    buses = []
 
-    def build_session(on_event):
+    def build_session(on_event, *, bus):
         session = FakeSession(on_event)
         sessions.append(session)
+        buses.append(bus)
         return session
 
     server = _ServerThread(d, token=secrets.token_urlsafe(16), build_session=build_session)
     server.start()
+    # The `ViewerBus` this app built, kept on the server handle rather than
+    # yielded alongside it so the tests that predate M6 are untouched. The
+    # mesh-tool tests need it: it is the only way to reach the browser the way a
+    # tool does, through the same registry, timeout and pause flag.
+    server.bus = buses[0]
     try:
         yield server, sessions[0]
     finally:
@@ -1416,5 +1423,294 @@ def test_a_callout_carrying_markup_renders_as_text_not_html(browser, mesh_server
         assert payload in row.inner_text()
         assert page.evaluate("() => document.querySelectorAll('#agentPins img').length") == 0
         assert page.evaluate("() => window.__xss === true") is False
+    finally:
+        page.close()
+
+
+# 20. Mesh tools: a real tool call drives the browser --------------------------
+
+def _mesh_tools(server):
+    """`{name: handler}` for a tool server built on this app's own bus.
+
+    Built here rather than in the fixture because it is what a session does:
+    `cli.py` constructs `MeshTools` from the bus `create_app` handed its
+    factory, and reaching the browser any other way (calling `registry.call`
+    directly, say) would test the transport while skipping the layer that
+    turns a viewer failure into something a model can act on.
+    """
+    from annealage_mesh.tools.registry import MeshTools
+
+    return {t.name: t.handler for t in MeshTools(server.bus, server.serve_dir).tools}
+
+
+def _call_tool(server, name, args=None):
+    """Run one mesh tool to completion on the server's own event loop.
+
+    `run_coroutine_threadsafe`, not `call_soon_threadsafe`: a tool call is a
+    round trip into the browser and back, so this test thread has to be able to
+    wait for its result and see its exceptions, which a fire-and-forget
+    scheduling cannot give it.
+    """
+    handler = _mesh_tools(server)[name]
+    future = asyncio.run_coroutine_threadsafe(handler(args or {}), server._loop)
+    return future.result(timeout=20)
+
+
+def _tool_text(result):
+    for item in result["content"]:
+        if item["type"] == "text":
+            return item["text"]
+    return ""
+
+
+def test_a_set_view_tool_call_actually_moves_the_camera(browser, chat_server):
+    """M6's deliverable, end to end: a tool handler, the pending-future
+    correlation in `viewers.py`, the `call` frame, `ws.js`'s dispatch,
+    `commands.js`'s method table, and a camera that is somewhere else
+    afterwards. Every layer in that list is covered on its own elsewhere; this
+    is the only test that proves they are joined up.
+    """
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        result = _call_tool(server, "set_view", {"position": [80, -60, 40],
+                                                 "target": [1, 2, 3]})
+        assert "is_error" not in result, _tool_text(result)
+
+        assert page.evaluate("() => window.mesh.camera.position.toArray()") == \
+            pytest.approx([80, -60, 40], abs=0.01)
+        assert page.evaluate("() => window.mesh.controls.target.toArray()") == \
+            pytest.approx([1, 2, 3], abs=0.01)
+        # And the tool told the model where the camera ended up, rather than
+        # only that the call succeeded.
+        assert json.loads(_tool_text(result))["target"] == pytest.approx([1, 2, 3], abs=0.01)
+    finally:
+        page.close()
+
+
+def test_a_set_visibility_tool_call_moves_the_checkbox_and_the_mesh(browser, chat_server):
+    """The demo from the M6 brief, "ask the model to hide a part". It goes
+    through `store.setVisibility`, so the checkbox and the mesh's own `visible`
+    flag both move: a tool that reached into the mesh directly would leave the
+    human looking at a checked box for a hidden part."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+        rel = page.evaluate("() => window.mesh.store.getState().models[0].rel")
+        checkbox = page.locator("#parts label").nth(0).locator("input[type=checkbox]")
+        assert checkbox.is_checked()
+
+        result = _call_tool(server, "set_visibility", {"rel": rel, "visible": False})
+        assert "is_error" not in result, _tool_text(result)
+
+        page.wait_for_function("(rel) => window.mesh.meshes[rel].visible === false", arg=rel)
+        assert not checkbox.is_checked()
+    finally:
+        page.close()
+
+
+def test_a_capture_view_tool_call_returns_the_real_canvas_as_png(browser, chat_server):
+    """Fact 8's payoff, and the one command whose correctness cannot be
+    reasoned about from the source: the renderer has no `preserveDrawingBuffer`,
+    so a capture taken outside the synchronous render-then-read block comes back
+    as a valid PNG of nothing at all. This decodes the bytes and checks the
+    image is the size the canvas was asked for."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        result = _call_tool(server, "capture_view", {"width": 320})
+        assert "is_error" not in result, _tool_text(result)
+        images = [item for item in result["content"] if item["type"] == "image"]
+        assert len(images) == 1
+        assert images[0]["mimeType"] == "image/png"
+        raw = base64.b64decode(images[0]["data"])
+        assert raw.startswith(b"\x89PNG\r\n\x1a\n")
+        # A PNG's IHDR carries the dimensions at a fixed offset, which is enough
+        # to prove the requested width was honoured without a decoder.
+        width, height = struct.unpack(">II", raw[16:24])
+        assert width == 320
+        assert height > 0
+        assert json.loads(_tool_text(result))["width"] == 320
+        # Not blank: an all-one-colour render compresses to almost nothing, and
+        # a cube lit by three lights does not.
+        assert len(raw) > 2000
+    finally:
+        page.close()
+
+
+def test_a_snapshot_tool_call_writes_a_file_the_asset_route_serves(browser, chat_server):
+    """The other half of capture: the same bytes, written where a human can
+    commit them, and reachable through the route that already serves images/."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        result = _call_tool(server, "snapshot", {"name": "front", "width": 256})
+        assert "is_error" not in result, _tool_text(result)
+        payload = json.loads(_tool_text(result))
+        written = server.serve_dir / "images" / "front.png"
+        assert written.is_file()
+        assert written.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+
+        served = page.request.get(server.base_url + payload["url"])
+        assert served.status == 200
+        assert served.body() == written.read_bytes()
+    finally:
+        page.close()
+
+
+def test_an_unknown_rel_comes_back_as_the_viewers_own_refusal(browser, chat_server):
+    """A domain failure inside the browser has to reach the model as a failed
+    tool call carrying the viewer's code, not as a timeout or a hang: the
+    `error` frame answers the pending future immediately."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        result = _call_tool(server, "set_visibility", {"rel": "nope.stl", "visible": False})
+        assert result["is_error"] is True
+        assert "unknown_model" in _tool_text(result)
+        # And it names what does exist, so the model's next call can be right.
+        assert "alpha.stl" in _tool_text(result)
+    finally:
+        page.close()
+
+
+# 21. Mesh tools: the human's pause switch is enforced in the server -----------
+
+def test_the_topbar_pause_button_refuses_write_class_tools(browser, chat_server):
+    """What the previous version of this control claimed and did not do. The
+    click has to travel to the server, because that is where the tools run: a
+    button that latched locally would show "Paused" while the agent went on
+    moving the camera.
+
+    Read-class tools stay available on purpose, so the model can still look.
+    """
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        page.click("#pauseBtn")
+        # The button follows the server's announcement, not the click, so
+        # waiting for it is waiting for the round trip to have completed.
+        page.wait_for_function("() => window.mesh.store.getState().paused === true")
+        assert page.locator("#pauseBtn").get_attribute("aria-pressed") == "true"
+        assert server.bus.paused is True
+
+        refused = _call_tool(server, "fit_view")
+        assert refused["is_error"] is True
+        assert "paused viewer control" in _tool_text(refused)
+        assert "is_error" not in _call_tool(server, "get_view")
+
+        page.click("#pauseBtn")
+        page.wait_for_function("() => window.mesh.store.getState().paused === false")
+        assert "is_error" not in _call_tool(server, "fit_view")
+    finally:
+        page.close()
+
+
+def test_a_second_tab_shows_the_pause_another_tab_set(browser, chat_server):
+    """The switch is one property of the server, so it is broadcast: a phone
+    still offering to pause what the laptop already paused invites a click that
+    changes nothing."""
+    server, _session = chat_server
+    first = browser.new_page()
+    second = browser.new_page()
+    try:
+        first.goto(server.viewer_url)
+        _wait_connection_state(first, "live")
+        second.goto(server.viewer_url)
+        _wait_connection_state(second, "live")
+
+        first.click("#pauseBtn")
+        second.wait_for_function("() => window.mesh.store.getState().paused === true")
+
+        # And a tab that arrives afterwards learns it from the greeting, which
+        # is the case no event can cover.
+        third = browser.new_page()
+        try:
+            third.goto(server.viewer_url)
+            _wait_connection_state(third, "live")
+            third.wait_for_function("() => window.mesh.store.getState().paused === true")
+        finally:
+            third.close()
+    finally:
+        second.close()
+        first.close()
+
+
+def test_a_callout_the_agent_adds_appears_as_a_pin_without_a_reload(browser, chat_server):
+    """The agent's half of the pointing, through its own tool rather than a
+    hand-written file: `add_callout` writes the same `mesh-callouts.json` the
+    published contract documents, so the callouts watcher notices and the pin
+    arrives by push."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        result = _call_tool(server, "add_callout", {
+            "point": [0, 0, 10], "comment": "moved this wall out 2mm",
+            "part": "alpha", "label": "+Z"})
+        assert "is_error" not in result, _tool_text(result)
+
+        page.wait_for_function(
+            "() => document.querySelectorAll('#agentPins .apin').length === 1",
+            timeout=15000)
+        assert "moved this wall out 2mm" in page.locator("#agentPins .apin").first.inner_text()
+    finally:
+        page.close()
+
+
+def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
+    """The topbar has gained a button per milestone, and a phone is a required
+    workflow rather than a nice-to-have, so this is a regression guard on the
+    row rather than on any one control: at 390 px nothing in it may overflow."""
+    server, _session = chat_server
+    page = browser.new_page(viewport={"width": 390, "height": 844})
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        overflow = page.evaluate(
+            "() => { const b = document.getElementById('topbar');"
+            " return b.scrollWidth - b.clientWidth; }")
+        assert overflow <= 0, "the topbar overflows by %dpx at 390px wide" % overflow
+        assert page.locator("#pauseBtn").is_visible()
+    finally:
+        page.close()
+
+
+def test_the_pause_control_is_not_offered_when_there_is_no_agent(browser, token_mesh_server):
+    """Viewer-only mode runs no tools, so there is nothing to pause and the
+    server refuses the frame. A control that produced a refusal toast on every
+    click would be worse than one that plainly cannot be pressed."""
+    page = browser.new_page()
+    try:
+        page.goto(token_mesh_server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function(
+            "() => window.mesh.store.getState().chat.agentStatus === 'unavailable'")
+        assert page.locator("#pauseBtn").is_disabled()
     finally:
         page.close()

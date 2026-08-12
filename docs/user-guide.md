@@ -9,6 +9,8 @@ This is the full walkthrough for using Mesh to build and review a 3D-printable p
 - [The modelling loop](#the-modelling-loop)
 - [Placing pins](#placing-pins)
 - [Working with the agent](#working-with-the-agent)
+- [What the agent can do to the viewer](#what-the-agent-can-do-to-the-viewer)
+- [Pausing the agent's view control](#pausing-the-agents-view-control)
 - [Approving what the agent does](#approving-what-the-agent-does)
 - [Sessions](#sessions)
 - [Reviewing from a phone](#reviewing-from-a-phone)
@@ -43,7 +45,7 @@ Your browser opens automatically. `--no-open` stops that.
 
 ## The three panes
 
-**The model**, on the left, is the 3D view. Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan. `Fit` reframes everything visible; `Z-up` switches which axis is up, for models exported from a Y-up tool.
+**The model**, on the left, is the 3D view. Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan. `Fit` reframes everything visible; `Z-up` switches which axis is up, for models exported from a Y-up tool; `Pause` stops the agent changing anything in the view, and is covered under [Pausing the agent's view control](#pausing-the-agents-view-control).
 
 **Review**, in the middle, lists the parts, your pins, the agent's callouts, and the measure controls. Every `.stl` under the served directory appears under **Parts** with a colour and a visibility checkbox, including ones generated after the page was opened. A part keeps its colour for the life of the page, so a newly generated part does not recolour the others. Hiding a part also stops you pinning it, since you can only pin what you can see.
 
@@ -92,9 +94,29 @@ Useful things to ask, in rough order of how much they play to the tool's strengt
 - "Regenerate the shroud with a 1.2 mm rim and tell me what changed."
 - "Put a callout on each face you think will need support."
 
-That last one is the other half of the pointing: when the agent writes `mesh-callouts.json`, those callouts appear in your view within a fraction of a second, pinned to the coordinates it chose. You can then pin a reply next to its callout and Submit, and it reads your coordinates back. Neither side ever describes a location in words.
+That last one is the other half of the pointing: when the agent writes a callout, it appears in your view within a fraction of a second, pinned to the coordinates it chose. You can then pin a reply next to its callout and Submit, and it reads your coordinates back. Neither side ever describes a location in words.
 
 The composer sends on the button; **Interrupt** stops a turn already in flight. Each completed turn shows its stop reason and cost.
+
+## What the agent can do to the viewer
+
+The agent has tools for the viewer itself, not just for the folder, so "show me the underside of that boss" is something it can carry out rather than instruct you to do. Sixteen of them, and they divide the same way everything else does, by whether they change anything.
+
+**Looking**, which never asks you: read the camera, list the parts and which are visible, read your submitted comments and its own callouts, read a model's triangle count and bounding box, screenshot the view as it stands, and measure between any two placed pins.
+
+**Changing**, which comes to you as a card: move the camera or reframe it, show or hide a part, switch the up axis, select one of your pins, add or delete a callout, and save a screenshot into `images/`.
+
+The screenshot one is worth knowing about, because it changes what the agent can answer. It gets the actual pixels of your view, so "does this fillet look right to you" is a question it can look at rather than infer from the source. Ask it to frame something first if the answer depends on the angle.
+
+Two practical notes. The camera moves are cards on the first call, and **Always allow** on one of those means you will not see that tool again in this project, which is what makes a session where the agent frames things for you bearable. And a tool that needs the browser fails immediately with a message saying so if no page is open, rather than hanging: it will tell you to open the URL.
+
+## Pausing the agent's view control
+
+**Pause** in the top bar refuses everything in the "changing" list above until you press it again. Use it when you are lining up a view you want to keep, or typing a comment against a pin, and you do not want the camera moving or a part disappearing underneath you.
+
+While paused the agent can still look, which is deliberate: reading does no harm and it is better informed when you unpause. It is told, in the refusal, that you have paused it and to ask you when it needs the view again, so it says so instead of retrying in a loop.
+
+The pause is held by the server, not by the page, so it applies to the agent no matter which browser you set it in and it shows as pressed in every tab you have open. A tab you open afterwards shows it pressed too.
 
 ## Approving what the agent does
 
@@ -168,7 +190,8 @@ The same digest is checked before every tool call, so if that configuration chan
 | --- | --- |
 | `mesh-comments.json` | Your pins, rewritten on each Submit. |
 | `mesh-comments.log` | Every Submit ever, appended, one JSON object per line. |
-| `mesh-callouts.json` | The agent's callouts. Edit it by hand and the viewer updates live. |
+| `mesh-callouts.json` | The agent's callouts, written by its own tool or by hand. Either way the viewer updates live. |
+| `images/` | Screenshots the agent saved with its snapshot tool. Served back at `/asset/<name>`, and meant to be committed. |
 | `*.stl` | Your parts. Added, regenerated or deleted, the viewer follows within a fraction of a second. |
 | `.mesh/sessions/` | One directory per session, holding its event log. |
 | `.mesh/permissions.toml` | Tools you chose "Always allow" for. Plain TOML, safe to edit or delete. |

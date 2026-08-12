@@ -48,6 +48,8 @@ It starts a local server, prints the URL with a per-run token in it, and opens y
 - Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.
 - Hit Submit. Your pins get written to `mesh-comments.json` in the served folder, which is what the agent reads.
 - Type in the chat pane to put the agent to work in that folder. Interrupt stops a turn mid-flight, and each turn shows what it cost.
+- The agent works the viewer too, not just the folder. It can move the camera, hide and show parts, screenshot what's on screen and pin its own callouts, so "show me the underside of that boss" is something it does rather than tells you to do.
+- Hit Pause in the topbar and everything that changes the view gets refused until you hit it again, so you can line up a shot or type a comment without it moving underneath you. It can still look while paused.
 - Need a distance between two features? Pick any two placed pins (yours or the agent's) in the "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
 
 It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan / zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
@@ -60,11 +62,14 @@ A few files turn up in the served folder:
 
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
 - `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (cyan, read-only). This is how an agent points back at the model.
+- `images/` - screenshots the agent saved, meant to be committed.
 - `.mesh/` - session transcripts, any allow-always decisions you made, and a lock file so two servers can't fight over one folder.
 
 ## What it'll ask you about
 
 The agent's shell runs sandboxed, so a command that stays inside the project folder just runs without asking. That's deliberate, regenerating a part twenty times would be miserable otherwise. Anything that writes through its edit tools, wants out of the folder, or reaches the network gets you a card in the chat pane with the full command or file contents on it, and you allow it, allow it for the rest of the session, or deny it with a reason. The reason goes to the agent verbatim, so "not that file, do the enclosure instead" is more use to it than a bare no.
+
+Its viewer tools split the same way, by whether they change anything. Reading the camera, the part list, your comments or a screenshot of the view never asks. Moving the camera, hiding a part, writing a callout or saving a screenshot to disk gets a card the first time, and "Always allow" on one of those is remembered for the folder.
 
 ![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](docs/mesh-approval.png)
 
