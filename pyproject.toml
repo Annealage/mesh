@@ -49,6 +49,7 @@ include = [
     "src/annealage_mesh",
     "skill",
     "tests",
+    "tools",
     "README.md",
     "LICENSE",
     "COMMERCIAL.md",

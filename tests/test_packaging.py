@@ -56,6 +56,23 @@ def test_sdist_ships_the_packaged_viewer(tmp_path):
     assert any(n.endswith("src/annealage_mesh/static/viewer.html") for n in sdist_names)
 
 
+def test_wheel_and_sdist_ship_the_split_front_end_and_vendored_three_js(tmp_path):
+    # The packaged front end is a shell plus a tree of ES modules plus a
+    # vendored three.js, and the shell is inert without them: a hatchling
+    # include pattern matching only viewer.html would ship an importmap and a
+    # module script pointing at files that are not there, with no test
+    # noticing until someone opened it in a browser.
+    sdist_names, wheel_names = _build(tmp_path / "dist")
+    for rel in (
+        "static/css/app.css",
+        "static/js/main.js",
+        "static/js/vendor/three.module.js",
+        "static/js/vendor/VERSIONS.json",
+    ):
+        assert any(n.endswith("src/annealage_mesh/" + rel) for n in sdist_names), rel
+        assert "annealage_mesh/" + rel in wheel_names, rel
+
+
 def test_sdist_and_wheel_ship_a_static_file_under_a_gitignored_directory_name(tmp_path):
     # "lib/" is one of this repo's .gitignore entries (the standard
     # Python-template line for a venv's lib/ directory). A vendored asset

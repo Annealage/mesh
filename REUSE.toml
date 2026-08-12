@@ -22,3 +22,13 @@ path = "skill/annealage-mesh/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Andrew Leech"
 SPDX-License-Identifier = "MIT"
+
+# Vendored browser dependencies: byte-for-byte copies of upstream releases,
+# not our work and not under the repository licence. Provenance, versions and
+# hashes are recorded in the directory's own VERSIONS.json, and
+# tools/refresh-vendor.sh is the only thing that should ever write here.
+[[annotations]]
+path = "src/annealage_mesh/static/js/vendor/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2010-2023 three.js authors"
+SPDX-License-Identifier = "MIT"

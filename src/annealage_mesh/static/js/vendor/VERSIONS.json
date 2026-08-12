@@ -1,0 +1,47 @@
+{
+  "_comment": [
+    "Provenance for the vendored browser dependencies in this directory.",
+    "Every file here is a byte-for-byte copy of an upstream release, never",
+    "edited: the addons import the bare specifier 'three', which the",
+    "importmap in viewer.html resolves to three.module.js in this directory,",
+    "so no rewriting is needed and these hashes stay comparable against",
+    "upstream. Refresh with tools/refresh-vendor.sh, which rewrites this",
+    "file; tests/test_vendor.py fails if what is on disk stops matching it."
+  ],
+  "packages": [
+    {
+      "name": "three",
+      "version": "0.160.0",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "homepage": "https://threejs.org/",
+      "base_url": "https://cdn.jsdelivr.net/npm/three@0.160.0",
+      "files": [
+        {
+          "local": "three.module.js",
+          "upstream": "build/three.module.js",
+          "bytes": 1272972,
+          "sha256": "76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495"
+        },
+        {
+          "local": "OrbitControls.js",
+          "upstream": "examples/jsm/controls/OrbitControls.js",
+          "bytes": 29868,
+          "sha256": "5a44a9e86a2a0fb11933eed69bc2cd33c76a496854c1aed6ed776efa87d7b064"
+        },
+        {
+          "local": "STLLoader.js",
+          "upstream": "examples/jsm/loaders/STLLoader.js",
+          "bytes": 10029,
+          "sha256": "896d006a48b8f125385a485ccae154dadee801a953f0b45ceffe7ddd8a29ca93"
+        },
+        {
+          "local": "LICENSE",
+          "upstream": "LICENSE",
+          "bytes": 1081,
+          "sha256": "852e0e8699169bf9f6fdc6bda3e682d078dcbc738b5d33e74df594721bff271d"
+        }
+      ]
+    }
+  ]
+}

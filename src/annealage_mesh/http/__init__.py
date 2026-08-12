@@ -52,7 +52,8 @@ async def _iter_file_chunks(fh, total, chunk_size=CHUNK_SIZE):
         await loop.run_in_executor(None, fh.close)
 
 
-async def file_response(path, content_type, method="GET", expect_identity=None):
+async def file_response(path, content_type, method="GET", expect_identity=None,
+                        revalidatable=False):
     """Build a Response that streams ``path``'s bytes without blocking the loop.
 
     The file is opened, and its size taken from that open descriptor via
@@ -72,15 +73,29 @@ async def file_response(path, content_type, method="GET", expect_identity=None):
     that always opened the file regardless of method would leak one file
     descriptor per HEAD request until the interpreter got around to
     finalising the unread file object.
+
+    ``revalidatable`` adds an ``ETag`` and ``Cache-Control: no-cache`` so a
+    client can skip the transfer next time by asking. It is opt-in per route
+    rather than the default, and only the packaged static assets set it. The
+    tag is computed from the stat of the descriptor actually being read, so it
+    describes exactly the bytes this response delivers rather than what a
+    scan saw earlier. ``no-cache`` means "store it, but ask me before reusing
+    it", which is what keeps a module edited during development from being
+    served out of a browser cache while still saving the megabyte of vendored
+    JavaScript on every reload. Model bytes deliberately do not set this: a
+    model is the artefact under review and is regenerated constantly, so a
+    stale one is the failure this tool exists to avoid.
     """
     loop = asyncio.get_running_loop()
     if method == "HEAD":
         try:
-            size = await loop.run_in_executor(None, os.path.getsize, path)
+            st = await loop.run_in_executor(None, os.stat, path)
         except OSError as exc:
             sys.stderr.write("warning: could not stat %s for a HEAD response: %s\n" % (path, exc))
             return Response("not found", 404)
-        headers = {"Content-Type": content_type, "Content-Length": str(size)}
+        headers = {"Content-Type": content_type, "Content-Length": str(st.st_size)}
+        if revalidatable:
+            headers.update(_revalidation_headers(st))
         return Response(body=b"", headers=headers)
     try:
         fh = await loop.run_in_executor(
@@ -94,9 +109,30 @@ async def file_response(path, content_type, method="GET", expect_identity=None):
         # instead, for whoever is running the server to see.
         sys.stderr.write("warning: could not open %s for a file response: %s\n" % (path, exc))
         return Response("not found", 404)
-    size = os.fstat(fh.fileno()).st_size
-    headers = {"Content-Type": content_type, "Content-Length": str(size)}
-    return Response(body=_iter_file_chunks(fh, size), headers=headers)
+    st = os.fstat(fh.fileno())
+    headers = {"Content-Type": content_type, "Content-Length": str(st.st_size)}
+    if revalidatable:
+        headers.update(_revalidation_headers(st))
+    return Response(body=_iter_file_chunks(fh, st.st_size), headers=headers)
+
+
+def _revalidation_headers(st):
+    """Validator and caching headers for a response a client may revalidate."""
+    return {
+        "ETag": paths.file_validator(st),
+        "Cache-Control": "no-cache",
+    }
+
+
+def not_modified(st):
+    """A bodyless 304 for a file a client's cached copy already matches.
+
+    Carries the same validator and caching headers a 200 for that file would,
+    because a client that revalidates once has to be able to revalidate again:
+    a 304 that dropped them would leave the cached entry with no way to be
+    checked a third time, and the next load would transfer the whole file.
+    """
+    return Response(body=b"", status_code=304, headers=_revalidation_headers(st))
 
 
 def _open_regular_file(path, expect_identity=None):

@@ -14,7 +14,7 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 ## Install
 
-Annealage Mesh is a Python package with one pure-Python runtime dependency, [microdot](https://github.com/miguelgrinberg/microdot) (the 3D viewer pulls three.js from a CDN in the browser), and needs Python 3.10+.
+Annealage Mesh is a Python package with one pure-Python runtime dependency, [microdot](https://github.com/miguelgrinberg/microdot) (three.js 0.160.0 is vendored inside the package and served from /static, so the viewer needs no network access), and needs Python 3.10+.
 
 Run it straight from GitHub, nothing to install, via uv:
 

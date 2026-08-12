@@ -1,0 +1,270 @@
+/**
+ * The single writer for viewer application state.
+ *
+ * Every other module reads state through `store.getState()` or a subscriber
+ * callback and changes it only by calling one of the mutators exported on
+ * `store` below. No line outside this file ever assigns to `state`, which is
+ * what makes the checkbox-vs-mesh visibility binding in models.js
+ * bidirectional: both are readers of the same `state.visibility`, and the
+ * only way either one changes is through `setVisibility`, so a programmatic
+ * call moves both.
+ *
+ * State is plain, serialisable data: numbers, strings, booleans, plain
+ * arrays and plain objects only. A pin's location is a 3-element number
+ * array, not a THREE.Vector3; a model's colour is a hex number, not a
+ * THREE.Color. No THREE.Object3D (Mesh, Sprite, Group) is ever a state
+ * value. This is what would let a later milestone deliver pins over a
+ * WebSocket by calling `addPin`/`removePin` from a message handler instead
+ * of from a pointer event, with no second writer to reconcile against. Any
+ * THREE object that represents a piece of state, a pin's marker mesh, a
+ * loaded model's Mesh, lives in a side table in whichever module created it
+ * (pins.js, models.js) and is reconciled against store state by a
+ * subscriber; it never becomes a state value itself.
+ *
+ * State shape:
+ *   models        [{name, file, path, rel, label, color}, ...]
+ *                 manifest entries as fetched, plus a display `color`
+ *                 (a hex number) assigned by models.js from a fixed
+ *                 palette. `rel` is the key used everywhere else.
+ *   visibility    {rel: boolean}
+ *                 per-part show/hide, keyed by the same `rel` as `models`.
+ *   mode          'nav' | 'annotate'
+ *   upAxis        'z' | 'y'
+ *   pins          [{id, part, rel, point, normal, faceIndex, label,
+ *                   comment}, ...]
+ *                 user-authored pins. `part` is the model's display label
+ *                 at the moment the pin was placed (kept verbatim for
+ *                 /submit, which is a published contract); `label` is the
+ *                 picked face's axis-aligned direction, e.g. '+X'.
+ *   selectedPinId number | null
+ *   callouts      [...]
+ *                 the latest agent-authored callout list, exactly as
+ *                 /callouts returned it, used for the sidebar list, the
+ *                 measure dropdowns and the agent markers.
+ *   dirty         boolean
+ *                 true once a pin has been added, edited or removed since
+ *                 the last successful submit.
+ *   showUser      boolean, showAgent boolean
+ *                 the two legend toggles.
+ *   measure       {a: string, b: string}
+ *                 the two measure-dropdown selections, each a measurable
+ *                 key ('u<id>' for a user pin, 'a<id>' for an agent pin) or
+ *                 '' for unset.
+ *   activeTab     string
+ *                 which narrow-viewport tab is showing; the id of one of
+ *                 layout.js's TABS entries.
+ *   panelOpen     boolean
+ *                 whether the side panel is shown at wide viewports.
+ */
+
+let state = Object.freeze({
+  models: Object.freeze([]),
+  visibility: Object.freeze({}),
+  mode: "nav",
+  upAxis: "z",
+  pins: Object.freeze([]),
+  selectedPinId: null,
+  callouts: Object.freeze([]),
+  dirty: false,
+  showUser: true,
+  showAgent: true,
+  measure: Object.freeze({ a: "", b: "" }),
+  activeTab: "model",
+  panelOpen: false,
+});
+
+// Assigns pin ids. Kept outside `state` because it is a generator, not a
+// fact about the current app; a pin's id, once assigned, is the fact.
+let nextPinId = 1;
+
+const listeners = new Map(); // key (or '*') -> Set<fn(state)>
+
+// True for the duration of a notify pass (the forEach in `apply`). Guards
+// against a mutator being called synchronously from inside a subscriber,
+// which is a real shape in this app: measure.js's 'pins' and 'callouts'
+// subscriber re-validates the two dropdown selections against the pins that
+// still exist, and calls setMeasure from inside that same notification when a
+// selected pin has gone. Running that call inline would notify a second time
+// from inside the first pass's own listener loop, so a listener later in the
+// pass would observe a state change its earlier siblings never saw. Queueing
+// defers it, so every listener sees one complete state change at a time, in
+// the order the mutators were actually called.
+let notifying = false;
+const pending = [];
+
+function commit(mutate, changedKeys) {
+  if (notifying) {
+    pending.push([mutate, changedKeys]);
+    return;
+  }
+  apply(mutate, changedKeys);
+  // Drained here, by the outermost commit, as a flat loop. A queued mutator
+  // that queues another one appends to this same array rather than nesting a
+  // commit inside a commit, so a long chain of re-entrant changes iterates
+  // instead of growing the stack.
+  while (pending.length) {
+    const next = pending.shift();
+    apply(next[0], next[1]);
+  }
+}
+
+function apply(mutate, changedKeys) {
+  mutate();
+  state = Object.freeze(state);
+  notifying = true;
+  try {
+    const keys = new Set([...changedKeys, "*"]);
+    keys.forEach((k) => {
+      const set = listeners.get(k);
+      if (set) set.forEach((fn) => fn(state));
+    });
+  } finally {
+    notifying = false;
+  }
+}
+
+function getState() {
+  return state;
+}
+
+function subscribe(key, fn) {
+  if (!listeners.has(key)) listeners.set(key, new Set());
+  listeners.get(key).add(fn);
+  return () => listeners.get(key).delete(fn);
+}
+
+function setModels(models) {
+  commit(() => {
+    const frozenModels = Object.freeze(models.map((m) => Object.freeze({ ...m })));
+    // Default visibility (first model shown, rest hidden) applies only to a
+    // rel not already in the map, so a rescan in a later milestone would
+    // not undo a toggle the reviewer already made.
+    const visibility = { ...state.visibility };
+    frozenModels.forEach((m, i) => {
+      if (!(m.rel in visibility)) visibility[m.rel] = i === 0;
+    });
+    state = { ...state, models: frozenModels, visibility: Object.freeze(visibility) };
+  }, ["models", "visibility"]);
+}
+
+function setVisibility(rel, on) {
+  commit(() => {
+    state = { ...state, visibility: Object.freeze({ ...state.visibility, [rel]: !!on }) };
+  }, ["visibility"]);
+}
+
+function setMode(mode) {
+  commit(() => {
+    state = { ...state, mode };
+  }, ["mode"]);
+}
+
+function setUpAxis(axis) {
+  commit(() => {
+    state = { ...state, upAxis: axis };
+  }, ["upAxis"]);
+}
+
+function addPin(data) {
+  const id = nextPinId++;
+  commit(() => {
+    const pin = Object.freeze({ id, comment: "", ...data });
+    state = {
+      ...state,
+      pins: Object.freeze([...state.pins, pin]),
+      selectedPinId: id,
+      dirty: true,
+    };
+  }, ["pins", "selectedPinId", "dirty"]);
+  return id;
+}
+
+function removePin(id) {
+  commit(() => {
+    const pins = state.pins.filter((p) => p.id !== id);
+    const selectedPinId = state.selectedPinId === id ? null : state.selectedPinId;
+    state = { ...state, pins: Object.freeze(pins), selectedPinId, dirty: true };
+  }, ["pins", "selectedPinId", "dirty"]);
+}
+
+function setPinComment(id, comment) {
+  commit(() => {
+    const pins = state.pins.map((p) => (p.id === id ? Object.freeze({ ...p, comment }) : p));
+    state = { ...state, pins: Object.freeze(pins), dirty: true };
+  }, ["pins", "dirty"]);
+}
+
+function selectPin(id) {
+  commit(() => {
+    state = { ...state, selectedPinId: id };
+  }, ["selectedPinId"]);
+}
+
+function clearPins() {
+  commit(() => {
+    state = { ...state, pins: Object.freeze([]), selectedPinId: null, dirty: true };
+  }, ["pins", "selectedPinId", "dirty"]);
+}
+
+function setCallouts(list) {
+  commit(() => {
+    state = { ...state, callouts: Object.freeze(list.map((c) => Object.freeze({ ...c }))) };
+  }, ["callouts"]);
+}
+
+function setDirty(v) {
+  commit(() => {
+    state = { ...state, dirty: !!v };
+  }, ["dirty"]);
+}
+
+function setShowUser(v) {
+  commit(() => {
+    state = { ...state, showUser: !!v };
+  }, ["showUser"]);
+}
+
+function setShowAgent(v) {
+  commit(() => {
+    state = { ...state, showAgent: !!v };
+  }, ["showAgent"]);
+}
+
+function setMeasure(aKey, bKey) {
+  commit(() => {
+    state = { ...state, measure: Object.freeze({ a: aKey, b: bKey }) };
+  }, ["measure"]);
+}
+
+function setActiveTab(tabId) {
+  commit(() => {
+    state = { ...state, activeTab: tabId };
+  }, ["activeTab"]);
+}
+
+function setPanelOpen(v) {
+  commit(() => {
+    state = { ...state, panelOpen: !!v };
+  }, ["panelOpen"]);
+}
+
+export const store = {
+  getState,
+  subscribe,
+  setModels,
+  setVisibility,
+  setMode,
+  setUpAxis,
+  addPin,
+  removePin,
+  setPinComment,
+  selectPin,
+  clearPins,
+  setCallouts,
+  setDirty,
+  setShowUser,
+  setShowAgent,
+  setMeasure,
+  setActiveTab,
+  setPanelOpen,
+};

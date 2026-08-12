@@ -27,26 +27,22 @@ from annealage_mesh.http import routes_viewer
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-def served_dir(tmp_path):
-    (tmp_path / "widget.stl").write_bytes(b"solid widget\nendsolid widget\n")
-    return tmp_path
-
-
-@pytest.fixture
-def client(served_dir):
-    return TestClient(create_app(served_dir))
-
-
 # --- the packaged viewer page -----------------------------------------------
 
 async def test_index_serves_viewer_html(client):
+    # The shell promises three things and nothing about how the app itself
+    # fetches its data: the importmap resolving the bare "three" specifier to
+    # the vendored module, the stylesheet link, and the module script that
+    # bootstraps the split front end. Which endpoints main.js and its imports
+    # go on to call is js/models.js's business, not the shell's.
     for path in ("/", "/index.html"):
         res = await client.get(path)
         assert res.status_code == 200, path
         assert "text/html" in res.headers.get("Content-Type", "")
         assert 'id="topbar"' in res.text
-        assert "/manifest" in res.text
+        assert '"three": "/static/js/vendor/three.module.js"' in res.text
+        assert '<link rel="stylesheet" href="/static/css/app.css">' in res.text
+        assert '<script type="module" src="/static/js/main.js"></script>' in res.text
 
 
 # --- /manifest ---------------------------------------------------------------
@@ -66,24 +62,85 @@ async def test_manifest_lists_stl(client, served_dir):
     expected = {"name": "widget", "file": "widget.stl", "path": str(served_dir / "widget.stl")}
     assert expected.items() <= model.items()
     assert model["rel"] == "widget.stl"
+    assert model["label"] == "widget"
     assert "ambiguous" not in model
     assert "unreachable_by_filename" not in data
     assert "truncated" in data
 
 
-async def test_manifest_scan_is_flat_nested_model_not_listed_or_fetchable(client, served_dir):
-    """A model in a subdirectory is absent from the manifest and unreachable by rel or alias."""
+async def test_manifest_scan_is_recursive_nested_model_listed_and_fetchable(client, served_dir):
+    """A model in a subdirectory is listed by its rel and fetchable through /model/<rel>."""
     (served_dir / "parts").mkdir()
     (served_dir / "parts" / "nested.stl").write_bytes(b"solid n\nendsolid n\n")
 
     res = await client.get("/manifest")
     rels = {m["rel"] for m in res.json["models"]}
-    assert "parts/nested.stl" not in rels
+    assert "parts/nested.stl" in rels
 
     res = await client.get("/model/parts/nested.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid n\nendsolid n\n"
+
+    # The bare-name alias is unambiguous here (no other indexed model is
+    # named nested.stl), so it also resolves.
+    res = await client.get("/nested.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid n\nendsolid n\n"
+
+
+async def test_manifest_scan_descends_into_a_deep_nested_directory(client, nested_served_dir):
+    res = await client.get("/manifest")
+    rels = {m["rel"] for m in res.json["models"]}
+    assert "models/a/sub/deeper/pin.stl" in rels
+    assert "top.stl" in rels
+
+    res = await client.get("/model/models/a/sub/deeper/pin.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid pin\nendsolid pin\n"
+
+
+async def test_manifest_scan_excludes_a_dotdir_at_any_depth(client, nested_served_dir):
+    res = await client.get("/manifest")
+    rels = {m["rel"] for m in res.json["models"]}
+    assert not any(part.startswith(".") for rel in rels for part in rel.split("/"))
+    assert ".git/hidden.stl" not in rels
+
+    res = await client.get("/model/.git/hidden.stl")
     assert res.status_code == 404
 
-    res = await client.get("/nested.stl")
+
+async def test_manifest_labels_stay_unique_when_a_basename_repeats_across_directories(
+        client, served_dir):
+    # served_dir already has a top-level widget.stl from the base fixture;
+    # adding two more under a/ and b/ forces the label algorithm to fall
+    # back from the bare stem to a directory-qualified form for all three,
+    # which is exactly the property the viewer's part list relies on.
+    (served_dir / "a").mkdir()
+    (served_dir / "b").mkdir()
+    (served_dir / "a" / "widget.stl").write_bytes(b"solid a\nendsolid a\n")
+    (served_dir / "b" / "widget.stl").write_bytes(b"solid b\nendsolid b\n")
+
+    res = await client.get("/manifest")
+    models = res.json["models"]
+    labels_by_rel = {m["rel"]: m["label"] for m in models}
+    assert labels_by_rel["widget.stl"] == "widget"
+    assert labels_by_rel["a/widget.stl"] == "a/widget"
+    assert labels_by_rel["b/widget.stl"] == "b/widget"
+    assert len(set(labels_by_rel.values())) == len(labels_by_rel)
+
+
+async def test_manifest_scan_does_not_descend_a_symlinked_directory(client, nested_served_dir):
+    """A symlinked directory is not walked, so a model only reachable through
+    the link's own name is never listed or fetchable, even though the same
+    file is listed and fetchable under its real directory."""
+    res = await client.get("/manifest")
+    rels = {m["rel"] for m in res.json["models"]}
+    assert "real/real.stl" in rels
+    assert "linked/real.stl" not in rels
+
+    res = await client.get("/model/real/real.stl")
+    assert res.status_code == 200
+    res = await client.get("/model/linked/real.stl")
     assert res.status_code == 404
 
 
@@ -196,6 +253,24 @@ async def test_stl_alias_refuses_unlisted_name(client):
     assert res.status_code == 404
 
 
+async def test_stl_alias_404s_on_an_ambiguous_basename_but_rel_still_resolves_both(
+        client, served_dir):
+    (served_dir / "a").mkdir()
+    (served_dir / "b").mkdir()
+    (served_dir / "a" / "part.stl").write_bytes(b"solid a\nendsolid a\n")
+    (served_dir / "b" / "part.stl").write_bytes(b"solid b\nendsolid b\n")
+
+    res = await client.get("/part.stl")
+    assert res.status_code == 404
+
+    res_a = await client.get("/model/a/part.stl")
+    res_b = await client.get("/model/b/part.stl")
+    assert res_a.status_code == 200
+    assert res_b.status_code == 200
+    assert res_a.body == b"solid a\nendsolid a\n"
+    assert res_b.body == b"solid b\nendsolid b\n"
+
+
 # --- /asset/<rel> --------------------------------------------------------------
 
 async def test_asset_route_serves_from_images(client, served_dir):
@@ -220,6 +295,258 @@ async def test_asset_route_refuses_file_outside_images(client, served_dir):
 
     res = await client.get("/asset/../sibling.png")
     assert res.status_code == 404
+
+
+# --- /static/<path:rel> ---------------------------------------------------------
+
+async def test_static_serves_every_file_the_real_tree_contains_with_the_right_content_type(client):
+    # Enumerates the package's actual static/ tree rather than a hardcoded
+    # file list, so this test keeps covering whatever the tree contains as
+    # files are added or renamed, instead of silently stopping short.
+    entries, _ = paths.scan_static(routes_viewer.STATIC_DIR)
+    assert entries
+    for entry in entries:
+        rel = entry["rel"]
+        res = await client.get("/static/" + rel)
+        assert res.status_code == 200, rel
+        assert res.body == Path(entry["path"]).read_bytes(), rel
+        assert res.headers.get("Content-Type") == paths.StaticIndex.content_type_of(rel), rel
+
+
+async def test_static_serves_the_extensionless_vendored_license_as_text_plain(client):
+    res = await client.get("/static/js/vendor/LICENSE")
+    assert res.status_code == 200
+    assert res.headers.get("Content-Type") == "text/plain; charset=utf-8"
+
+
+async def test_static_head_matches_get(client):
+    res_get = await client.get("/static/css/app.css")
+    res_head = await client.request("HEAD", "/static/css/app.css")
+
+    assert res_head.status_code == res_get.status_code
+    assert res_head.headers.get("Content-Type") == res_get.headers.get("Content-Type")
+    assert res_head.headers.get("Content-Length") == res_get.headers.get("Content-Length")
+    assert res_head.body is None
+
+
+@pytest.fixture
+def static_client_factory(tmp_path, monkeypatch):
+    """Build a client whose /static/<rel> routes resolve against a throwaway
+    static tree instead of the package's own static/ directory.
+
+    Lets a test plant a symlink or a disallowed file and check it is refused
+    without writing into (or risking leaving debris in) the real installed
+    static/ tree. Returns ``(client, static_dir)`` so a test can mutate a
+    file after the client already exists, for the rescan-and-retry case.
+    """
+    def make(build):
+        static_dir = tmp_path / "fake_static"
+        static_dir.mkdir()
+        build(static_dir)
+        monkeypatch.setattr(routes_viewer, "STATIC_DIR", static_dir)
+        served = tmp_path / "served"
+        served.mkdir()
+        return TestClient(create_app(served)), static_dir
+    return make
+
+
+async def test_index_404s_with_the_static_not_found_wording_when_viewer_html_is_absent(
+        static_client_factory):
+    # "/" and "/index.html" resolve viewer.html through the static index like
+    # any other packaged asset, rather than through a special-cased existence
+    # check, so a static/ tree missing it must fail exactly the way any other
+    # missing static asset does: the shared "not found: <key>" 404 body, not
+    # a distinct message naming the packaged install path.
+    def build(static_dir):
+        (static_dir / "css").mkdir()
+        (static_dir / "css" / "app.css").write_text("body {}")
+    client, _ = static_client_factory(build)
+
+    for path in ("/", "/index.html"):
+        res = await client.get(path)
+        assert res.status_code == 404, path
+        assert res.body == b"not found: viewer.html", path
+
+
+async def test_static_refuses_traversal_shapes(static_client_factory):
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+    client, static_dir = static_client_factory(build)
+
+    secret = static_dir.parent / "secret.txt"
+    secret.write_text("TOPSECRET-STATIC-TRAVERSAL")
+
+    payloads = [
+        "/static/../secret.txt",                  # ".." traversal
+        "/static/%2e%2e/secret.txt",               # percent-encoded traversal
+        "/static/%252e%252e%2fsecret.txt",         # doubly percent-encoded
+        "/static/..%2fsecret.txt",                 # percent-encoded separator
+        "/static//../secret.txt",                  # doubled slash
+    ]
+    for path in payloads:
+        res = await client.get(path)
+        assert res.status_code == 404, path
+        assert b"TOPSECRET" not in (res.body or b"")
+
+
+async def test_static_refuses_a_symlink(static_client_factory):
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+        real = static_dir / "real.js"
+        real.write_text("console.log('real');")
+        (static_dir / "evil.js").symlink_to(real)
+    client, _ = static_client_factory(build)
+
+    res = await client.get("/static/evil.js")
+    assert res.status_code == 404
+
+    res_real = await client.get("/static/real.js")
+    assert res_real.status_code == 200
+
+
+async def test_static_refuses_a_disallowed_extension(static_client_factory):
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+        (static_dir / "notes.bak").write_text("not servable")
+        (static_dir / "source.map").write_text("not servable either")
+    client, _ = static_client_factory(build)
+
+    for name in ("notes.bak", "source.map"):
+        res = await client.get("/static/" + name)
+        assert res.status_code == 404, name
+
+
+async def test_static_serves_a_replaced_file_after_one_rescan_and_retry(static_client_factory):
+    # A build step or an editor's write-then-rename leaves a new inode at
+    # the same name; the cached index still points at the old one until a
+    # request's own identity check misses and forces a rescan.
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+        (static_dir / "js").mkdir()
+        (static_dir / "js" / "app.js").write_text("console.log('old');")
+    client, static_dir = static_client_factory(build)
+
+    res1 = await client.get("/static/js/app.js")
+    assert res1.text == "console.log('old');"
+
+    target = static_dir / "js" / "app.js"
+    tmp = static_dir / "js" / "app.js.new"
+    tmp.write_text("console.log('new');")
+    os.replace(tmp, target)
+
+    res2 = await client.get("/static/js/app.js")
+    assert res2.status_code == 200
+    assert res2.text == "console.log('new');"
+
+
+# --- conditional requests for packaged assets ----------------------------------
+#
+# The packaged tree includes a vendored three.js of well over a megabyte, and
+# every page load fetches it. These assets therefore carry a validator so a
+# reloading client can be told "unchanged" instead, while "no-cache" keeps the
+# browser asking rather than reusing a cached module without checking. Model
+# bytes deliberately get neither.
+
+async def test_static_get_carries_a_validator_and_asks_the_client_to_revalidate(client):
+    res = await client.get("/static/js/main.js")
+    assert res.status_code == 200
+    assert res.headers.get("ETag", "").startswith('W/"')
+    assert res.headers.get("Cache-Control") == "no-cache"
+
+
+async def test_static_returns_304_for_a_matching_validator(client):
+    first = await client.get("/static/js/main.js")
+    etag = first.headers["ETag"]
+
+    second = await client.get("/static/js/main.js", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert not second.body
+    # The 304 repeats the validator, or a client that revalidated once would
+    # have nothing to revalidate with next time and would refetch in full.
+    assert second.headers["ETag"] == etag
+    assert second.headers.get("Cache-Control") == "no-cache"
+
+
+async def test_static_returns_304_for_a_wildcard_validator(client):
+    res = await client.get("/static/js/main.js", headers={"If-None-Match": "*"})
+    assert res.status_code == 304
+
+
+async def test_static_ignores_a_validator_from_a_different_file(client):
+    other = await client.get("/static/css/app.css")
+    res = await client.get("/static/js/main.js",
+                           headers={"If-None-Match": other.headers["ETag"]})
+    assert res.status_code == 200
+    assert res.headers["ETag"] != other.headers["ETag"]
+    assert res.body
+
+
+async def test_static_validator_changes_when_the_file_is_edited_in_place(
+        static_client_factory):
+    # Same inode, new content. The validator is computed from a fresh stat of
+    # the file being served, not from what the cached index scan recorded, so
+    # an in-place edit must not be affirmed as unchanged.
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+        (static_dir / "js").mkdir()
+        (static_dir / "js" / "app.js").write_text("console.log('one');")
+    client, static_dir = static_client_factory(build)
+    target = static_dir / "js" / "app.js"
+
+    first = await client.get("/static/js/app.js")
+    etag = first.headers["ETag"]
+    inode_before = os.stat(target).st_ino
+
+    with open(target, "r+") as fh:
+        fh.write("console.log('two and a bit longer');")
+    assert os.stat(target).st_ino == inode_before, "the edit must reuse the inode"
+
+    res = await client.get("/static/js/app.js", headers={"If-None-Match": etag})
+    assert res.status_code == 200
+    assert "two and a bit longer" in res.text
+    assert res.headers["ETag"] != etag
+
+
+async def test_static_does_not_affirm_a_validator_for_a_name_become_a_symlink(
+        static_client_factory):
+    # A conditional request must not become a way to have a symlink's target
+    # validated: lstat sees the link itself, which is not a regular file, so
+    # no 304 is issued and the request falls through to the open path that
+    # refuses it outright.
+    def build(static_dir):
+        (static_dir / "viewer.html").write_text("<html></html>")
+        (static_dir / "app.js").write_text("console.log('real');")
+    client, static_dir = static_client_factory(build)
+
+    first = await client.get("/static/app.js")
+    etag = first.headers["ETag"]
+
+    secret = static_dir.parent / "secret.txt"
+    secret.write_text("TOPSECRET-CONDITIONAL")
+    (static_dir / "app.js").unlink()
+    (static_dir / "app.js").symlink_to(secret)
+
+    res = await client.get("/static/app.js", headers={"If-None-Match": etag})
+    assert res.status_code == 404
+    assert b"TOPSECRET" not in (res.body or b"")
+
+
+async def test_static_head_carries_the_same_validator_as_get(client):
+    res_get = await client.get("/static/css/app.css")
+    res_head = await client.request("HEAD", "/static/css/app.css")
+    assert res_head.headers["ETag"] == res_get.headers["ETag"]
+    assert res_head.headers.get("Cache-Control") == "no-cache"
+
+
+async def test_model_bytes_are_never_revalidatable(client):
+    # A model is the artefact under review and is regenerated constantly, so
+    # it is served no-store with no validator: the identity-pinned rescan and
+    # retry exists precisely so a regenerated model is served immediately, and
+    # a cached copy the client might reuse would defeat it.
+    res = await client.get("/model/widget.stl")
+    assert res.status_code == 200
+    assert "ETag" not in res.headers
+    assert res.headers.get("Cache-Control") == "no-store"
 
 
 # --- /callouts, /callouts.json --------------------------------------------------
@@ -424,10 +751,10 @@ async def test_stl_alias_matches_mixed_case_extension(client, served_dir):
 
 async def test_every_manifest_entry_is_fetchable_by_its_rel(client, served_dir):
     # The manifest is the viewer's only source of what to fetch, so every
-    # entry it lists must answer at /model/<rel>. A flat scan cannot produce
-    # two entries sharing a rel, since a directory cannot hold two entries
-    # with one name; files in subdirectories are not scanned at all and so
-    # never appear in the manifest.
+    # entry it lists must answer at /model/<rel>. rel is the one field the
+    # recursive scan guarantees unique: a directory cannot hold two entries
+    # with one name, so two models named dupe.stl in different directories
+    # still get distinct rel values even though their bare filenames collide.
     (served_dir / "a").mkdir()
     (served_dir / "b").mkdir()
     (served_dir / "a" / "dupe.stl").write_bytes(b"solid a\nendsolid a\n")
@@ -496,6 +823,49 @@ async def test_model_route_decodes_space_and_non_ascii_filenames(client, served_
     res = await client.get("/caf%C3%A9-pi%C3%A8ce.stl")
     assert res.status_code == 200
     assert res.body == b"solid nb\nendsolid nb\n"
+
+
+async def test_model_route_preserves_a_literal_plus_rather_than_decoding_it_to_a_space(
+        client, served_dir):
+    # js/models.js encodes each rel segment with encodeURIComponent, which
+    # escapes "+" to "%2B" precisely so it survives as a literal character;
+    # the route must decode with urllib.parse.unquote (percent-escapes only)
+    # and never unquote_plus (which would also turn a literal "+" sent as-is
+    # into a space), or a filename genuinely containing "+" becomes
+    # unreachable by the exact name the manifest advertised.
+    (served_dir / "widget+v2.stl").write_bytes(b"solid plus\nendsolid plus\n")
+
+    res = await client.get("/model/widget%2Bv2.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid plus\nendsolid plus\n"
+
+    # A bare "+" in the URL (not percent-encoded) is not how the viewer's own
+    # encodeURIComponent would send this filename, but the route must still
+    # not silently turn it into a space, since unquote() (unlike
+    # unquote_plus()) leaves a literal "+" alone.
+    res = await client.get("/model/widget+v2.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid plus\nendsolid plus\n"
+
+
+async def test_model_route_decodes_a_hash_encoded_per_segment_in_a_nested_rel(
+        client, served_dir):
+    # urlFor() in js/models.js encodes each path segment independently
+    # (rel.split("/").map(encodeURIComponent).join("/")) rather than encoding
+    # the whole rel as one string, so a "#" inside a filename is escaped to
+    # "%23" and cannot be mistaken for a URL fragment delimiter, while the
+    # "/" between "parts" and the filename stays a real path separator.
+    parts_dir = served_dir / "parts"
+    parts_dir.mkdir()
+    (parts_dir / "left#bracket.stl").write_bytes(b"solid hash\nendsolid hash\n")
+
+    res = await client.get("/model/parts/left%23bracket.stl")
+    assert res.status_code == 200
+    assert res.body == b"solid hash\nendsolid hash\n"
+
+    res = await client.get("/manifest")
+    rels = {m["rel"] for m in res.json["models"]}
+    assert "parts/left#bracket.stl" in rels
 
 
 async def test_asset_route_decodes_space_in_filename(client, served_dir):
