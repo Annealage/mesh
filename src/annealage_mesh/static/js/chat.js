@@ -1,6 +1,6 @@
 /**
  * The chat pane: composer, streamed transcript, tool cards, permission
- * cards, interrupt and pause. The store stays the single writer (M3's
+ * cards and interrupt. The store stays the single writer (M3's
  * contract); this module only reads `store.getState().chat` and calls the
  * `chat*` mutators store.js exports, and only builds DOM.
  *
@@ -121,7 +121,6 @@ export function initChat({ send }) {
   const chatInputEl = document.getElementById("chatInput");
   const chatSendBtn = document.getElementById("chatSend");
   const chatInterruptBtn = document.getElementById("chatInterrupt");
-  const pauseToggleEl = document.getElementById("pauseToggle");
 
   // turn number -> {row, textEl, toolsEl, metaEl, userEl, tools: Map<tool_use_id, {card, resultEl}>}
   const turnEls = new Map();
@@ -336,10 +335,6 @@ export function initChat({ send }) {
     chatInterruptBtn.disabled = !busy;
   }
 
-  function renderPauseToggle(chat) {
-    pauseToggleEl.checked = chat.paused;
-  }
-
   function render() {
     const chat = store.getState().chat;
     renderTurns(chat);
@@ -347,7 +342,6 @@ export function initChat({ send }) {
     renderAgentStatus(chat);
     renderBanner(chat);
     renderInterrupt(chat);
-    renderPauseToggle(chat);
   }
 
   store.subscribe("chat", render);
@@ -376,18 +370,6 @@ export function initChat({ send }) {
 
   bannerCloseBtn.addEventListener("click", () => store.clearChatBanner());
 
-  // `paused` has no accepting slot in protocol.py's inbound frame catalogue
-  // yet: `_check_state` only allows {camera, visibility, selection, mode}
-  // inside a `state` frame, `AgentSession`'s own docstring says a `state`
-  // frame is deliberately not agent state in the first place, and no
-  // `pause` type exists in `_INBOUND_SPECS` either. This sends the shape
-  // the permission broker will need a slot for; until one exists the
-  // server answers with a `refused` frame this client does not yet parse
-  // (see ws.js's `handleMessage`), so the checkbox changes locally but has
-  // no server-side effect until that slot is added.
-  pauseToggleEl.addEventListener("change", () => {
-    store.setChatPaused(pauseToggleEl.checked);
-    send({ v: 1, type: "pause", paused: pauseToggleEl.checked });
   });
 
   function handleHello(session) {

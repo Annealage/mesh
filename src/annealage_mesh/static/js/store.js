@@ -65,7 +65,7 @@
  *                 pre-handshake 403 was confirmed, most likely a stale
  *                 token from a server restart, and the fallback poll runs
  *                 under this state too.
- *   chat          {turns, pendingUser, pending, agentStatus, paused, banner}
+ *   chat          {turns, pendingUser, pending, agentStatus, banner}
  *                 the whole chat pane's state.
  *                 `turns` is one record per SDK turn number, `{turn, user,
  *                 text, tools, stopReason, costUsd, complete}`, built up
@@ -84,8 +84,7 @@
  *                 suggestions}`; a replayed duplicate of a still-unanswered
  *                 request is not added twice.
  *                 `agentStatus` mirrors the hello frame's `session.agent`
- *                 ('connecting' | 'ready' | 'unavailable'). `paused` is
- *                 the topbar toggle's own state. `banner` is the most
+ *                 ('connecting' | 'ready' | 'unavailable'). `banner` is the most
  *                 recent `session_reset` or `agent_error` event as
  *                 `{kind, text}`, or null once dismissed. A `session_reset`
  *                 also clears `turns` (`resetChatTurns`), because the new
@@ -112,7 +111,6 @@ let state = Object.freeze({
     pendingUser: Object.freeze([]),
     pending: Object.freeze([]),
     agentStatus: "connecting",
-    paused: false,
     banner: null,
   }),
 });
@@ -427,11 +425,6 @@ function removeChatPermissionRequest(requestId) {
   }, ["chat"]);
 }
 
-function setChatPaused(v) {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, paused: !!v }) };
-  }, ["chat"]);
-}
 
 function setChatAgentStatus(status) {
   commit(() => {
@@ -491,7 +484,6 @@ export const store = {
   queueChatUserTurn,
   addChatPermissionRequest,
   removeChatPermissionRequest,
-  setChatPaused,
   setChatAgentStatus,
   setChatBanner,
   clearChatBanner,

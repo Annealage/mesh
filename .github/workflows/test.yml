@@ -8,12 +8,42 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # Fail-fast off so one version's failure does not hide whether the others
+      # pass, which is the whole reason for testing three of them.
+      fail-fast: false
       matrix:
         python-version: ["3.10", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: ${{ matrix.python-version }}
+          # The agent SDK is a base dependency and its wheel is about 90 MB,
+          # because it bundles the Claude Code CLI. Downloading that once per
+          # matrix leg per run is the single largest cost in this workflow, so
+          # uv's own download cache is keyed on the lockfile-equivalent inputs
+          # and restored before resolution. A miss costs what today costs; a hit
+          # takes the SDK download out of the run entirely.
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
       - name: run tests
         run: uv run --extra dev pytest -q
+
+      # Agent mode requires bubblewrap and socat, and refuses to start without
+      # them; the suite covers that refusal with a fixture rather than by
+      # depending on what the runner has, so nothing here installs them. What
+      # this step checks is that the refusal itself still happens on a host that
+      # genuinely lacks them, which is what a user on a fresh machine meets
+      # first, and which no amount of fixture-based testing can confirm.
+      - name: agent mode refuses to start without the sandbox
+        run: |
+          mkdir -p /tmp/mesh-ci-empty
+          set +e
+          uv run --extra dev python -m annealage_mesh /tmp/mesh-ci-empty --no-open
+          rc=$?
+          set -e
+          test "$rc" = "2" || { echo "expected exit 2, got $rc"; exit 1; }
