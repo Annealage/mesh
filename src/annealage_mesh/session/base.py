@@ -35,6 +35,24 @@ AGENT_READY = "ready"
 AGENT_UNAVAILABLE = "unavailable"
 
 
+class UnknownRequest(Exception):
+    """Raised when a ``permission`` frame names no request awaiting a decision:
+    never asked, or already resolved by another connection's decision, a
+    timeout, the last viewer leaving, or shutdown.
+
+    Lives here rather than beside the broker that raises it because
+    ``http/ws.py`` has to catch it to answer the connection the losing frame
+    arrived on, and ``ws.py`` must keep working with no agent SDK installed;
+    importing the broker's module to name its exception would give the
+    WebSocket layer an SDK dependency in viewer-only mode.
+
+    Two tabs answering one card is the ordinary way this happens, so it is not
+    an error in the sense of something being broken: the loser is owed the
+    reply that their click did not decide anything, which is the one outcome a
+    silently swallowed exception makes indistinguishable from success.
+    """
+
+
 class AgentEvent:
     """Base for every server-originated event kind.
 
@@ -112,6 +130,36 @@ class PermissionRequest(AgentEvent):
     tool: str
     input: dict
     suggestions: list = dataclasses.field(default_factory=list)
+    viewer: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
+class PermissionResolved(AgentEvent):
+    """A permission request is no longer awaiting a decision.
+
+    Emitted exactly once per ``PermissionRequest``, whatever ended it, which is
+    what makes a permission card's lifetime a pair of events rather than an
+    event and an assumption. Two things depend on that.
+
+    A browser that did not send the deciding frame has no other way to learn
+    the card is answered, so without this a request answered on a phone stays
+    clickable on a laptop, and the second click is refused for reasons that
+    look like a bug.
+
+    Replay reconstructs a reconnecting viewer's pane from the event log, so a
+    request with no resolution in the log comes back as a live card on every
+    reload, however long ago it was answered.
+
+    ``outcome`` says how it ended, not merely that it did: the human's own
+    ``allow``, ``allow_always`` or ``deny``, or one of the resolutions nobody
+    clicked, ``timeout``, ``no_viewer`` and ``shutdown``. A pane that submitted
+    a decision and sees a different outcome can then say so, rather than
+    silently showing the human's deny as if it had taken effect.
+    """
+
+    kind: ClassVar[str] = "permission_resolved"
+    request_id: str
+    outcome: str
     viewer: Optional[str] = None
 
 

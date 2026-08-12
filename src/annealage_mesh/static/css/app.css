@@ -201,6 +201,13 @@ pre.toolresult.error { color: #e8a0a0; }
 .pactions button:hover { background: #333941; }
 .pactions button.danger { background: #3a1e1e; border-color: #5c2f2f; color: #e8a0a0; }
 .pactions button.danger:hover { background: #4a2626; }
+.pactions button:disabled { opacity: 0.45; cursor: default; }
+.pactions button:disabled:hover { background: #2a2e35; }
+/* A card whose decision is in flight: dimmed and captioned, still on screen,
+   because it is the server that says a request is over. */
+.permcard.submitted { border-left-color: #6b7078; }
+.permcard .pstatus:empty { display: none; }
+.permcard .pstatus { margin-top: 6px; font-size: 11.5px; color: #9aa0a8; }
 .pactions textarea.preason {
   flex: 1 1 140px; min-width: 120px; min-height: 34px; resize: vertical;
   background: #12151a; color: #d6d8dc; border: 1px solid #2f343d; border-radius: 5px;

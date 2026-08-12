@@ -29,7 +29,7 @@
  */
 
 import { store } from "./store.js";
-import { showError } from "./ui.js";
+import { showError, toast } from "./ui.js";
 
 const PROTOCOL_VERSION = 1;
 
@@ -249,6 +249,12 @@ export function initWs({
       handleHello(frame);
     } else if (frame.type === "event") {
       handleEvent(frame);
+    } else if (frame.type === "refused") {
+      // Always sent in answer to something this page sent, and always
+      // carrying a reason. Dropping it would leave the human watching for an
+      // effect that is never coming, with the server's explanation of why
+      // discarded one layer below the UI.
+      toast(frame.reason || "the server refused that request", false);
     }
     // "call" and "ping": no handler yet. An unrecognised type from a
     // same-version server is simply a frame this build of the page has no

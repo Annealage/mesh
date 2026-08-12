@@ -1019,10 +1019,16 @@ def test_streamed_reply_arrives_incrementally_not_all_at_once(browser, chat_serv
 # 15. Chat pane: a permission card appears and Allow reaches the session -----
 
 def test_permission_card_allow_reaches_the_session(browser, chat_server):
-    """A `permission_request` event must render as a card naming the tool,
-    and clicking Allow must both remove the card and deliver an `allow`
-    decision to `AgentSession.decide_permission` for that exact request id,
-    the inbound `permission` frame plan section 3.3 defines.
+    """A `permission_request` event must render as a card naming the tool, and
+    clicking Allow must deliver an `allow` decision to
+    `AgentSession.decide_permission` for that exact request id, the inbound
+    `permission` frame plan section 3.3 defines.
+
+    The card's lifetime is a pair of events, so clicking is not the end of it:
+    the card stays, showing the decision is in flight and refusing further
+    clicks, until the server's `permission_resolved` says the request is over.
+    Removing it on the click instead would make a decision that another view had
+    already answered look exactly like one that took effect.
     """
     server, session = chat_server
     page = browser.new_page()
@@ -1043,7 +1049,71 @@ def test_permission_card_allow_reaches_the_session(browser, chat_server):
         _wait_until(lambda: len(session.permission_decisions) == 1,
                     message="the allow decision never reached AgentSession.decide_permission")
         assert session.permission_decisions[0] == ("pr_1", "allow", "")
-        assert page.locator(card).count() == 0, "the card must be removed once answered"
+
+        page.wait_for_selector(card + ".submitted")
+        assert page.locator(card + " .pactions button:disabled").count() == 3, \
+            "an in-flight decision must not accept a second click"
+
+        _emit_on_loop(server, session, session_base.PermissionResolved(
+            request_id="pr_1", outcome="allow"))
+        page.wait_for_selector(card, state="detached")
+    finally:
+        page.close()
+
+
+def test_a_decision_that_did_not_apply_says_so(browser, chat_server):
+    """The bug this pairing exists to prevent: a human denies a card that
+    another view has already allowed. The deny changed nothing, and without the
+    outcome on the resolution event the card would simply vanish, which is
+    indistinguishable from the deny having worked.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_9", tool="Write", input={"file_path": "/etc/hosts"}))
+        card = "div.permcard[data-request-id='pr_9']"
+        page.wait_for_selector(card)
+        page.click(card + " .pactions button:nth-of-type(3)")
+        page.wait_for_selector(card + ".submitted")
+
+        # What the other view's Allow produces on this one.
+        _emit_on_loop(server, session, session_base.PermissionResolved(
+            request_id="pr_9", outcome="allow"))
+
+        page.wait_for_function(
+            "() => document.getElementById('toast').style.display === 'block'")
+        message = page.evaluate("() => document.getElementById('toast').textContent")
+        assert "did not apply" in message
+        assert "was allowed" in message
+        page.wait_for_selector(card, state="detached")
+    finally:
+        page.close()
+
+
+def test_a_request_that_expired_is_not_reported_as_answered(browser, chat_server):
+    """A card that goes away because nobody answered in time looks, without
+    this, exactly like one somebody answered."""
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_10", tool="Bash", input={"command": "ls"}))
+        page.wait_for_selector("div.permcard[data-request-id='pr_10']")
+
+        _emit_on_loop(server, session, session_base.PermissionResolved(
+            request_id="pr_10", outcome="timeout"))
+
+        page.wait_for_function(
+            "() => document.getElementById('toast').style.display === 'block'")
+        assert "expired" in page.evaluate(
+            "() => document.getElementById('toast').textContent")
     finally:
         page.close()
 
@@ -1082,7 +1152,10 @@ def test_permission_card_deny_sends_the_typed_reason(browser, chat_server):
         _wait_until(lambda: len(session.permission_decisions) == 1,
                     message="the deny decision never reached AgentSession.decide_permission")
         assert session.permission_decisions[0] == ("pr_2", "deny", reason)
-        assert page.locator(card).count() == 0
+
+        _emit_on_loop(server, session, session_base.PermissionResolved(
+            request_id="pr_2", outcome="deny"))
+        page.wait_for_selector(card, state="detached")
     finally:
         page.close()
 

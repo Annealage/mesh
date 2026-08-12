@@ -17,9 +17,9 @@ undocumented turn-behaviour language living in this file.
 
 from __future__ import annotations
 
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Optional, Set, Tuple
 
-from .base import AGENT_READY, AgentEvent
+from .base import AGENT_READY, AgentEvent, UnknownRequest
 
 
 class FakeSession:
@@ -50,6 +50,7 @@ class FakeSession:
         # first and a scripting surface second.
         self.submitted_turns: List[Tuple[list, Optional[str]]] = []
         self.permission_decisions: List[Tuple[str, str, str]] = []
+        self.decided_requests: Set[str] = set()
         self.interrupted = 0
 
     def agent_status(self) -> str:
@@ -71,6 +72,19 @@ class FakeSession:
     async def decide_permission(
         self, request_id: str, decision: str, message: str = ""
     ) -> None:
+        """Record one decision, and raise ``UnknownRequest`` for a second one
+        naming the same request.
+
+        The repeat is modelled rather than exposed as a flag because it is the
+        real broker's behaviour and the case worth testing: two views hold one
+        card, both are clicked, and the second click decides nothing. A test
+        that had to opt into that by setting a flag could pass while the
+        ordinary path silently never raised at all.
+        """
+        if request_id in self.decided_requests:
+            raise UnknownRequest(
+                "permission request %r was already decided" % (request_id,))
+        self.decided_requests.add(request_id)
         self.permission_decisions.append((request_id, decision, message))
 
     async def interrupt(self) -> None:

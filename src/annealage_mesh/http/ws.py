@@ -32,6 +32,7 @@ from microdot import Response
 from microdot.websocket import WebSocket, WebSocketError, websocket_upgrade
 
 from .. import protocol
+from ..session.base import UnknownRequest
 from ..viewers import ViewerRegistry
 
 # Inbound frame ceiling. Set explicitly because microdot's default,
@@ -351,6 +352,15 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None):
             else:
                 await session.decide_permission(
                     frame["request_id"], frame["decision"], frame.get("message", ""))
+        except UnknownRequest:
+            # Ordinary, not a failure: two tabs held one card and this is the
+            # one that lost, or the request expired before the click landed.
+            # Answered with what actually happened rather than with the generic
+            # message below, because "already decided" tells the human their
+            # click changed nothing, which is the whole point of replying.
+            await ws.send(json.dumps(protocol.build_refused(
+                "that permission request was already decided, by another view or "
+                "by expiring; this decision was not applied")))
         except Exception as exc:
             # A session that fails must not take the socket with it: the viewer
             # half of this page keeps working whatever the agent does.

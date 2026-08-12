@@ -32,6 +32,14 @@ than inventing a second one:
   ring is exactly what a plain seq replay cannot recover.
 - The shutdown sequence (plan section 3.4) calls ``shutdown`` once.
 
+Every request this broker opens is announced twice: a ``PermissionRequest``
+when it starts waiting, and exactly one ``PermissionResolved`` when it stops,
+whichever of the six paths ended it. The pair is what lets a browser that did
+not send the deciding frame retire the card, and what stops replay
+reconstructing an answered request as a live one on every reload. ``decide``
+raising ``UnknownRequest`` is the other half of the same problem: a second tab
+answering an already-answered card is owed that reply rather than silence.
+
 Nothing here reads or writes a socket, holds a ``ViewerRegistry``, or
 touches ``.mesh/config.toml`` or the user's ``settings.toml``; those are
 reached through ``on_event`` and the four methods above, all of it
@@ -49,7 +57,7 @@ from typing import Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate
 from claude_agent_sdk.types import PermissionRuleValue, ToolPermissionContext
 
-from .base import AgentEvent, PermissionRequest
+from .base import AgentEvent, PermissionRequest, PermissionResolved, UnknownRequest
 
 try:
     import tomllib  # Python 3.11+, stdlib, read-only.
@@ -96,16 +104,9 @@ _DENY_EMIT_FAILED_TEMPLATE = (
 )
 
 
-class UnknownRequest(Exception):
-    """Raised by ``decide`` when ``request_id`` names no request currently
-    awaiting a decision: never asked, already decided by an earlier call,
-    or already resolved by a timeout, ``viewer_disconnected`` reaching
-    zero, or ``shutdown``. The caller (whatever dispatches an inbound
-    ``permission`` frame) turns this into the "already decided" reply the
-    losing tab is told, per plan section 3.4's two-tabs-racing rule,
-    typically via ``protocol.build_refused`` on the connection that sent
-    the losing frame; this exception itself carries no connection to send
-    that on."""
+OUTCOME_TIMEOUT = "timeout"
+OUTCOME_NO_VIEWER = "no_viewer"
+OUTCOME_SHUTDOWN = "shutdown"
 
 
 class PermissionBroker:
@@ -136,6 +137,12 @@ class PermissionBroker:
         # without ask() having to pass it back out of band, and so
         # pending_requests() has something to hand a reconnecting viewer.
         self._open: Dict[str, PermissionRequest] = {}
+        # How each outstanding request ended, written by whichever path
+        # resolved it and read by ``ask``'s ``finally``, which is the one place
+        # every resolution passes through and therefore the one place a
+        # ``PermissionResolved`` can be emitted exactly once per request
+        # without each of the six resolution paths remembering to.
+        self._outcomes: Dict[str, str] = {}
         # Serialises the disk write inside _remember: two allow_always
         # decisions racing on the executor could otherwise complete out of
         # order and leave the file holding a smaller set than memory,
@@ -201,7 +208,8 @@ class PermissionBroker:
                     % (request_id, tool_name, exc))
                 return PermissionResultDeny(message=_DENY_EMIT_FAILED_TEMPLATE)
             try:
-                return await asyncio.wait_for(future, timeout=self._timeout)
+                result = await asyncio.wait_for(future, timeout=self._timeout)
+                return result
             except asyncio.TimeoutError:
                 # asyncio.wait_for has already cancelled `future` (it
                 # wraps any bare Future the same way it would a Task);
@@ -211,10 +219,24 @@ class PermissionBroker:
                 # loses the race against it is told "already decided" by
                 # its own done() check, not by a value read off a future
                 # this method has already stopped trusting.
+                self._outcomes[request_id] = OUTCOME_TIMEOUT
                 return PermissionResultDeny(message=_DENY_TIMEOUT_TEMPLATE % self._timeout)
         finally:
             self._pending.pop(request_id, None)
             self._open.pop(request_id, None)
+            outcome = self._outcomes.pop(request_id, OUTCOME_SHUTDOWN)
+            # After the pops, so a viewer that reconnects on the strength of
+            # this event and asks for what is still outstanding cannot be told
+            # about the request this event just closed.
+            try:
+                self._on_event(PermissionResolved(request_id=request_id, outcome=outcome))
+            except Exception as exc:
+                # The tool call has already been answered by this point, so a
+                # failure to announce that costs a card left on screen until
+                # the next reload, not a wrong decision.
+                sys.stderr.write(
+                    "warning: failed to emit permission_resolved %r (%s): %r\n"
+                    % (request_id, outcome, exc))
 
     # -- resolving a request ------------------------------------------------
 
@@ -255,6 +277,7 @@ class PermissionBroker:
         event = self._open.get(request_id)
         tool_name = event.tool if event is not None else ""
         result, grant = _build_result(tool_name, decision, message)
+        self._outcomes[request_id] = decision
         future.set_result(result)
         if grant is not None:
             await self._remember(grant)
@@ -316,7 +339,7 @@ class PermissionBroker:
         """
         self._viewer_count = max(0, self._viewer_count - 1)
         if self._viewer_count == 0:
-            self._deny_all_pending(_DENY_ALL_GONE)
+            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
 
     def _no_viewer_message(self) -> str:
         if self._viewer_url:
@@ -353,11 +376,12 @@ class PermissionBroker:
         Idempotent: a second call finds nothing left pending and a flag
         already set."""
         self._shutdown = True
-        self._deny_all_pending(_DENY_SHUTDOWN)
+        self._deny_all_pending(_DENY_SHUTDOWN, OUTCOME_SHUTDOWN)
 
-    def _deny_all_pending(self, message: str) -> None:
-        for future in list(self._pending.values()):
+    def _deny_all_pending(self, message: str, outcome: str) -> None:
+        for request_id, future in list(self._pending.items()):
             if not future.done():
+                self._outcomes[request_id] = outcome
                 future.set_result(PermissionResultDeny(message=message))
 
 

@@ -33,6 +33,16 @@ jobs:
       - name: run tests
         run: uv run --extra dev pytest -q
 
+      # The Python suite covers no JavaScript at all, so a syntax error in a
+      # module under static/js/ leaves it entirely green while the viewer fails
+      # to boot. This is two seconds and catches exactly that.
+      - name: every browser module parses
+        run: |
+          for f in src/annealage_mesh/static/js/*.js \
+                   src/annealage_mesh/static/js/vendor/*.js; do
+            node --check "$f" || exit 1
+          done
+
       # Agent mode requires bubblewrap and socat, and refuses to start without
       # them; the suite covers that refusal with a fixture rather than by
       # depending on what the runner has, so nothing here installs them. What
@@ -47,3 +57,26 @@ jobs:
           rc=$?
           set -e
           test "$rc" = "2" || { echo "expected exit 2, got $rc"; exit 1; }
+
+  # Separate from the matrix above: this needs a chromium download, which is
+  # larger than every other test dependency combined, so it runs once on one
+  # Python rather than three times. It is the only job that exercises the front
+  # end at all, which is why it is a job and not an optional extra nobody runs.
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: install chromium
+        run: uv run --extra dev --extra e2e playwright install --with-deps chromium
+
+      - name: run the browser suite
+        run: uv run --extra dev --extra e2e pytest tests/test_viewer_e2e.py -q

@@ -50,6 +50,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio>=0.23"]
+# The browser suite, kept out of `dev` because it also needs a browser binary
+# installed separately (`playwright install chromium`), which is a much larger
+# download than the rest of the test dependencies put together. Declared all the
+# same: while it was undeclared, `tests/test_viewer_e2e.py` skipped itself
+# wherever it was not installed by hand, so the only tests that exercise the
+# front end never ran in CI.
+e2e = ["playwright"]
 
 [project.scripts]
 annealage-mesh = "annealage_mesh.cli:main"

@@ -82,6 +82,7 @@ from .base import (
     ToolResult,
     ToolUse,
     TurnEnd,
+    UnknownRequest,
 )
 
 # The eight read-class mesh tools, pre-allowed so they never reach the broker
@@ -290,14 +291,19 @@ class SdkSession:
                                 message: str = "") -> None:
         """Route a human's decision to the broker.
 
-        Unknown or already-answered ids are the broker's business, not this
-        file's: two tabs can answer the same prompt, and the loser needs to be
-        told rather than to raise here.
+        ``UnknownRequest`` propagates deliberately. Two tabs can hold one card
+        and both answer it, and the one that lost has to be told: swallowing it
+        here would make a human's Deny on an already-allowed request look
+        exactly like a Deny that took effect, which is the one confusion this
+        path must not create. ``ws.py`` catches it and answers the connection
+        the losing frame arrived on.
         """
         if self._broker is None:
             return
         try:
             await self._broker.decide(request_id, decision, message)
+        except UnknownRequest:
+            raise
         except Exception as exc:
             sys.stderr.write("warning: permission decision %s was not applied: %r\n"
                              % (request_id, exc))

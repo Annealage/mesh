@@ -26,6 +26,31 @@
  */
 
 import { store } from "./store.js";
+import { toast } from "./ui.js";
+
+// What a card shows while its decision is in flight, keyed by the decision
+// this view sent.
+const DECISION_SENT = Object.freeze({
+  allow: "Allow sent…",
+  allow_always: "Always allow sent…",
+  deny: "Deny sent…",
+});
+
+// How a resolution reads in a toast. The three that nobody clicked are worth
+// naming precisely: a card that vanishes because it expired looks, without
+// this, exactly like one somebody answered.
+const OUTCOME_TEXT = Object.freeze({
+  allow: "was allowed",
+  allow_always: "was allowed for the rest of this session",
+  deny: "was denied",
+  timeout: "expired before it was answered",
+  no_viewer: "was cancelled when every view disconnected",
+  shutdown: "was cancelled by shutdown",
+});
+
+// The outcomes that mean a person clicked something, as opposed to the request
+// running out of time or of viewers.
+const HUMAN_DECISIONS = new Set(["allow", "allow_always", "deny"]);
 
 function escapeHtml(s) {
   return String(s)
@@ -271,10 +296,17 @@ export function initChat({ send }) {
     denyBtn.className = "danger";
     denyBtn.textContent = "Deny";
 
+    // The card is not removed here. A decision is a request to the server, not
+    // the answer: another view may already have answered this card, or it may
+    // have expired, in which case this click decides nothing. Removing it now
+    // would render those cases identically to a decision that took effect,
+    // which for a Deny the human believes they made is the worst of the three.
+    // `permission_resolved` retires the card, and carries the outcome that
+    // actually applied.
     function decide(decision) {
       const message = decision === "deny" ? reasonEl.value : "";
       send({ v: 1, type: "permission", request_id: req.request_id, decision, message });
-      store.removeChatPermissionRequest(req.request_id);
+      store.markChatPermissionSubmitted(req.request_id, decision);
     }
     allowBtn.addEventListener("click", () => decide("allow"));
     allowAlwaysBtn.addEventListener("click", () => decide("allow_always"));
@@ -285,11 +317,35 @@ export function initChat({ send }) {
     actions.appendChild(reasonEl);
     actions.appendChild(denyBtn);
 
+    const statusEl = document.createElement("div");
+    statusEl.className = "pstatus";
+
     card.appendChild(toolEl);
     card.appendChild(inputEl);
     card.appendChild(actions);
+    card.appendChild(statusEl);
 
-    return { card, toolEl, inputEl };
+    const buttons = [allowBtn, allowAlwaysBtn, denyBtn];
+    return { card, toolEl, inputEl, statusEl, buttons, reasonEl };
+  }
+
+  // Tells the human when a card ended in a way they would otherwise have to
+  // guess at: a decision this view sent that did not apply, and a resolution
+  // nobody chose. A card another view answered while this one was only
+  // watching just disappears, which is what a second device answering is
+  // supposed to look like.
+  function reportResolution(event) {
+    const req = store.getState().chat.pending.find(
+      (p) => p.request_id === event.request_id,
+    );
+    if (!req) return;
+    const what = OUTCOME_TEXT[event.outcome] || ("ended as " + event.outcome);
+    const tool = shortToolName(req.tool);
+    if (req.submitted && req.submitted !== event.outcome) {
+      toast(tool + ": your decision did not apply, the request " + what, false);
+    } else if (!req.submitted && !HUMAN_DECISIONS.has(event.outcome)) {
+      toast(tool + ": the request " + what, false);
+    }
   }
 
   function renderPending(chat) {
@@ -304,6 +360,14 @@ export function initChat({ send }) {
       }
       rec.toolEl.textContent = shortToolName(req.tool);
       rec.inputEl.textContent = safeJson(req.input);
+      // A card whose decision is in flight stays visible and stops accepting
+      // clicks, so a second click cannot send a second decision for one
+      // request and the human can see which answer is on its way.
+      const submitted = req.submitted || "";
+      rec.buttons.forEach((b) => { b.disabled = !!submitted; });
+      rec.reasonEl.disabled = !!submitted;
+      rec.card.classList.toggle("submitted", !!submitted);
+      rec.statusEl.textContent = submitted ? DECISION_SENT[submitted] : "";
     });
     for (const [id, rec] of pendingEls) {
       if (!seen.has(id)) {
@@ -396,6 +460,10 @@ export function initChat({ send }) {
           event.input,
           event.suggestions,
         );
+        break;
+      case "permission_resolved":
+        reportResolution(event);
+        store.removeChatPermissionRequest(event.request_id);
         break;
       case "session_reset":
         store.resetChatTurns();

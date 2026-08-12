@@ -27,7 +27,7 @@ import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate
 from claude_agent_sdk.types import PermissionRuleValue
 
-from annealage_mesh.session.base import PermissionRequest
+from annealage_mesh.session.base import PermissionRequest, PermissionResolved
 from annealage_mesh.session.permissions import (
     DEFAULT_DENY_MESSAGE,
     NEVER_REMEMBERED,
@@ -155,7 +155,10 @@ async def test_allow_always_persists_and_grants_a_later_request_without_asking(t
     second = await broker.ask("Write", {}, None)
     assert isinstance(second, PermissionResultAllow)
     _assert_session_rule(second, "Write")
-    assert len(events) == 1  # no new permission_request was emitted
+    # A grant answered from memory opens no request, so it announces neither a
+    # request nor a resolution: the only pair on the wire is the first one.
+    assert [type(e).__name__ for e in events] == [
+        "PermissionRequest", "PermissionResolved"]
 
     # A fresh broker over the same file, simulating a process restart,
     # loads the grant from disk and grants it without ever creating a
@@ -359,5 +362,133 @@ async def test_on_event_raising_denies_and_leaves_nothing_pending(capsys):
     result = await broker.ask("Write", {}, None)
 
     assert isinstance(result, PermissionResultDeny)
+    assert broker.pending_requests() == []
+    assert "broadcast exploded" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# permission_resolved: every request ends in exactly one announcement
+# ---------------------------------------------------------------------------
+
+
+def _resolutions(events):
+    return [e for e in events if isinstance(e, PermissionResolved)]
+
+
+async def test_a_decision_announces_the_resolution_with_its_outcome():
+    """Without this event a browser that did not send the deciding frame has
+    no way to learn the card is answered."""
+    broker, events = _broker()
+    broker.viewer_connected()
+    task, request = await _pending_request(broker, events)
+
+    await broker.decide(request.request_id, "allow")
+    await task
+
+    assert [(r.request_id, r.outcome) for r in _resolutions(events)] == [
+        (request.request_id, "allow")]
+
+
+@pytest.mark.parametrize("decision", ["allow", "allow_always", "deny"])
+async def test_the_outcome_names_the_decision_that_applied(decision):
+    """A pane that sent a different decision has to be able to tell that its
+    own did not apply, which needs the outcome rather than a bare 'resolved'."""
+    broker, events = _broker()
+    broker.viewer_connected()
+    task, request = await _pending_request(broker, events)
+
+    await broker.decide(request.request_id, decision)
+    await task
+
+    assert _resolutions(events)[0].outcome == decision
+
+
+async def test_a_timeout_announces_itself_as_a_timeout():
+    broker, events = _broker(timeout=0.01)
+    broker.viewer_connected()
+    task, request = await _pending_request(broker, events)
+
+    result = await task
+
+    assert isinstance(result, PermissionResultDeny)
+    assert _resolutions(events)[0].outcome == "timeout"
+
+
+async def test_the_last_viewer_leaving_announces_no_viewer():
+    broker, events = _broker()
+    broker.viewer_connected()
+    task, _request = await _pending_request(broker, events)
+
+    broker.viewer_disconnected()
+    await task
+
+    assert _resolutions(events)[0].outcome == "no_viewer"
+
+
+async def test_shutdown_announces_shutdown():
+    broker, events = _broker()
+    broker.viewer_connected()
+    task, _request = await _pending_request(broker, events)
+
+    broker.shutdown()
+    await task
+
+    assert _resolutions(events)[0].outcome == "shutdown"
+
+
+async def test_exactly_one_resolution_per_request_however_it_ended():
+    """The announcement is emitted from the one place every resolution passes
+    through, so no path can emit it twice and none can skip it."""
+    broker, events = _broker()
+    broker.viewer_connected()
+    first_task, first = await _pending_request(broker, events, tool_name="Edit")
+    second_task, _second = await _pending_request(broker, events, tool_name="Write")
+
+    await broker.decide(first.request_id, "deny")
+    await first_task
+    broker.shutdown()
+    await second_task
+
+    assert len(_resolutions(events)) == 2
+    assert len({r.request_id for r in _resolutions(events)}) == 2
+
+
+async def test_the_resolution_is_announced_after_the_request_stops_being_pending():
+    """A viewer that reconnects on the strength of this event and asks what is
+    still outstanding must not be told about the request it just closed."""
+    seen = []
+    broker = PermissionBroker(
+        lambda event: seen.append((event, [r.request_id for r in broker.pending_requests()])))
+    broker.viewer_connected()
+    task = asyncio.ensure_future(broker.ask("Edit", {}, None))
+    await asyncio.sleep(0)
+    request_id = seen[0][0].request_id
+
+    await broker.decide(request_id, "allow")
+    await task
+
+    resolution = [entry for entry in seen if isinstance(entry[0], PermissionResolved)][0]
+    assert resolution[1] == []
+
+
+async def test_a_failure_to_announce_does_not_break_the_decision(capsys):
+    """The tool call is already answered by then, so a broadcast failure costs
+    a card left on screen until the next reload, not a wrong decision."""
+    events = []
+
+    def _on_event(event):
+        events.append(event)
+        if isinstance(event, PermissionResolved):
+            raise RuntimeError("broadcast exploded")
+
+    broker = PermissionBroker(_on_event)
+    broker.viewer_connected()
+    task = asyncio.ensure_future(broker.ask("Edit", {}, None))
+    await asyncio.sleep(0)
+
+    await broker.decide(events[0].request_id, "allow")
+    result = await task
+
+    assert isinstance(result, PermissionResultAllow)
     assert broker.pending_requests() == []
     assert "broadcast exploded" in capsys.readouterr().err

@@ -417,6 +417,27 @@ function addChatPermissionRequest(requestId, tool, input, suggestions) {
   }, ["chat"]);
 }
 
+// Records that this view has sent a decision for `requestId` and is waiting to
+// hear that it landed. The card stays on screen, showing that it is in flight,
+// because it is the server's `permission_resolved` that says a request is over,
+// and only that event distinguishes a decision that took effect from one
+// another view had already answered.
+function markChatPermissionSubmitted(requestId, decision) {
+  commit(() => {
+    const chat = state.chat;
+    let changed = false;
+    const pending = Object.freeze(
+      chat.pending.map((p) => {
+        if (p.request_id !== requestId || p.submitted) return p;
+        changed = true;
+        return Object.freeze({ ...p, submitted: decision });
+      }),
+    );
+    if (!changed) return;
+    state = { ...state, chat: Object.freeze({ ...chat, pending }) };
+  }, ["chat"]);
+}
+
 function removeChatPermissionRequest(requestId) {
   commit(() => {
     const chat = state.chat;
@@ -483,6 +504,7 @@ export const store = {
   endChatTurn,
   queueChatUserTurn,
   addChatPermissionRequest,
+  markChatPermissionSubmitted,
   removeChatPermissionRequest,
   setChatAgentStatus,
   setChatBanner,
