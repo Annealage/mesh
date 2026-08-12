@@ -2,7 +2,7 @@
 
 Annealage Mesh is a little web tool for building 3D-printable parts with an agent, by pointing at them. You give it a folder, it serves up a 3D viewer in the browser with a Claude Code chat pane beside it, and the two of you get to work in there.
 
-Ask for a part and the agent writes the CAD script in that folder, runs it, and the STL turns up in the viewer a moment later. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script. The new geometry appears in place, camera left where you had it.
+Ask for a part and the agent writes the CAD script in that folder, runs it, and the STL turns up in the viewer. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script.
 
 ![Annealage Mesh: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](docs/mesh-three-pane.png)
 
@@ -14,13 +14,9 @@ Pointing at the thing is just so much easier. So we built a viewer where I click
 
 It's bidirectional too, which turned out to be the good bit. The agent can write its own callouts (a location plus a note) and they show up as pins in the viewer for me to see and reply to. So it ends up being a shared surface, I mark up what I want changed, the agent pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
 
-The other half of it is that the viewer keeps up. The agent rewrites the script, regenerates the STL, and the part just changes in front of me, no reload, no restart. That's what turns it from a review tool into the loop I actually wanted: ask, look, point, ask again.
-
 ## Install
 
-Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code.
-
-Be ready for the size. The SDK bundles the Claude Code CLI itself, so the first install pulls down roughly 90 MB rather than a few tens of kilobytes. That's the cost of the chat pane being part of the tool rather than something you wire up separately. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
+Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
 
 On Linux you'll also want `bubblewrap` and `socat`:
 
@@ -46,7 +42,7 @@ Point it at a folder:
 
     annealage-mesh ./build
 
-It starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, including ones that turn up later, toggle them on/off in the side panel.
+It starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
 
 - Drag to orbit, scroll / pinch to zoom, right-drag or two-finger to pan.
 - Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.

@@ -57,7 +57,7 @@ This is what the tool is for, so it is worth spelling out as a sequence.
 
 1. **You describe the part**, in the chat pane, in whatever terms you would use to a colleague. "A shroud for a 40 mm fan, 38 mm tall, with a 3 mm flange and four M3 holes on a 32 mm square."
 2. **The agent writes the source and runs it.** It has a shell in this folder, so it creates whatever script the toolchain you are using needs, runs it, and produces an STL. A command confined to this folder runs without asking, which is what keeps this step quick enough to repeat.
-3. **The part appears.** You do not reload and you do not restart anything. A new STL shows up in the viewer with its own colour and its own checkbox; a regenerated one replaces the geometry in place, with the camera left exactly where you put it.
+3. **The part appears.** A new STL shows up in the viewer with its own colour and its own checkbox; a regenerated one replaces the geometry in place, with the camera left where you put it.
 4. **You point at what is wrong.** Switch to Add pin, click the face, type the problem. Submit.
 5. **The agent reads the coordinates and revises.** It edits the source, regenerates, and step 3 happens again.
 

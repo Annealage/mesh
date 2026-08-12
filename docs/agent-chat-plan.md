@@ -414,7 +414,9 @@ Rejected, and worth recording because it was the plan's own position first: maki
 
 `anyio`, `mcp` and `sniffio` are not declared; we never import them and they arrive under the extra as the SDK's own dependencies.
 
-`README.md` and `SKILL.md` both advertised zero runtime dependencies, Python 3.9+ and near-instant `uvx` start. Those claims are rewritten rather than quietly dropped: two runtime dependencies, Python 3.10+, and a first install of roughly 90 MB because the SDK bundles the Claude Code CLI. The size is stated plainly where a reader decides whether to install, not buried in a changelog.
+`README.md` and `SKILL.md` both advertised zero runtime dependencies, Python 3.9+ and near-instant `uvx` start. Those claims are rewritten rather than quietly dropped: two runtime dependencies and Python 3.10+.
+
+This section originally also required the install size to be stated plainly in the README, on the reasoning that a reader deciding whether to install should not be surprised by it. Reversed by the maintainer on 2026-08-13: 90 MB is unremarkable for installing an application, so calling it out gave it a prominence it does not warrant and made the install section read as an apology. The reasoning behind the dependency decision stays recorded here and in `pyproject.toml`, where someone asking why the package is that size will look.
 
 The single-file `force-include` of `viewer.html` in `pyproject.toml:50-51` is replaced by normal package-data inclusion of `src/annealage_mesh/static/**`. `REUSE.toml` gains an MIT entry for `static/js/vendor/*`, leaving the PolyForm-plus-MIT-skill arrangement intact.
 
