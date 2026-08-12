@@ -42,6 +42,18 @@ All verified against `claude-agent-sdk` 0.2.135 with `claude` CLI 2.1.227, by so
 
 Observed cost: roughly $0.02 to $0.06 per trivial turn on `claude-haiku-4-5`. Per-turn cost is user-visible and belongs in the UI.
 
+### 2a. Further facts verified against 0.2.136, which M5 depends on
+
+The pin `>=0.2.135,<0.3` admits 0.2.136, and that is what is installed now. Every fact above was re-checked against it mechanically and all of them hold, including fact 7: `"image"` still appears nowhere in `_internal/message_parser.py`, so an image block in an echoed user message is still dropped. `ClaudeAgentOptions` has grown from 44 fields to 45. Four further facts, all VERIFIED by live probe, constrain M5:
+
+14. **`can_use_tool` must return a `PermissionResultAllow` or `PermissionResultDeny`, never a plain dict.** A returned dict fails the call with `Tool permission callback must return PermissionResult (PermissionResultAllow or PermissionResultDeny), got <class 'dict'>`, and the model is told the permission infrastructure errored. Signatures: `PermissionResultAllow(behavior="allow", updated_input=None, updated_permissions=None)` and `PermissionResultDeny(behavior="deny", message="", interrupt=False)`. Many published examples show the dict form; it does not work here.
+
+15. **A deny's `message` reaches the model verbatim.** The probe's `"denied by the probe's broker"` came back in the model's own summary of what happened. So the broker's refusal text is model-visible and should be written to tell the model what to do instead, not just to log the refusal.
+
+16. **`sandbox={"enabled": True}` needs both `bwrap` and `socat` on Linux, and silently degrades without them.** With `socat` absent the CLI writes to stderr: `Sandbox disabled: sandbox is enabled but dependencies are missing: socat not installed ... Commands will run WITHOUT sandboxing. Network and filesystem restrictions will NOT be enforced.` Since the chosen posture is the sandboxed one, the startup banner and `doctor` must report whether the sandbox is **active**, not merely requested, which means `session/sdk.py` has to parse that line out of the captured stderr.
+
+17. **`autoAllowBashIfSandboxed` is inert when the sandbox is inactive.** VERIFIED by running the same task with the flag true and false while the sandbox was degraded: both consulted the broker for the write and neither wrote anything. So the degraded mode fails safe, toward more prompting rather than toward unsandboxed auto-approval. That is what makes the sandboxed posture a safe default even on a machine missing the dependencies.
+
 ## 3. Architecture
 
 ### 3.1 Process topology
@@ -294,7 +306,9 @@ Write-class, deliberately absent from `allowed_tools` so they reach the broker a
 
 Not offered as tools, deliberately: anything that types into the composer on the human's behalf, anything that submits the human's pins, and continuous camera animation. The model may move the camera, which is visible in the 3D pane, but a `paused` flag the human can set from the topbar makes all write-class mesh tools return an error, so the human can edit a pin comment without the agent mutating underneath them. That idea is lifted from Canvas's read and write classification.
 
-Ordinary Claude Code tools: `setting_sources=["user","project","local"]` and the `claude_code` tool preset, so Read, Edit and Bash are present, which is what "behaves like Claude Code in that folder" means. None of them are pre-allowed, so all of them prompt.
+Ordinary Claude Code tools: `setting_sources=["user","project","local"]` and the `claude_code` tool preset, so Read, Edit and Bash are present, which is what "behaves like Claude Code in that folder" means. Nothing is added to `allowed_tools` for them.
+
+**That does not mean every one of them prompts, and the difference is worth knowing before designing the pane around it.** VERIFIED by probe against SDK 0.2.136 with a broker that denied everything: `pwd`, `ls -1` and `echo hello` all ran without `can_use_tool` being consulted at all, while `cat /etc/hostname` and a `curl` to an external host were both consulted and refused. Claude Code classifies bash invocations itself, and one confined to the working directory with no side effects and no network never reaches our broker. So the permission pane shows writes, reads outside the directory, and network access; it will never show a plain directory listing. This is the CLI's own behaviour and is not configurable through the options this design sets.
 
 ### 3.10 Security
 
@@ -448,6 +462,7 @@ Do not relitigate these without a stated reason.
 - Two fake layers: `AgentSession` fake for most tests, fake `Transport` as the SDK-upgrade canary.
 - `/manifest` keeps `dir` and `path`; the test is fixed, not the response.
 - `git init` plus one scaffold commit, and never an automatic commit after that.
+- **The default agent posture is the full `claude_code` preset with bash sandboxed.** `sandbox={"enabled": True, "autoAllowBashIfSandboxed": True}`, so bash runs contained and is not prompted for, while Edit, Write and network access still reach the broker and therefore the human. Chosen over both alternatives (everything prompting; read-only until widened) because it is better than either on both axes at once: fewer approval cards for the human to clear, and filesystem plus network isolation that neither of the others has. Two consequences are not optional. The sandbox needs `bwrap` and `socat` present, so the banner reports whether it is **active** rather than merely requested (fact 16). And where it cannot engage, including Windows, the fallback is the everything-prompts posture, which fact 17 confirms happens automatically and safely; that fallback must be stated in the banner rather than being left for the human to infer from a sudden increase in prompts.
 
 ## 6. Deferred
 
@@ -473,4 +488,4 @@ Do not relitigate these without a stated reason.
 
 Five earlier questions are now answered and recorded in section 5: the transcript is export-only, non-loopback binding stays supported with `--host tailscale` recommended, the narrow-viewport layout is in scope, symlinked models are refused, and multi-viewer is convenience rather than collaboration.
 
-1. **How locked down should the agent be by default?** This plan gives the `claude_code` preset with everything prompting, that is, genuinely Claude Code in that folder. The alternative is starting with mesh tools plus Read only, with Bash denied, and requiring a flag to widen. A product-posture call, not a technical one. Blocks M5's defaults, and is the one question still open.
+Every question is now answered. The last one, how locked down the agent should be by default, was decided by the maintainer on 2026-08-12 in favour of an option the SDK gained after this plan was written, and is recorded in section 5.
