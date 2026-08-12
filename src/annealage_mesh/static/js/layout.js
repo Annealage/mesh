@@ -19,6 +19,7 @@ const NARROW_QUERY = "(max-width: 900px)";
 const TABS = [
   { id: "model", label: "Model", target: "#app" },
   { id: "review", label: "Review", target: "#side" },
+  { id: "chat", label: "Chat", target: "#chat" },
 ];
 
 /** Whether the tab bar is the one governing pane visibility right now. */

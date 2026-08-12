@@ -19,6 +19,9 @@
   <button id="modeBtn" title="Toggle pin/navigate mode">○ Navigate</button>
   <button id="fit" title="Fit view (F)">Fit</button>
   <button id="upBtn" title="Toggle which axis is 'up'">Z-up</button>
+  <label class="pausewrap" title="While paused, write-class agent tools (edit, write, network) return an error instead of running, so you can edit a pin without the agent changing it underneath you.">
+    <input type="checkbox" id="pauseToggle"><span>Pause agent</span>
+  </label>
   <button id="panelBtn" title="Show/hide panel">☰ Panel</button>
 </div>
 
@@ -57,6 +60,27 @@
       </div>
       <div class="sub" id="status" style="color:#778;font-size:11px;">unsaved</div>
     </footer>
+  </aside>
+
+  <aside id="chat">
+    <header>
+      <h1>Chat</h1>
+      <span id="agentStatus" class="agentstatus"></span>
+    </header>
+    <div id="chatBanner" class="chatbanner" hidden>
+      <span id="chatBannerText"></span>
+      <button id="chatBannerClose" type="button" aria-label="Dismiss">×</button>
+    </div>
+    <div class="chathint">Approval cards appear here for actions outside this project folder, over the network, or that write files; a plain command confined to this folder runs without asking.</div>
+    <div id="chatLog"></div>
+    <div id="chatPending"></div>
+    <div id="chatComposer">
+      <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
+      <div class="chatbtns">
+        <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
+        <button id="chatSend" type="button" class="primary">Send</button>
+      </div>
+    </div>
   </aside>
 </div>
 

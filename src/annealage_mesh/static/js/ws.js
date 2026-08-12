@@ -16,6 +16,16 @@
  * decides, via startCalloutsPoll/stopCalloutsPoll/refetchCallouts handed in
  * by main.js, whether the poll or the push is the one presently allowed to
  * call it, so the two are never both running at once.
+ *
+ * `onHello` and `onAgentEvent` are the chat pane's two inbound hooks:
+ * `onHello` receives the hello frame's `session` object once per connection
+ * (including every reconnect, since agent status can change between them),
+ * and `onAgentEvent` receives every event whose kind is not
+ * `callouts_changed`. Neither is called from here except at those two
+ * points; chat.js, not this module, decides what an event means. The
+ * returned `send` is this module's only outbound capability, so a turn,
+ * permission or interrupt frame still goes out over the one socket this
+ * closure owns, with no second connection or second reconnect policy.
  */
 
 import { store } from "./store.js";
@@ -116,7 +126,13 @@ function wsUrl() {
   return scheme + "//" + location.host + wsPath();
 }
 
-export function initWs({ startCalloutsPoll, stopCalloutsPoll, refetchCallouts }) {
+export function initWs({
+  startCalloutsPoll,
+  stopCalloutsPoll,
+  refetchCallouts,
+  onHello = () => {},
+  onAgentEvent = () => {},
+}) {
   let ws = null;
   let opened = false; // true once this attempt's WebSocket has reached readyState OPEN
   let lastSeq = 0;
@@ -234,11 +250,9 @@ export function initWs({ startCalloutsPoll, stopCalloutsPoll, refetchCallouts })
     } else if (frame.type === "event") {
       handleEvent(frame);
     }
-    // "call", "ping" and anything else: no handler yet. Viewer-control
-    // calls and the chat pane arrive from M5/M6 onward; ignoring them here
-    // costs nothing because no agent exists yet to send one, and an
-    // unrecognised type from a same-version server is simply a frame this
-    // build of the page has no use for, not an error.
+    // "call" and "ping": no handler yet. An unrecognised type from a
+    // same-version server is simply a frame this build of the page has no
+    // use for, not an error.
   }
 
   function handleHello(frame) {
@@ -258,6 +272,7 @@ export function initWs({ startCalloutsPoll, stopCalloutsPoll, refetchCallouts })
     // server's 500-event ring, so a gap longer than that would otherwise
     // leave a stale callout list with no further event to prompt a refetch.
     refetchCallouts();
+    onHello(frame.session);
   }
 
   function handleEvent(frame) {
@@ -265,10 +280,9 @@ export function initWs({ startCalloutsPoll, stopCalloutsPoll, refetchCallouts })
     const kind = frame.event && frame.event.kind;
     if (kind === "callouts_changed") {
       refetchCallouts();
+    } else {
+      onAgentEvent(frame.event);
     }
-    // Other kinds (text_delta, tool_use, tool_result, permission_request,
-    // turn_end) have no renderer until the chat pane lands in M5; seq still
-    // advances for them above so a later reconnect's last_seq is correct.
   }
 
   function handleProtocolMismatch() {
@@ -380,4 +394,10 @@ export function initWs({ startCalloutsPoll, stopCalloutsPoll, refetchCallouts })
   }
 
   connect();
+
+  // `send` is the only capability this module hands back: chat.js's turn,
+  // permission and interrupt frames all go out through it, so there is
+  // still exactly one WebSocket and one place (this closure) that owns its
+  // lifecycle, reconnects and replay bookkeeping.
+  return { send };
 }

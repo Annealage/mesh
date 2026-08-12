@@ -25,6 +25,7 @@ would answer questions an unauthenticated caller should not be able to ask.
 
 import asyncio
 import json
+import sys
 import time
 
 from microdot import Response
@@ -93,7 +94,7 @@ def host_is_allowed(req, allowed_hosts):
 
 
 def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
-                event_log, session_info):
+                event_log, session_info, session=None):
     """Register ``/ws`` on ``app``.
 
     ``token`` of ``None`` means no token was configured for this process, and
@@ -136,7 +137,7 @@ def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
             if not await _greet(ws, event_log, token):
                 return Response.already_handled
             conn = await registry.add(ws)
-            await _serve_connection(ws, conn, registry, event_log, token)
+            await _serve_connection(ws, conn, registry, event_log, token, session)
         except WebSocketError:
             # The peer closed, or sent a frame microdot could not read. Not
             # an error worth reporting: a browser tab closing is the ordinary
@@ -287,7 +288,7 @@ async def _parse(ws, raw):
     return result
 
 
-async def _serve_connection(ws, conn, registry, event_log, token):
+async def _serve_connection(ws, conn, registry, event_log, token, session=None):
     """Read and dispatch frames until the peer goes away.
 
     Every frame this sends is either a ``refused``, which carries no seq, or a
@@ -305,10 +306,10 @@ async def _serve_connection(ws, conn, registry, event_log, token):
             continue
         if frame is _CLOSED:
             return
-        await _dispatch(ws, conn, registry, event_log, token, frame)
+        await _dispatch(ws, conn, registry, event_log, token, frame, session)
 
 
-async def _dispatch(ws, conn, registry, event_log, token, frame):
+async def _dispatch(ws, conn, registry, event_log, token, frame, session=None):
     """Route one validated inbound frame."""
     kind = frame["type"]
     if kind == "hello":
@@ -328,12 +329,35 @@ async def _dispatch(ws, conn, registry, event_log, token, frame):
         await registry.touch(conn)
         return
     if kind in ("turn", "interrupt", "permission"):
-        # No agent session exists in this milestone; the frames are defined
-        # and validated so the browser side can be built against them, and
-        # answering with a reason is what stops a chat pane from waiting
-        # forever on a turn nothing will ever process.
-        await ws.send(json.dumps(protocol.build_refused(
-            "no agent session in this build: %s frames are not served yet" % kind)))
+        if session is None:
+            # Viewer-only: the frames are still defined and validated so one
+            # browser build works against both modes, and answering with a
+            # reason is what stops a chat pane waiting forever on a turn
+            # nothing will ever process.
+            await ws.send(json.dumps(protocol.build_refused(
+                "this server is running viewer-only, so %s frames are not served"
+                % kind)))
+            return
+        await registry.touch(conn)
+        # Handed to the session and not awaited for a result: a turn produces
+        # events, which arrive over this same socket through the registry, and
+        # blocking this connection's read loop on the whole turn would stop it
+        # reading the interrupt frame that ends it.
+        try:
+            if kind == "turn":
+                await session.submit_turn(frame["blocks"], viewer=conn.tab_id)
+            elif kind == "interrupt":
+                await session.interrupt()
+            else:
+                await session.decide_permission(
+                    frame["request_id"], frame["decision"], frame.get("message", ""))
+        except Exception as exc:
+            # A session that fails must not take the socket with it: the viewer
+            # half of this page keeps working whatever the agent does.
+            sys.stderr.write("warning: session could not handle a %s frame: %r\n"
+                             % (kind, exc))
+            await ws.send(json.dumps(protocol.build_refused(
+                "the agent could not handle that %s frame; see the server output" % kind)))
         return
     await ws.send(json.dumps(protocol.build_refused("unhandled frame type: %s" % kind)))
 

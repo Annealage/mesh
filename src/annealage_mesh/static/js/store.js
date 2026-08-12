@@ -65,6 +65,31 @@
  *                 pre-handshake 403 was confirmed, most likely a stale
  *                 token from a server restart, and the fallback poll runs
  *                 under this state too.
+ *   chat          {turns, pendingUser, pending, agentStatus, paused, banner}
+ *                 the whole chat pane's state.
+ *                 `turns` is one record per SDK turn number, `{turn, user,
+ *                 text, tools, stopReason, costUsd, complete}`, built up
+ *                 as text_delta/tool_use/tool_result/turn_end events
+ *                 arrive; `tools` is `[{tool_use_id, name, input, result}]`
+ *                 with `result` null until a tool_result names that
+ *                 tool_use_id. `user` pairs the record with the composer
+ *                 blocks that started it, taken off `pendingUser` the
+ *                 first time any event for that turn number is seen,
+ *                 because the outbound `turn` frame carries no id the
+ *                 server echoes back to correlate the two. `pendingUser`
+ *                 is that queue: blocks the composer has sent whose turn
+ *                 number has not appeared yet.
+ *                 `pending` is outstanding permission requests, one entry
+ *                 per live `request_id`, `{request_id, tool, input,
+ *                 suggestions}`; a replayed duplicate of a still-unanswered
+ *                 request is not added twice.
+ *                 `agentStatus` mirrors the hello frame's `session.agent`
+ *                 ('connecting' | 'ready' | 'unavailable'). `paused` is
+ *                 the topbar toggle's own state. `banner` is the most
+ *                 recent `session_reset` or `agent_error` event as
+ *                 `{kind, text}`, or null once dismissed. A `session_reset`
+ *                 also clears `turns` (`resetChatTurns`), because the new
+ *                 session's turn numbers start over from 1.
  */
 
 let state = Object.freeze({
@@ -82,6 +107,14 @@ let state = Object.freeze({
   activeTab: "model",
   panelOpen: false,
   connection: "connecting",
+  chat: Object.freeze({
+    turns: Object.freeze([]),
+    pendingUser: Object.freeze([]),
+    pending: Object.freeze([]),
+    agentStatus: "connecting",
+    paused: false,
+    banner: null,
+  }),
 });
 
 // Assigns pin ids. Kept outside `state` because it is a generator, not a
@@ -265,6 +298,172 @@ function setConnection(v) {
   }, ["connection"]);
 }
 
+// Finds the turn record for `turn` in `chat.turns`, or builds one, pairing it
+// with the oldest still-unmatched entry in `chat.pendingUser` (the outbound
+// `turn` frame carries no id the server echoes back, so the first event for
+// a turn number is what associates it with the composer blocks that started
+// it). Callers must fold the returned `turns` and `pendingUser` back into a
+// new chat object themselves; this only computes the two arrays, it does not
+// touch `state`.
+function ensureTurn(chat, turn) {
+  const idx = chat.turns.findIndex((t) => t.turn === turn);
+  if (idx !== -1) {
+    return { turns: chat.turns, pendingUser: chat.pendingUser, idx };
+  }
+  const user = chat.pendingUser.length ? chat.pendingUser[0] : null;
+  const pendingUser = chat.pendingUser.length
+    ? Object.freeze(chat.pendingUser.slice(1))
+    : chat.pendingUser;
+  const record = Object.freeze({
+    turn,
+    user,
+    text: "",
+    tools: Object.freeze([]),
+    stopReason: null,
+    costUsd: null,
+    complete: false,
+  });
+  const turns = Object.freeze([...chat.turns, record]);
+  return { turns, pendingUser, idx: turns.length - 1 };
+}
+
+function appendChatTextDelta(turn, text) {
+  commit(() => {
+    const chat = state.chat;
+    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
+    const nextTurns = Object.freeze(
+      turns.map((t, i) => (i === idx ? Object.freeze({ ...t, text: t.text + text }) : t)),
+    );
+    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
+  }, ["chat"]);
+}
+
+function addChatToolUse(turn, toolUseId, name, input) {
+  commit(() => {
+    const chat = state.chat;
+    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
+    const tool = Object.freeze({ tool_use_id: toolUseId, name, input, result: null });
+    const nextTurns = Object.freeze(
+      turns.map((t, i) =>
+        i === idx ? Object.freeze({ ...t, tools: Object.freeze([...t.tools, tool]) }) : t,
+      ),
+    );
+    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
+  }, ["chat"]);
+}
+
+// Attaches a tool's result to the tool_use record it belongs to, wherever in
+// `turns` that record is; a tool_result's frame carries only the
+// tool_use_id, not the turn number, so every turn is searched rather than
+// assuming the result lands in the same turn its tool_use did.
+function setChatToolResult(toolUseId, isError, text) {
+  commit(() => {
+    const chat = state.chat;
+    const turns = Object.freeze(
+      chat.turns.map((t) => {
+        if (!t.tools.some((tool) => tool.tool_use_id === toolUseId)) return t;
+        const tools = Object.freeze(
+          t.tools.map((tool) =>
+            tool.tool_use_id === toolUseId
+              ? Object.freeze({ ...tool, result: Object.freeze({ isError: !!isError, text }) })
+              : tool,
+          ),
+        );
+        return Object.freeze({ ...t, tools });
+      }),
+    );
+    state = { ...state, chat: Object.freeze({ ...chat, turns }) };
+  }, ["chat"]);
+}
+
+function endChatTurn(turn, stopReason, costUsd) {
+  commit(() => {
+    const chat = state.chat;
+    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
+    const nextTurns = Object.freeze(
+      turns.map((t, i) =>
+        i === idx ? Object.freeze({ ...t, stopReason, costUsd, complete: true }) : t,
+      ),
+    );
+    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
+  }, ["chat"]);
+}
+
+function queueChatUserTurn(blocks) {
+  commit(() => {
+    const chat = state.chat;
+    state = {
+      ...state,
+      chat: Object.freeze({ ...chat, pendingUser: Object.freeze([...chat.pendingUser, blocks]) }),
+    };
+  }, ["chat"]);
+}
+
+// Adds a permission_request to the pending list unless its request_id is
+// already there. Replay re-emits every still-unanswered request on
+// reconnect, so this call is not proof of a first sighting.
+function addChatPermissionRequest(requestId, tool, input, suggestions) {
+  commit(() => {
+    const chat = state.chat;
+    if (chat.pending.some((p) => p.request_id === requestId)) return;
+    const entry = Object.freeze({
+      request_id: requestId,
+      tool,
+      input,
+      suggestions: suggestions || null,
+    });
+    state = {
+      ...state,
+      chat: Object.freeze({ ...chat, pending: Object.freeze([...chat.pending, entry]) }),
+    };
+  }, ["chat"]);
+}
+
+function removeChatPermissionRequest(requestId) {
+  commit(() => {
+    const chat = state.chat;
+    const pending = Object.freeze(chat.pending.filter((p) => p.request_id !== requestId));
+    state = { ...state, chat: Object.freeze({ ...chat, pending }) };
+  }, ["chat"]);
+}
+
+function setChatPaused(v) {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, paused: !!v }) };
+  }, ["chat"]);
+}
+
+function setChatAgentStatus(status) {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, agentStatus: status }) };
+  }, ["chat"]);
+}
+
+function setChatBanner(kind, text) {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, banner: Object.freeze({ kind, text }) }) };
+  }, ["chat"]);
+}
+
+function clearChatBanner() {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, banner: null }) };
+  }, ["chat"]);
+}
+
+// Empties `turns` without touching `pendingUser`. Called when a
+// session_reset event reports the SDK started a fresh session: that
+// session's own turn numbering starts from 1 again, so leaving the old
+// turns in place risks a later ensureTurn call finding a stale record
+// under the same turn number and folding new content into it. A message
+// already queued in `pendingUser` still belongs to the next turn the new
+// session produces, so it is left alone.
+function resetChatTurns() {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, turns: Object.freeze([]) }) };
+  }, ["chat"]);
+}
+
 export const store = {
   getState,
   subscribe,
@@ -285,4 +484,16 @@ export const store = {
   setActiveTab,
   setPanelOpen,
   setConnection,
+  appendChatTextDelta,
+  addChatToolUse,
+  setChatToolResult,
+  endChatTurn,
+  queueChatUserTurn,
+  addChatPermissionRequest,
+  removeChatPermissionRequest,
+  setChatPaused,
+  setChatAgentStatus,
+  setChatBanner,
+  clearChatBanner,
+  resetChatTurns,
 };

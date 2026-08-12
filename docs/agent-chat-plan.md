@@ -54,6 +54,12 @@ The pin `>=0.2.135,<0.3` admits 0.2.136, and that is what is installed now. Ever
 
 17. **`autoAllowBashIfSandboxed` is inert when the sandbox is inactive.** VERIFIED by running the same task with the flag true and false while the sandbox was degraded: both consulted the broker for the write and neither wrote anything. So the degraded mode fails safe, toward more prompting rather than toward unsandboxed auto-approval. That is what makes the sandboxed posture a safe default even on a machine missing the dependencies.
 
+18. **With the sandbox active, the flag means bash is never prompted for, and the containment is real.** VERIFIED once `socat` was installed, against a broker that denied everything: the broker was consulted **zero** times, a write inside the working directory succeeded, and writes to `$HOME` and to `/tmp` both failed with `Read-only file system`. So "bash runs contained and unprompted" is literally what happens, and the same probe with the flag off consulted the broker once and wrote nothing.
+
+19. **The sandbox restricts writes and network, not reads.** In the same probe, `cat ~/.bashrc` succeeded, unprompted. This follows from `SandboxSettings`' own documentation, which says filesystem read restriction is configured with Read **deny rules** rather than by the sandbox, and it is the honest limit of the containment: a sandboxed bash can still read anything the user can, including `~/.ssh` and cloud credentials. That matters more here than in a general-purpose agent, because this tool reads STL comments and filenames, which are untrusted input, while holding a shell. Adding deny rules for the obvious secret locations is the mitigation; it is deliberately not done yet, because a deny list broad enough to help is also broad enough to break legitimate work, and choosing it is a product decision rather than an implementation detail. Recorded in section 6 as deferred, not overlooked.
+
+20. **A requested sandbox cannot be confirmed active from the child's output alone.** The CLI announces a sandbox it could not engage and says nothing about one it could, and that announcement arrives when a bash command first runs, not at connect time. So a startup banner claiming ACTIVE purely because nothing has complained yet is claiming something it does not know, which is how the first implementation of this got it wrong on a host with `socat` missing. What is checkable at startup is the negative case, by looking for the dependencies the CLI's own message names, and the child's report supersedes that whenever it arrives.
+
 ## 3. Architecture
 
 ### 3.1 Process topology
@@ -478,6 +484,7 @@ Do not relitigate these without a stated reason.
 - Stroke unprojection to 3D coordinates, after M7 ships image-only sketches.
 - `Content-Security-Policy`, easier once assets are vendored.
 - Per-user authentication for the LAN case, beyond the per-run token. `tailscale serve` covers the remote case better in the meantime.
+- Read deny rules for secret locations (`~/.ssh`, cloud credential directories, keyrings). Fact 19: the sandbox contains writes and network but not reads, so a sandboxed bash can read anything its user can. Wanted, and left undone deliberately, because a list broad enough to help is broad enough to break real work and the choice is the maintainer's.
 - `--fork`, mapping to `fork_session=True`, for branching a resumed session.
 - An in-pane session picker, replacing the `-r` terminal listing. Wanted eventually, because a phone user has no terminal.
 - Two-tier tool discovery, only if the tool count passes roughly twenty.

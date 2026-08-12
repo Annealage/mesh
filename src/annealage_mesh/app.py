@@ -76,7 +76,7 @@ def configure_request_limits():
 
 
 def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_PORT,
-               extra_origins=()):
+               extra_origins=(), mesh_session_id=None, build_session=None):
     """Build a Microdot app serving ``serve_dir``, routes registered, not started.
 
     ``host`` is an address already resolved (``net.resolve_bind`` does the
@@ -90,6 +90,11 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     refuses every request. The read-only routes stay open either way, because
     gating them buys nothing: their exposure was closed by deleting the
     serve-anything fallback, not by a secret.
+
+    ``mesh_session_id`` is the id ``cli.py`` resolved for this run (fresh or
+    resumed, per plan section 3.4); it is only ever reported in the
+    ``hello`` frame's ``session`` object here, never used to construct an
+    agent, since no ``AgentSession`` is built by this function.
     """
     configure_request_limits()
     bind = net.bind_from_address(host)
@@ -112,19 +117,47 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
 
     register_routes(app, serve_dir)
 
+    # Set after the session exists, since the broker it belongs to is built by
+    # the session factory below; a list with one slot rather than a nonlocal so
+    # the closure reads the current value instead of capturing None.
+    presence_listener = []
+
+    def _presence(count):
+        for listen in presence_listener:
+            listen(count)
+
     event_log = EventLog()
-    registry = ViewerRegistry(event_log=event_log)
+    registry = ViewerRegistry(event_log=event_log, on_presence=_presence)
     session_info = {
-        "id": "viewer-only",
+        "id": mesh_session_id if mesh_session_id is not None else "viewer-only",
         "sdk_session_id": None,
         "cwd": str(serve_dir),
         "agent": "unavailable",
     }
     app.mesh_registry = registry
     app.mesh_event_log = event_log
+
+    # ``build_session`` is called with the callback a session must use to
+    # publish an event, and returns the session or None for viewer-only. It is
+    # a factory rather than a constructed object so that the event callback,
+    # which needs the registry and the log built above, exists before the
+    # session that will call it, without either module importing the other.
+    session = None
+    if build_session is not None:
+        session = build_session(_event_publisher(registry, event_log))
+        on_presence = getattr(session, "on_viewer_presence", None)
+        if on_presence is not None:
+            presence_listener.append(on_presence)
+    app.mesh_session = session
+    if session is not None:
+        # The hello frame publishes whatever the session currently knows, so a
+        # tab that connects later sees a ready agent rather than the
+        # connecting state this dict was built with.
+        session_info["agent"] = session.agent_status()
+
     register_ws(app, token=token, allowed_origins=allowed_origins,
                 allowed_hosts=allowed_hosts, registry=registry,
-                event_log=event_log, session_info=session_info)
+                event_log=event_log, session_info=session_info, session=session)
 
     @app.errorhandler(413)
     async def _payload_too_large(req):
@@ -177,6 +210,27 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     app.after_error_request(_no_store)
 
     return app
+
+
+def _event_publisher(registry, event_log):
+    """Return the ``on_event`` callback a session publishes through.
+
+    Appending to the log and broadcasting are one action, not two, and the
+    order matters: the seq comes from the log, so it has to be assigned before
+    the frame carrying it can be built. A session calls this synchronously from
+    its message pump, which is not a place that can await, so the broadcast is
+    scheduled as a task rather than awaited here.
+
+    A broadcast that fails must not stop the log from having recorded the
+    event: the log is what a reconnecting browser replays from, so an event
+    that reached the log but no live socket is recoverable, while the reverse
+    is a hole in the history.
+    """
+    def publish(event):
+        seq = event_log.append(event)
+        frame = protocol.build_event(seq, event.to_wire())
+        asyncio.ensure_future(registry.broadcast(frame))
+    return publish
 
 
 def _callouts_state(serve_dir):
@@ -290,7 +344,9 @@ class CalloutsWatcher:
             await self.tick(loop.time())
 
 
-async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=()):
+async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=(),
+              build_session=None,
+              mesh_session_id=None):
     """Serve ``serve_dir`` on ``host``:``port`` until interrupted.
 
     Binds with ``start_serving=False`` and then explicitly awaits
@@ -320,7 +376,14 @@ async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=()
     request off short of dropping the connection.
     """
     app = create_app(serve_dir, token=token, host=host, port=port,
-                     extra_origins=extra_origins)
+                     extra_origins=extra_origins, mesh_session_id=mesh_session_id,
+                     build_session=build_session)
+    # Started after the app is built and before the socket accepts anything, so
+    # a browser cannot connect to a session that has not begun connecting. A
+    # failure inside start() is reported as an event and never raised, so this
+    # cannot stop the viewer from being served.
+    if app.mesh_session is not None:
+        await app.mesh_session.start()
     server = await app.start_server(host=host, port=port, start_serving=False)
     await server.start_serving()
     # Started here rather than in create_app, because create_app is called by
@@ -338,6 +401,11 @@ async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=()
     finally:
         watcher.cancel()
         pinger.cancel()
+        if app.mesh_session is not None:
+            # Before the viewers are told to go away, so a permission request
+            # still open is denied and its event reaches the browser on the
+            # socket that is about to close, rather than vanishing with it.
+            await app.mesh_session.close()
         # Viewers are told before the listener closes, so a browser reconnects
         # or falls back at once instead of waiting out its liveness timeout,
         # and so the bounded drain below is not spent waiting on WebSocket

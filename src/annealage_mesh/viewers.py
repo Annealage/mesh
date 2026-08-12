@@ -116,7 +116,7 @@ class ViewerRegistry:
 
     def __init__(self, *, queue_maxsize: int = QUEUE_MAXSIZE,
                  flush_interval: float = FLUSH_INTERVAL,
-                 event_log=None):
+                 event_log=None, on_presence=None):
         self._queue_maxsize = queue_maxsize
         self._flush_interval = flush_interval
         # The shared EventLog, so a self-originated event (currently only
@@ -126,6 +126,12 @@ class ViewerRegistry:
         # falls back to a private counter, only so this class stays
         # exercisable on its own in a test that has no EventLog at all.
         self._event_log = event_log
+        # Called with the live connection count whenever it changes. The
+        # permission broker needs it: a request nobody can answer has to be
+        # denied rather than left waiting, and the broker deliberately knows
+        # nothing about connections, so presence is pushed to it rather than
+        # polled from here.
+        self._on_presence = on_presence
         self._fallback_seq = 0
         # Insertion order doubles as recency order: touch() and add() both
         # re-insert a connection at the end, so "most recently interacted
@@ -152,6 +158,7 @@ class ViewerRegistry:
         conn.writer_task = asyncio.ensure_future(self._run_writer(conn))
         conn.writer_task.add_done_callback(lambda task, c=conn: self._on_writer_done(c, task))
         await self._set_primary(conn)
+        self._notify_presence()
         return conn
 
     async def remove(self, conn: _Connection) -> None:
@@ -194,6 +201,20 @@ class ViewerRegistry:
                 sys.stderr.write(
                     "warning: could not close viewer %s cleanly: %r\n" % (conn.id, exc))
 
+    def _notify_presence(self) -> None:
+        """Report the live connection count, swallowing a listener's failure.
+
+        Called from both registration and discard, including the discard that
+        runs inside a writer task's own failure path, so it must not raise: a
+        broker that throws here would abort a teardown halfway.
+        """
+        if self._on_presence is None:
+            return
+        try:
+            self._on_presence(len(self._connections))
+        except Exception as exc:
+            sys.stderr.write("warning: viewer presence listener failed: %r\n" % (exc,))
+
     def _discard(self, conn: _Connection) -> bool:
         """The synchronous half of removal: drop the connection, fail its
         pending futures, and pick a new primary if needed. Returns True if
@@ -212,6 +233,7 @@ class ViewerRegistry:
             return False
         conn.removed = True
         self._connections.pop(conn.id, None)
+        self._notify_presence()
         # A pending future is failed here, immediately, rather than left
         # to its own asyncio.wait_for timeout (plan section 3.3): a model
         # that waits out a ten-second call timeout to learn the browser

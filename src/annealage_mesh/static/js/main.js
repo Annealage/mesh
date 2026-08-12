@@ -12,6 +12,7 @@ import { initPins } from "./pins.js";
 import { initMeasure } from "./measure.js";
 import { initLayout } from "./layout.js";
 import { initWs } from "./ws.js";
+import { initChat } from "./chat.js";
 
 const appEl = document.getElementById("app");
 
@@ -35,13 +36,24 @@ initMeasure({ scene: scene3d.scene, markerRadius: scene3d.markerRadius });
 
 initLayout();
 
+// `wsApi` is assigned after initWs runs below, but chat.js's `send` callback
+// is only ever invoked later, from a user interaction, by which point the
+// assignment has happened; this closure is what lets chat.js and ws.js be
+// constructed in either order despite each needing a handle to the other.
+let wsApi;
+const chatApi = initChat({
+  send: (frame) => wsApi && wsApi.send(frame),
+});
+
 // The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
 // the socket is not live; ws.js owns that decision, pins.js only owns the
 // poll's mechanics, so the three functions cross the boundary here.
-initWs({
+wsApi = initWs({
   startCalloutsPoll: pinsApi.startCalloutsPoll,
   stopCalloutsPoll: pinsApi.stopCalloutsPoll,
   refetchCallouts: pinsApi.refetchCallouts,
+  onHello: chatApi.handleHello,
+  onAgentEvent: chatApi.handleEvent,
 });
 
 // Inspection surface for the browser console and for the Playwright tests
