@@ -348,10 +348,10 @@ def main(argv=None):
             cwd=serve_dir,
             session_id=mesh_sid,
             broker=broker,
-            # The mesh tool server. Its read-class tools are already in the
-            # session's own allow list, so nothing further is passed for them;
-            # the write-class ones are absent from every allow list, which is
-            # what makes them reach the broker above and therefore the human.
+            # The mesh tool server. The tools that never prompt are already in
+            # the session's own allow list, so nothing further is passed for
+            # them; the write-class ones are absent from every allow list, which
+            # is what makes them reach the broker above and therefore the human.
             mcp_servers=MeshTools(bus, serve_dir).mcp_servers,
             model=args.model,
             permission_mode=args.permission_mode,

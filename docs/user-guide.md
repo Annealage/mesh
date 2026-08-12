@@ -100,19 +100,23 @@ The composer sends on the button; **Interrupt** stops a turn already in flight. 
 
 ## What the agent can do to the viewer
 
-The agent has tools for the viewer itself, not just for the folder, so "show me the underside of that boss" is something it can carry out rather than instruct you to do. Sixteen of them, and they divide the same way everything else does, by whether they change anything.
+The agent has tools for the viewer itself, not just for the folder, so "show me the underside of that boss" is something it can carry out rather than instruct you to do. Sixteen of them, in three grades by what a mistake would cost.
 
-**Looking**, which never asks you: read the camera, list the parts and which are visible, read your submitted comments and its own callouts, read a model's triangle count and bounding box, screenshot the view as it stands, and measure between any two placed pins.
+**Looking**, which changes nothing and never asks you: read the camera, list the parts and which are visible, read your submitted comments and its own callouts, read a model's triangle count and bounding box, screenshot the view as it stands, and measure between any two placed pins.
 
-**Changing**, which comes to you as a card: move the camera or reframe it, show or hide a part, switch the up axis, select one of your pins, add or delete a callout, and save a screenshot into `images/`.
+**Driving**, which changes what is on your screen and nothing else, and also never asks: move the camera or reframe it, show or hide a part, switch the up axis, select one of your pins. This is deliberate rather than lax. You are looking at the screen while it happens, and the loop this tool is for has the agent reframing a part it has just regenerated several times a turn, so a card for each of those would either be clicked without reading or turned off with one standing grant. **Pause** is the control for these, and it is covered below.
+
+**Writing**, which leaves something behind after you close the page, and always asks: add or delete a callout, and save a screenshot into `images/`.
 
 The screenshot one is worth knowing about, because it changes what the agent can answer. It gets the actual pixels of your view, so "does this fillet look right to you" is a question it can look at rather than infer from the source. Ask it to frame something first if the answer depends on the angle.
 
-Two practical notes. The camera moves are cards on the first call, and **Always allow** on one of those means you will not see that tool again in this project, which is what makes a session where the agent frames things for you bearable. And a tool that needs the browser fails immediately with a message saying so if no page is open, rather than hanging: it will tell you to open the URL.
+A tool that needs the browser fails immediately if no page is open, with a message telling the agent to ask you to open the URL, rather than hanging until it times out.
 
 ## Pausing the agent's view control
 
-**Pause** in the top bar refuses everything in the "changing" list above until you press it again. Use it when you are lining up a view you want to keep, or typing a comment against a pin, and you do not want the camera moving or a part disappearing underneath you.
+**Pause** in the top bar refuses everything in the "driving" and "writing" lists above until you press it again. Use it when you are lining up a view you want to keep, or typing a comment against a pin, and you do not want the camera moving or a part disappearing underneath you.
+
+This is the only control over the driving tools, since those never produce an approval card, so it is worth knowing it is there rather than discovering it when the camera moves at an awkward moment.
 
 While paused the agent can still look, which is deliberate: reading does no harm and it is better informed when you unpause. It is told, in the refusal, that you have paused it and to ask you when it needs the view again, so it says so instead of retrying in a loop.
 
@@ -124,7 +128,7 @@ The split is by consequence, not by tool:
 
 **Runs without asking.** A shell command the sandbox judges confined to the project folder. Reading and writing files inside the folder, running your generator, listing things. This is the common case and prompting for it would make the tool unusable.
 
-**Asks first.** Editing or writing a file through the agent's own file tools, anything reaching the network, and any command the sandbox cannot confine. You get a card naming the tool and showing its full arguments, with a multi-line command or file content laid out as text rather than crammed into one JSON line, because this is the thing you are being asked to read.
+**Asks first.** Editing or writing a file through the agent's own file tools, anything reaching the network, any command the sandbox cannot confine, and the three viewer tools that leave a file behind. You get a card naming the tool and showing its full arguments, with a multi-line command or file content laid out as text rather than crammed into one JSON line, because this is the thing you are being asked to read.
 
 Three buttons:
 

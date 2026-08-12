@@ -3,9 +3,14 @@
 The switch is only worth having if the refusal happens in the server, where the
 tools run, so these tests follow it end to end within one process: an inbound
 ``pause`` frame moves the flag on the ``ViewerBus``, the flag is announced to
-every viewer, and a write-class mesh tool built on that same bus then refuses.
-The previous version of this control changed a checkbox and nothing else, which
-every test of the browser alone would have passed.
+every viewer, and a mesh tool that changes something, built on that same bus,
+then refuses. The previous version of this control changed a checkbox and
+nothing else, which every test of the browser alone would have passed.
+
+This matters more than it did when the switch was designed. The tools that move
+the camera and hide parts are pre-allowed, so no approval card stands in front
+of them: this switch is the human's only control over them, rather than a
+convenience on top of one.
 
 ``_dispatch`` is called directly, as in ``tests/test_permission_frames.py``: the
 frame has already been validated by then, so a real socket would add a handshake
@@ -155,8 +160,14 @@ async def test_the_greeting_carries_the_current_value():
 
 async def test_the_flag_the_frame_sets_is_the_flag_the_tools_read(tmp_path):
     """The assertion the removed version of this control would have failed: a
-    frame arrives, and a write-class tool built on that same bus refuses, while
-    a read-class one does not."""
+    frame arrives, and a tool that changes something, built on that same bus,
+    refuses, while one that changes nothing does not.
+
+    ``add_callout`` is the one used here because it is both gated and prompting,
+    so it exercises the gate at the point where the two policies meet. The
+    view-class tools are gated by the same flag and covered exhaustively in
+    ``tests/test_tools.py``; those matter more, not less, since the pause switch
+    is the *only* control over them."""
     bus = _bus()
     tools = {t.name: t.handler for t in MeshTools(bus, tmp_path).tools}
 

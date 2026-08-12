@@ -1595,13 +1595,16 @@ def test_an_unknown_rel_comes_back_as_the_viewers_own_refusal(browser, chat_serv
 
 # 21. Mesh tools: the human's pause switch is enforced in the server -----------
 
-def test_the_topbar_pause_button_refuses_write_class_tools(browser, chat_server):
+def test_the_topbar_pause_button_stops_the_agent_driving_the_view(browser, chat_server):
     """What the previous version of this control claimed and did not do. The
     click has to travel to the server, because that is where the tools run: a
     button that latched locally would show "Paused" while the agent went on
     moving the camera.
 
-    Read-class tools stay available on purpose, so the model can still look.
+    This is the human's only control over the camera and visibility tools, since
+    those are pre-allowed and never produce an approval card, so the round trip
+    working is the whole safeguard rather than a second one. Tools that change
+    nothing stay available on purpose, so the model can still look.
     """
     server, _session = chat_server
     page = browser.new_page()

@@ -42,12 +42,13 @@ from annealage_mesh.session.base import (
 )
 from annealage_mesh.session.sdk import SandboxStatus, SdkSession
 
-# The eight read-class tools plan section 3.9 lists, in the namespaced form
-# fact 1 requires (``mcp__<server>__<tool>``). Hardcoded here rather than
-# imported from ``sdk_module.READ_CLASS_MESH_TOOLS``: this test exists to
-# notice if that constant itself drifts from the plan, so it must not share
-# its source of truth with the code it is pinning.
-EXPECTED_READ_CLASS_TOOLS = [
+# The thirteen mesh tools that never prompt, in the namespaced form fact 1
+# requires (``mcp__<server>__<tool>``). Hardcoded here rather than imported from
+# ``sdk_module.PRE_ALLOWED_MESH_TOOLS``: this test exists to notice if that
+# constant itself drifts, so it must not share its source of truth with the code
+# it is pinning.
+EXPECTED_PRE_ALLOWED_TOOLS = [
+    # Read-class: changes nothing.
     "mcp__mesh__list_models",
     "mcp__mesh__model_info",
     "mcp__mesh__get_view",
@@ -56,6 +57,23 @@ EXPECTED_READ_CLASS_TOOLS = [
     "mcp__mesh__list_callouts",
     "mcp__mesh__capture_view",
     "mcp__mesh__measure",
+    # View-class: changes only what is on the screen the human is watching, so
+    # the pause switch is the control rather than a card per camera move.
+    "mcp__mesh__set_view",
+    "mcp__mesh__fit_view",
+    "mcp__mesh__set_visibility",
+    "mcp__mesh__set_up_axis",
+    "mcp__mesh__select_pin",
+]
+
+# The three that leave something on disk, and therefore must NOT be here. Listed
+# so this file states the negative rather than leaving it to be inferred from
+# what is missing above: one of these appearing in ``allowed_tools`` would
+# silently remove the human's approval card and nothing else would notice.
+EXPECTED_NEVER_PRE_ALLOWED = [
+    "mcp__mesh__add_callout",
+    "mcp__mesh__delete_callout",
+    "mcp__mesh__snapshot",
 ]
 
 # The posture from the M5 brief's "decided and not open" section: bash runs
@@ -217,10 +235,10 @@ async def test_options_wired_into_the_real_client():
     ``_build_options`` "pass" while the client itself was misconfigured.
 
     The SDK warns that ``can_use_tool`` will never be consulted for the
-    eight tools this test also asserts are pre-allowed; that warning
-    states the intended design, not a defect, since pre-allowing them is
-    exactly what keeps read-class calls off the broker, and is silenced
-    here rather than left to clutter the run.
+    tools this test also asserts are pre-allowed; that warning states the
+    intended design, not a defect, since pre-allowing them is exactly what
+    keeps a camera move or a part list off the broker, and is silenced here
+    rather than left to clutter the run.
     """
     class _StubBroker:
         async def ask(self, *args, **kwargs):
@@ -239,9 +257,12 @@ async def test_options_wired_into_the_real_client():
         # the chat pane cannot stream tokens.
         assert options.include_partial_messages is True
 
-        # Fact 1 and plan 3.9: the eight read-class tools, pre-allowed so
-        # they never reach the broker, in their namespaced form.
-        assert options.allowed_tools == EXPECTED_READ_CLASS_TOOLS
+        # Fact 1: the mesh tools that never reach the broker, in their
+        # namespaced form. The three that leave something on disk are absent,
+        # which is what makes each of them a card the human sees.
+        assert options.allowed_tools == EXPECTED_PRE_ALLOWED_TOOLS
+        for name in EXPECTED_NEVER_PRE_ALLOWED:
+            assert name not in options.allowed_tools
 
         # Fact 13: the default loads no settings files at all, so a
         # project CLAUDE.md would be silently ignored without this.
@@ -278,7 +299,7 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
     """The key in ``mcp_servers`` is what the model-visible
     ``mcp__<key>__<tool>`` name is built from (fact 1), so a key that
     disagreed with the server's own name would leave every pre-allowed
-    read-class name matching nothing and every one of those tools prompting.
+    name matching nothing and every one of those tools prompting.
     ``MeshTools`` owns that mapping; this asserts nothing rewrites it on the
     way through, and that the tool count is the sixteen M6 ships."""
     from annealage_mesh.tools.registry import MeshTools

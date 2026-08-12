@@ -3,12 +3,14 @@
 Three things are being pinned here, and they are different in kind.
 
 **The classification**, because it is the whole permission design for these
-tools: a read-class name is pre-allowed and never prompts, a write-class name
-is absent from every allow list and therefore reaches the human. The expected
-tuples below are written out by hand from plan section 3.9 rather than imported
-from the code, for the same reason ``tests/test_sdk_session.py`` writes out the
-allow list: a test that derives its expectation from the thing it is testing
-cannot notice that thing changing.
+tools, and because its two derived sets are deliberately not the same set: what
+prompts is the write-class three, while what the pause switch refuses is those
+plus the five that change the view. A test that checked only one of those would
+pass with the other silently wrong, so both are asserted, exhaustively. The
+expected tuples below are written out by hand rather than imported from the
+code, for the same reason ``tests/test_sdk_session.py`` writes out the allow
+list: a test that derives its expectation from the thing it is testing cannot
+notice that thing changing.
 
 **The failure mapping**, because the four ways a viewer call can fail mean four
 different things to a model. A model told "it timed out" retries; one told "no
@@ -40,18 +42,25 @@ from annealage_mesh.viewers import CallError, NoViewerConnected, ViewerGone
 pytestmark = pytest.mark.asyncio
 
 
-# Plan section 3.9's two lists, written out. ``export_transcript`` is in the
-# plan's write-class list and deliberately absent here: M8 owns it, together
-# with the ``POST /session/<sid>/export`` route and the pane button it shares
-# its implementation with.
+# The three grades, written out. ``export_transcript`` is in plan section 3.9's
+# write-class list and deliberately absent here: M8 owns it, together with the
+# ``POST /session/<sid>/export`` route and the pane button it shares its
+# implementation with.
 EXPECTED_READ_CLASS = (
     "list_models", "model_info", "get_view", "get_visibility",
     "list_comments", "list_callouts", "capture_view", "measure",
 )
-EXPECTED_WRITE_CLASS = (
-    "set_view", "fit_view", "set_visibility", "set_up_axis",
-    "add_callout", "delete_callout", "select_pin", "snapshot",
+EXPECTED_VIEW_CLASS = (
+    "set_view", "fit_view", "set_visibility", "set_up_axis", "select_pin",
 )
+EXPECTED_WRITE_CLASS = (
+    "add_callout", "delete_callout", "snapshot",
+)
+
+# Never prompts: nothing here reaches the broker, so nothing here interrupts.
+EXPECTED_PRE_ALLOWED = EXPECTED_READ_CLASS + EXPECTED_VIEW_CLASS
+# Refused while paused: everything that changes anything, screen or disk.
+EXPECTED_PAUSE_GATED = EXPECTED_VIEW_CLASS + EXPECTED_WRITE_CLASS
 
 # Plausible arguments per tool, so the pause and mapping tests can drive every
 # one of them without each needing its own call. These are not assertions about
@@ -147,23 +156,30 @@ def payload_of(result):
 # ---------------------------------------------------------------------------
 
 
-async def test_the_classification_matches_the_plan(project):
+async def test_the_three_grades_are_what_they_are_meant_to_be(project):
     assert registry.READ_CLASS == EXPECTED_READ_CLASS
+    assert registry.VIEW_CLASS == EXPECTED_VIEW_CLASS
     assert registry.WRITE_CLASS == EXPECTED_WRITE_CLASS
+    # The two derived sets, which are the ones the code actually acts on, and
+    # which are different from each other on purpose.
+    assert registry.PRE_ALLOWED == EXPECTED_PRE_ALLOWED
+    assert registry.PAUSE_GATED == EXPECTED_PAUSE_GATED
+    assert set(registry.PRE_ALLOWED) != set(registry.PAUSE_GATED)
 
 
 async def test_every_classified_tool_exists_and_every_built_tool_is_classified(project):
     built = set(tools_for(FakeBus(), project))
-    assert built == set(EXPECTED_READ_CLASS) | set(EXPECTED_WRITE_CLASS)
+    assert built == (set(EXPECTED_READ_CLASS) | set(EXPECTED_VIEW_CLASS)
+                     | set(EXPECTED_WRITE_CLASS))
 
 
-async def test_the_read_class_names_are_exactly_what_the_session_pre_allows(project):
+async def test_the_pre_allowed_names_are_exactly_what_the_session_pre_allows(project):
     """The two lists are one list, and this is the seam where a divergence
     would show up as a pre-allowed name matching nothing (fact 1)."""
     from annealage_mesh.session import sdk
 
-    assert sdk.READ_CLASS_MESH_TOOLS == tuple(
-        namespaced(name) for name in EXPECTED_READ_CLASS)
+    assert sdk.PRE_ALLOWED_MESH_TOOLS == tuple(
+        namespaced(name) for name in EXPECTED_PRE_ALLOWED)
 
 
 async def test_no_write_class_tool_is_pre_allowed(project):
@@ -173,14 +189,28 @@ async def test_no_write_class_tool_is_pre_allowed(project):
     from annealage_mesh.session import sdk
 
     for name in EXPECTED_WRITE_CLASS:
-        assert namespaced(name) not in sdk.READ_CLASS_MESH_TOOLS
+        assert namespaced(name) not in sdk.PRE_ALLOWED_MESH_TOOLS
+
+
+async def test_every_view_class_tool_is_pre_allowed_and_gated(project):
+    """The decision that separates the two derived sets: these prompt for
+    nothing, because the human is watching the screen they change, and the
+    pause switch is what stops them instead. Both halves are asserted here,
+    because either one alone would be a different design: pre-allowed and
+    ungated is a camera nothing can stop, and gated and prompting is the card
+    per camera move this deliberately does not do."""
+    from annealage_mesh.session import sdk
+
+    for name in EXPECTED_VIEW_CLASS:
+        assert namespaced(name) in sdk.PRE_ALLOWED_MESH_TOOLS
+        assert name in registry.PAUSE_GATED
 
 
 async def test_building_refuses_a_tool_that_was_never_classified(project, monkeypatch):
     """A tool added to a handler module without being classified must fail
-    loudly at startup, because both defaults are wrong: silently read-class
-    removes the human's card, and silently write-class is a tool nobody can
-    reach through the allow list."""
+    loudly at startup, because every default is wrong for something: read
+    removes the human's card and the pause switch's hold on it, view removes the
+    card alone, and write is a tool nobody can reach through the allow list."""
     from claude_agent_sdk import tool
 
     from annealage_mesh.tools import model_tools
@@ -307,8 +337,8 @@ async def test_an_unexpected_failure_is_reported_as_this_packages_bug(project):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", EXPECTED_WRITE_CLASS)
-async def test_every_write_class_tool_refuses_while_paused(project, name):
+@pytest.mark.parametrize("name", EXPECTED_PAUSE_GATED)
+async def test_every_tool_that_changes_anything_refuses_while_paused(project, name):
     bus = FakeBus()
     bus.paused = True
     result = await tools_for(bus, project)[name](ARGS[name])
@@ -322,7 +352,7 @@ async def test_every_write_class_tool_refuses_while_paused(project, name):
 
 
 @pytest.mark.parametrize("name", EXPECTED_READ_CLASS)
-async def test_no_read_class_tool_is_gated_by_pause(project, name):
+async def test_no_tool_that_changes_nothing_is_gated_by_pause(project, name):
     """Pausing exists so the human can work without the view moving. A model
     that keeps reading while paused does no harm and is better informed when
     the pause lifts, so none of these may refuse."""

@@ -237,8 +237,8 @@ class ModelsChanged(AgentEvent):
 
 @dataclasses.dataclass(frozen=True)
 class PauseChanged(AgentEvent):
-    """The human's pause switch moved, and write-class mesh tools now refuse
-    (or have stopped refusing).
+    """The human's pause switch moved, so the mesh tools that change the view or
+    the project now refuse (or have stopped refusing).
 
     Broadcast rather than answered to the tab that flipped it, because the
     switch is one property of the running server and every attached view has a

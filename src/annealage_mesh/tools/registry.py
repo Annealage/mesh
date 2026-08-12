@@ -9,23 +9,38 @@ search surface, which is why the descriptions in the three handler modules are
 written as sentences about when to reach for the tool rather than as labels.
 Revisit tiering only past roughly twenty tools.
 
-The classification below is the whole permission design for these tools.
+The classification below is the whole permission design for these tools, and it
+sorts them by **what a mistake would cost**, in three grades rather than two.
 
-``READ_CLASS`` names are passed to ``allowed_tools``, which means
-``can_use_tool`` is never consulted for them (plan section 2, fact 2), so they
-never interrupt the human. That is only safe because none of them changes
-anything: reading the camera, the part list, the comments or a screenshot
-leaves the project and the view exactly as they were.
+``READ_CLASS`` changes nothing. Reading the camera, the part list, the
+comments, a model's geometry or a screenshot leaves the project and the view
+exactly as they were, so these are pre-allowed and never interrupt anyone.
 
-``WRITE_CLASS`` names are deliberately **absent** from every allow list, which
-is what makes them reach the broker and therefore the human as a card. Adding
-one of these names to ``allowed_tools`` anywhere would silently remove that
-card, so the two tuples here are the only place the split is written down, and
-``_verify`` refuses to build a server whose tools do not match them exactly:
+``VIEW_CLASS`` changes only what is on the screen, and does so in front of the
+human, who is looking at that screen: the camera, which part is shown, which
+axis is up, which pin is selected. These are pre-allowed too. The reasoning is
+not that they are harmless in the abstract, it is that an approval card is the
+wrong control for them: the loop this tool exists for has the model reframing a
+part it has just regenerated, several times a turn, and a card per camera move
+would either be clicked without reading or turned off with one standing grant,
+which is worse than not asking. The control that fits is the pause switch,
+which refuses all of them at once for as long as the human wants the view to
+hold still, and that is what it is for.
+
+``WRITE_CLASS`` leaves something behind after the page is closed: a callout in
+a file the human's own tooling reads, or an image in the project directory.
+These are deliberately **absent** from every allow list, which is what makes
+them reach the broker and therefore the human as a card. Adding one of these
+names to a pre-allowed list anywhere would silently remove that card.
+
+So two derived sets follow, and they are not the same set:
+``PRE_ALLOWED`` is read plus view, and ``PAUSE_GATED`` is view plus write. The
+three tuples here are the only place any of this is written down, and
+``_verify`` refuses to build a server whose tools do not match them exactly, so
 a tool added to a handler module without being classified fails at startup
-rather than defaulting into either posture.
+rather than defaulting into a posture nobody chose.
 
-Both tuples are ordered as plan section 3.9 lists them, so the allow list this
+The tuples are ordered as plan section 3.9 lists them, so the allow list this
 module produces can be read against the plan line by line.
 """
 
@@ -40,6 +55,7 @@ from ..viewers import CallError, NoViewerConnected, ViewerGone
 from . import MESH_SERVER_NAME, fail, namespaced
 from . import model_tools, review_tools, viewer_tools
 
+#: Changes nothing. Pre-allowed, and not gated by the pause switch.
 READ_CLASS = (
     "list_models",
     "model_info",
@@ -51,33 +67,48 @@ READ_CLASS = (
     "measure",
 )
 
-WRITE_CLASS = (
+#: Changes what is on screen and nothing else. Pre-allowed, because a card per
+#: camera move is the wrong control for something the human is watching happen;
+#: gated by the pause switch, which is the right one.
+VIEW_CLASS = (
     "set_view",
     "fit_view",
     "set_visibility",
     "set_up_axis",
+    "select_pin",
+)
+
+#: Leaves something on disk. Reaches the broker, and therefore the human, and is
+#: gated by the pause switch as well.
+WRITE_CLASS = (
     "add_callout",
     "delete_callout",
-    "select_pin",
     "snapshot",
 )
 
-#: The read-class tools as the model sees them, which is what goes into
-#: ``allowed_tools``. ``session/sdk.py`` re-exports this under its own name;
-#: it is computed here, beside the classification, so there is one list.
-READ_CLASS_MESH_TOOLS = tuple(namespaced(name) for name in READ_CLASS)
+#: What never prompts, as the model sees it, which is what goes into
+#: ``allowed_tools``. ``session/sdk.py`` re-exports this under its own name; it
+#: is computed here, beside the classification, so there is one list.
+PRE_ALLOWED = READ_CLASS + VIEW_CLASS
+PRE_ALLOWED_MESH_TOOLS = tuple(namespaced(name) for name in PRE_ALLOWED)
 
-# What a write-class tool says while the human has viewer control paused. It is
+#: What the pause switch refuses: everything that changes anything, whether the
+#: change is to the screen or to the project. Deliberately not the same set as
+#: what prompts, because the two questions are different: a card asks "may this
+#: happen at all", and the pause switch says "not right now, I am working".
+PAUSE_GATED = VIEW_CLASS + WRITE_CLASS
+
+# What a gated tool says while the human has viewer control paused. It is
 # written for the model to act on, not merely to log: a deny's message reaches
 # it verbatim (plan section 2a, fact 15), so this says what is still possible
 # and what would lift the refusal, rather than only that something was refused.
 PAUSED_MESSAGE = (
     "Refused: the human has paused viewer control, so nothing may change the "
-    "view or the callouts right now. They are most likely editing a pin "
-    "comment and do not want the model moving underneath them. Every read-only "
-    "mesh tool still works, so keep looking if that helps; otherwise say what "
-    "you were about to do and ask them to press Paused in the viewer's topbar "
-    "when they are ready.")
+    "view or the callouts right now. They are most likely lining up a view or "
+    "editing a pin comment and do not want the model moving underneath them. "
+    "Every read-only mesh tool still works, so keep looking if that helps; "
+    "otherwise say what you were about to do and ask them to press Paused in "
+    "the viewer's topbar when they are ready.")
 
 
 def _verify(tools):
@@ -86,23 +117,25 @@ def _verify(tools):
     duplicated = sorted({n for n in built if built.count(n) > 1})
     if duplicated:
         raise RuntimeError("mesh tools declared twice: %s" % ", ".join(duplicated))
-    classified = set(READ_CLASS) | set(WRITE_CLASS)
+    grades = {"read": READ_CLASS, "view": VIEW_CLASS, "write": WRITE_CLASS}
+    for first, second in (("read", "view"), ("read", "write"), ("view", "write")):
+        overlap = sorted(set(grades[first]) & set(grades[second]))
+        if overlap:
+            raise RuntimeError("mesh tool(s) %s are classified both %s and %s"
+                               % (", ".join(overlap), first, second))
+    classified = set(READ_CLASS) | set(VIEW_CLASS) | set(WRITE_CLASS)
     unclassified = sorted(set(built) - classified)
     if unclassified:
         raise RuntimeError(
-            "mesh tool(s) %s are built but not classified read or write in "
-            "tools/registry.py; a write-class tool left unclassified would not "
-            "reach the human" % ", ".join(unclassified))
+            "mesh tool(s) %s are built but not classified read, view or write in "
+            "tools/registry.py; every default is wrong for something, so there is "
+            "no default" % ", ".join(unclassified))
     missing = sorted(classified - set(built))
     if missing:
         raise RuntimeError(
             "mesh tool(s) %s are classified in tools/registry.py but not built, "
             "so their names are pre-allowed and match nothing"
             % ", ".join(missing))
-    overlap = sorted(set(READ_CLASS) & set(WRITE_CLASS))
-    if overlap:
-        raise RuntimeError("mesh tool(s) %s are classified both read and write"
-                           % ", ".join(overlap))
 
 
 def _wrap(tool_def, *, bus, gated):
@@ -167,7 +200,7 @@ class MeshTools:
     the server's own name are the same constant, deliberately: the key is what
     the model-visible ``mcp__<key>__<tool>`` name is built from, so a key that
     disagreed with ``MESH_SERVER_NAME`` would leave every pre-allowed name
-    matching nothing and every read-class tool prompting.
+    matching nothing and every one of those tools prompting.
     """
 
     def __init__(self, bus, serve_dir):
@@ -178,7 +211,7 @@ class MeshTools:
                  + review_tools.build(bus, serve_dir))
         _verify(built)
         self.tools = tuple(
-            _wrap(tool_def, bus=bus, gated=tool_def.name in WRITE_CLASS)
+            _wrap(tool_def, bus=bus, gated=tool_def.name in PAUSE_GATED)
             for tool_def in built)
         self.server = create_sdk_mcp_server(
             MESH_SERVER_NAME, version=__version__, tools=list(self.tools))

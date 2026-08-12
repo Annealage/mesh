@@ -662,14 +662,21 @@ class ViewerBus:
     run in this process, and a page is free to be old, cached, or simply a
     second tab that never saw the click. The browser's control sends an
     inbound ``pause`` frame, ``http/ws.py`` sets the flag through this object,
-    and the tool registry reads it before it runs any write-class tool. What
-    the human sees in the topbar is then a display of a decision recorded
-    here, not the decision itself.
+    and the tool registry reads it before running any tool that changes
+    anything. What the human sees in the topbar is then a display of a decision
+    recorded here, not the decision itself.
+
+    This switch, rather than an approval card, is the control over the tools
+    that move the camera and hide parts: those are pre-allowed, because the
+    human is watching the screen they change and a card per camera move would
+    be clicked unread. So the switch is not a convenience. It is the only thing
+    standing between the model and the view while the human is working in it,
+    and the tools it gates are a superset of the ones that prompt.
 
     Read-class tools are deliberately not gated. Pausing exists so the human
-    can edit a pin comment without the agent moving the camera out from under
-    them; a model that goes on reading the view while paused is doing no harm
-    and is better informed when the pause lifts.
+    can line up a view or edit a pin comment without the agent moving things
+    out from under them; a model that goes on reading while paused is doing no
+    harm and is better informed when the pause lifts.
     """
 
     def __init__(self, registry: ViewerRegistry, *, url: str,

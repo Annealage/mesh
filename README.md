@@ -69,7 +69,7 @@ A few files turn up in the served folder:
 
 The agent's shell runs sandboxed, so a command that stays inside the project folder just runs without asking. That's deliberate, regenerating a part twenty times would be miserable otherwise. Anything that writes through its edit tools, wants out of the folder, or reaches the network gets you a card in the chat pane with the full command or file contents on it, and you allow it, allow it for the rest of the session, or deny it with a reason. The reason goes to the agent verbatim, so "not that file, do the enclosure instead" is more use to it than a bare no.
 
-Its viewer tools split the same way, by whether they change anything. Reading the camera, the part list, your comments or a screenshot of the view never asks. Moving the camera, hiding a part, writing a callout or saving a screenshot to disk gets a card the first time, and "Always allow" on one of those is remembered for the folder.
+Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the three that leave something behind after you close the page: writing a callout, deleting one, and saving a screenshot into the folder.
 
 ![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](docs/mesh-approval.png)
 
