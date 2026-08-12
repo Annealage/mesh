@@ -49,6 +49,7 @@ for what is watched and why that is the boundary.
 
 import asyncio
 import dataclasses
+import warnings
 import re
 import shutil
 import sys
@@ -57,6 +58,7 @@ from typing import Any, Optional, Tuple
 
 from claude_agent_sdk import (
     AssistantMessage,
+    CanUseToolShadowedWarning,
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
@@ -148,6 +150,20 @@ _MAX_CONSECUTIVE_PARSE_FAILURES = 5
 # Kept so a stderr burst from a wedged child cannot grow without bound while
 # still leaving enough context to be worth reporting in an AgentError.
 _STDERR_KEEP_LINES = 200
+
+# The SDK warns, on every ``connect()``, that ``can_use_tool`` will not be
+# consulted for the tools in ``allowed_tools``. Pre-allowing the read-class mesh
+# tools is exactly what that list is for, so on a correct run the warning is a
+# paragraph of advice printed over the startup banner about a decision this file
+# made deliberately.
+#
+# Filtered here, at import, rather than around the call: the warning is raised
+# inside ``connect()``, and ``warnings.catch_warnings`` manipulates process-wide
+# state, so holding it open across an ``await`` would suppress warnings for
+# whatever else ran on the loop meanwhile. Narrowed to this one category, and
+# the eight names it would list are pinned by a test, so a tool reaching that
+# list unintentionally still fails there.
+warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -1,26 +1,34 @@
 # Annealage Mesh
 
-Annealage Mesh is a little web tool for reviewing 3D-print models by pointing at them. You give it a folder of STL files, it serves up a 3D viewer in the browser, and you click on the model to drop a comment pinned to that exact spot. Hit submit and the comments land in a JSON file next to the STLs, each one carrying the 3D location it was placed at.
+Reviewing a 3D-printed part with an AI agent means describing geometry in words. "No, the inside corner on the far wall near the fan, not that one." It is slow, and half the time the agent picks the wrong face anyway.
 
-![Annealage Mesh: a human's orange pins and an agent's cyan callouts on the same STL, each carrying its comment](docs/mesh-screenshot.png)
+Annealage Mesh gives you both a model and an agent in one window. Point it at a folder of STL files and it opens a 3D viewer with a chat pane beside it. You click the model to drop a comment pinned to those exact coordinates; the agent reads the coordinates, works in that folder, and pins its own callouts back onto the geometry where you can see them. Nobody has to describe anything.
 
-## Why
+![The three-pane view: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](docs/mesh-three-pane.png)
 
-I built this while iterating on a 3D-printed part with Claude Code. The CAD was generated from a script, I'd look at a render, and then spend ages typing things like "no, the inside corner on the far wall near the fan, not that one" trying to describe which face I meant. It was a pain, and half the time the agent picked the wrong spot anyway.
+## What it does
 
-Pointing at the thing is just so much easier. So we built a viewer where I click the face and type the comment right there, and the agent gets it back with the actual coordinates, no guessing.
+**Point instead of describing.** Click a face, type a comment. The pin carries the click location in model space, the surface normal and the part name, so a comment maps to a spot in the CAD script that generated it.
 
-It's bidirectional too, which turned out to be the good bit. The agent can write its own callouts (a location plus a note) and they show up as pins in the viewer for me to see and reply to. So it ends up being a shared review surface, I mark up what I want changed, the agent pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
+**The agent is in the window.** The chat pane is a full Claude Code session whose working directory is the folder being served, so it can read your CAD script, run the generator, measure the STL and edit the source, and you watch it happen next to the model it is talking about. It streams token by token and shows the cost of each turn.
+
+**Callouts come back onto the geometry.** The agent writes a location plus a note and it appears as a cyan pin in your view, live. Review becomes a shared surface pointing at one model instead of two people describing it.
+
+**You approve what matters.** A shell command confined to the project folder runs without asking. Editing a file, writing outside the folder, or reaching the network raises an approval card showing exactly what was requested, and you allow it, always-allow it, or deny it with a reason the agent receives.
+
+![An approval card for a Write, showing the full file path and content, with Allow, Always allow and Deny](docs/mesh-approval.png)
+
+**It works from a phone.** The panes become tabs, navigation is touch, and pins and approvals both work. Reviewing a print on the phone next to the printer while the agent iterates on the desktop is a real workflow, and `--host tailscale` is one flag.
+
+**Measure between any two pins.** Pick two pins, yours or the agent's, for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
 
 ## Install
 
-Annealage Mesh is a Python package needing Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code.
+Python 3.10 or newer, and two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), and the Claude Agent SDK, which is how the chat pane talks to Claude Code. three.js is vendored in the package and served locally, so the viewer needs no network access.
 
-Nothing else is required. The agent's shell can additionally run sandboxed, which on macOS is built into the OS and free, and on Linux uses `bubblewrap` and `socat` if they happen to be installed. Neither is a requirement: without them the shell simply asks your approval before it writes anything or reaches the network, which is the safe direction to fall back in. The startup banner says which of the two you are getting, every run, and so does `annealage-mesh doctor`.
+Be ready for the size: the SDK bundles the Claude Code CLI itself, so installing pulls roughly 90 MB rather than a few tens of kilobytes. That is the cost of the agent being part of the tool rather than something you wire up separately.
 
-Be ready for the size. The SDK bundles the Claude Code CLI itself, so the first install pulls down roughly 90 MB rather than a few tens of kilobytes. That is the cost of the chat pane being part of the tool rather than something you wire up separately. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
-
-Run it straight from GitHub, nothing to install, via uv:
+Run it without installing anything:
 
     uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/stls
 
@@ -30,61 +38,52 @@ Or install it as a tool:
     # or
     pipx install git+https://github.com/Annealage/mesh
 
-Once it's up on PyPI that shortens to `uvx annealage-mesh ./stls` / `pipx install annealage-mesh`.
+**On Linux, agent mode also needs `bubblewrap` and `socat`** (`apt install bubblewrap socat`, or your distribution's equivalent). They are what confines the agent's shell, and agent mode refuses to start without them rather than quietly running an uncontained one. macOS sandboxes with a mechanism built into the OS and needs nothing extra. If you would rather not install them, `--no-agent` runs the viewer alone, which needs neither.
 
-## Usage
-
-Point it at a directory of STL files:
+## Using it
 
     annealage-mesh ./build
 
-It starts a local server, prints the URLs, and opens your browser at http://localhost:8765/. Every `.stl` in that directory shows up in the viewer; toggle them on/off in the side panel.
+It serves the directory, prints the URL with a per-run token, and opens your browser. Every `.stl` in the tree appears in the viewer.
 
-- Drag to orbit, scroll / pinch to zoom, right-drag or two-finger to pan.
-- Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.
-- Hit Submit. Your pins get written to `mesh-comments.json` in the served directory.
-- Need a distance between two features? Pick any two placed pins (yours or an agent's) in the
-  "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, shown as a line between them in the view.
+- Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan.
+- Switch to **Add pin**, click the model, then type a comment against the pin in the panel.
+- **Submit** writes your pins to `mesh-comments.json` in the served directory.
+- Type in the chat pane to put the agent to work in that folder.
 
-It works on a phone too, the panel folds away behind a button up top and navigation is all touch (one finger orbits, two fingers pan / zoom).
+Full walkthrough, including sessions, the approval model, remote access and every flag: **[docs/user-guide.md](docs/user-guide.md)**.
 
-A couple of files turn up in the served directory:
+## What it puts in your folder
 
-- `mesh-comments.json` — your pins and comments, written on submit (also appended to `mesh-comments.log`). This is what a reviewing tool or agent reads.
-- `mesh-callouts.json` — callouts to show in the viewer. Write pins here and they appear live (cyan, read-only) for whoever's looking. This is how an agent points back at the model.
+- `mesh-comments.json` — your pins, written on Submit, and appended to `mesh-comments.log`.
+- `mesh-callouts.json` — the agent's callouts. Anything here shows up as a cyan pin, live.
+- `.mesh/` — session transcripts, remembered approvals, and the lock that stops two servers fighting over one directory.
 
-## For AI agents
+## Security
 
-Annealage Mesh is built to sit between a human and an AI agent working on a 3D model together. If you're an agent (or setting one up), the contract is just two JSON files in the served directory.
+Mesh hands an AI agent a shell in a directory you chose, and serves a page that can drive it, so it is worth being plain about the boundaries.
 
-Read the human's feedback from `mesh-comments.json`:
+**The agent's shell is confined.** Writes land inside the project folder; writes elsewhere and network access are refused by the sandbox or reach you as an approval card. The startup banner states which posture is actually in effect every run, rather than assuming the one it asked for. Note the honest limit: the sandbox restricts writes and network, **not reads**, so a confined shell can still read any file your user can.
+
+**The server is bound to loopback and tokened.** Non-loopback binds are supported, not hidden behind a scare-flag, and the banner tells you what the server is reachable on every run. On any non-loopback bind the token stops being defence in depth and becomes the control that matters.
+
+**A folder's Claude configuration is not trusted until you say so.** A `.claude/settings.json` or `.mcp.json` can name shell commands to run, one of them before any prompt is sent, and unpacking someone else's model archive is an ordinary thing to do. Agent mode refuses to start when a served folder carries configuration you have not accepted, and rechecks it on every tool call, so a change mid-session stops the agent rather than silently widening what it may do.
+
+## Working with an agent outside the window
+
+The chat pane is the intended way in, but the file contract is stable and unchanged, so a separately running agent still works: read `mesh-comments.json`, write `mesh-callouts.json`.
 
     {
-      "submitted_at": "...",
-      "count": 1,
       "annotations": [
         { "id": 1, "part": "bracket", "label": "+Z", "point": [12.5, -3.2, 44.0],
           "normal": [0, 0, 1], "faceIndex": 1234, "comment": "this fillet's too sharp" }
       ]
     }
 
-`point` is the click location in model space (same units as the STL), so you can map a comment straight to a spot in the CAD script that generated it.
-
-Write your own callouts to `mesh-callouts.json` and they show up as cyan pins in the viewer, live (the page polls, no reload needed):
-
-    {
-      "annotations": [
-        { "id": 1, "author": "agent", "part": "bracket", "label": "+Y", "point": [0, 20, 10],
-          "comment": "moved this wall out 2mm, that clear enough?" }
-      ]
-    }
-
-`point` and `comment` are the only fields that really matter, the rest are display niceties.
-
-There's also a Claude Code skill in `skill/` that wires this up as a workflow, so you can just tell Claude to use Annealage Mesh when it's working on printable models.
+`point` and `comment` are the fields that matter; the rest are display niceties. There is also a Claude Code skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) that wires this up as a workflow.
 
 ## Licence
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free to use for any noncommercial purpose. Commercial use needs a separate licence; see [COMMERCIAL.md](COMMERCIAL.md).
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for any noncommercial purpose. Commercial use needs a separate licence; see [COMMERCIAL.md](COMMERCIAL.md).
 
 The Claude Code skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) is MIT, so it can be copied into any agent configuration without restriction.

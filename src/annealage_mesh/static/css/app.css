@@ -29,9 +29,7 @@ body { display: flex; flex-direction: column; }
 #topbar #modeBtn.on { background: #e86b34; border-color: #e86b34; color: #14161a; }
 #topbar #panelBtn.on { background: #2f3946; border-color: #4a586a; }
 #topbar #upBtn { font-size: 11px; }
-.pausewrap { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #aab; cursor: pointer; white-space: nowrap; }
-.pausewrap input { accent-color: #e0c07f; width: 15px; height: 15px; }
-@media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } #topbar .conn { padding: 3px 7px; } .pausewrap span { display: none; } }
+@media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } #topbar .conn { padding: 3px 7px; } }
 
 /* ---------- narrow-viewport tab bar ----------
    Replaces the Panel button and the drawer at 900px and below: arbitrating
