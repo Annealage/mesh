@@ -428,6 +428,12 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   // even though /callouts has been servable since the page loaded.
   refetchCallouts();
 
+  // Once at startup, for the same reason as the call above: the pin list is
+  // otherwise only rendered when `pins` changes, so on a freshly loaded page,
+  // which has no pins and therefore no pending change, nothing would say so.
+  // This module owns that message, including the first time it is shown.
+  renderPinList(store.getState());
+
   // Handed to ws.js by main.js, which is the only place these three and
   // ws.js's connect logic are both in scope. refetchCallouts is exposed on
   // its own, separately from the poll, because ws.js also calls it once,

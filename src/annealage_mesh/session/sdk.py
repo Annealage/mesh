@@ -76,6 +76,7 @@ from .base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentStatus,
     PermissionRequest,
     SessionReset,
     TextDelta,
@@ -233,6 +234,19 @@ class SdkSession:
     def agent_status(self) -> str:
         return self._status
 
+    def _set_status(self, status: str) -> None:
+        """Record a status and announce the change, so a viewer already holding
+        a ``hello`` snapshot of the old one is corrected.
+
+        Announced only on a change, since the pane's status line is derived
+        state and a repeat says nothing; announced *after* the field is set, so
+        anything the callback does synchronously sees the new value.
+        """
+        if status == self._status:
+            return
+        self._status = status
+        self._emit(AgentStatus(status=status))
+
     def sandbox_status(self) -> SandboxStatus:
         """The posture in effect, for the banner and ``doctor``."""
         return SandboxStatus(
@@ -336,7 +350,7 @@ class SdkSession:
             self._client = None
             self._fail(exc)
             return
-        self._status = AGENT_READY
+        self._set_status(AGENT_READY)
         self._pump_task = asyncio.ensure_future(self._pump())
 
     async def close(self) -> None:
@@ -355,7 +369,7 @@ class SdkSession:
                 sys.stderr.write("warning: agent client did not disconnect cleanly: %r\n"
                                  % (exc,))
         self._client = None
-        self._status = AGENT_UNAVAILABLE
+        self._set_status(AGENT_UNAVAILABLE)
 
     def _build_options(self) -> ClaudeAgentOptions:
         allowed = list(READ_CLASS_MESH_TOOLS) + list(self._extra_allowed_tools)
@@ -630,7 +644,7 @@ class SdkSession:
         it, because for the common failures (no CLI, not authenticated) the
         child's own message is the only thing that tells the human what to do.
         """
-        self._status = AGENT_UNAVAILABLE
+        self._set_status(AGENT_UNAVAILABLE)
         self._emit(AgentError(
             stderr=(self._recent_stderr() or "%s: %s" % (type(exc).__name__, exc)),
             remediation=_remediation_for(exc),

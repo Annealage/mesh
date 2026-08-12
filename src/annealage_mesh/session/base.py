@@ -203,6 +203,23 @@ class ViewerPrimary(AgentEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class AgentStatus(AgentEvent):
+    """The agent's status changed to ``status``, one of the three AGENT_ values.
+
+    The ``hello`` frame carries the status as it stood when that connection was
+    accepted, which is a snapshot and nothing more. A browser reaches the page
+    and opens its socket faster than the CLI child starts, so the ordinary case
+    is a viewer told "connecting" a moment before the agent becomes ready;
+    without this event that first answer is also the last one, and a working
+    agent reads as permanently starting up.
+    """
+
+    kind: ClassVar[str] = "agent_status"
+    status: str
+    viewer: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
 class SessionReset(AgentEvent):
     """Emitted when a requested resume (``-c``/``-r``) fails and the
     session falls back to starting fresh instead (plan section 3.4)."""

@@ -31,6 +31,7 @@ from claude_agent_sdk import Transport
 
 from annealage_mesh.session import sdk as sdk_module
 from annealage_mesh.session.base import (
+    AgentStatus,
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
@@ -168,8 +169,19 @@ class EventRecorder:
         self.all.append(event)
         self._queue.put_nowait(event)
 
-    async def next(self, timeout: float = 2.0):
-        return await asyncio.wait_for(self._queue.get(), timeout)
+    async def next(self, timeout: float = 2.0, include_status: bool = False):
+        """The next event, skipping ``AgentStatus`` unless asked for it.
+
+        Status is ambient rather than conversational: it is announced whenever
+        the session's own state changes, so it can appear between any two events
+        a test cares about. Skipping it here keeps every test that awaits "the
+        next event" reading as what it means, and the transitions themselves are
+        pinned directly by the tests that assert on ``recorder.all``.
+        """
+        while True:
+            event = await asyncio.wait_for(self._queue.get(), timeout)
+            if include_status or not isinstance(event, AgentStatus):
+                return event
 
 
 async def _started_session(**kwargs):
@@ -595,3 +607,46 @@ async def test_pump_survives_one_malformed_message():
         assert session.agent_status() == AGENT_READY
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_becoming_ready_is_announced_so_a_hello_snapshot_is_corrected():
+    """A browser opens its socket before the CLI child finishes starting, so the
+    hello frame ordinarily reports "connecting". Without this event that first
+    answer is also the last one and a working agent reads as stuck starting up.
+    """
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
+                         transport=FakeTransport())
+    await session.start()
+    try:
+        statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
+        assert statuses == [AGENT_READY]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failure_to_start_announces_unavailable():
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
+                         transport=_FailingConnectTransport())
+    await session.start()
+
+    statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
+    assert statuses == [AGENT_UNAVAILABLE]
+    assert session.agent_status() == AGENT_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_status_is_not_announced_again():
+    """The pane's status line is derived state, so a repeat says nothing."""
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
+                         transport=FakeTransport())
+    await session.start()
+    await session.close()
+    await session.close()
+
+    statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
+    assert statuses == [AGENT_READY, AGENT_UNAVAILABLE]

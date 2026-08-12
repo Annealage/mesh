@@ -116,6 +116,34 @@ function safeJson(value) {
   }
 }
 
+// A tool's arguments, laid out to be read rather than parsed. JSON alone is the
+// wrong shape for the arguments that matter most here: a Bash command is a
+// script, and stringifying it turns every line break into a literal \n, so the
+// one field the human most needs to inspect before approving it arrives as a
+// single unreadable line. String values are therefore printed as themselves,
+// with their newlines intact; anything else falls back to JSON.
+//
+// The result is always assigned with textContent, never innerHTML: these values
+// come from the model.
+function formatToolInput(input) {
+  if (input === null || input === undefined) return "";
+  if (typeof input !== "object") return String(input);
+  const keys = Object.keys(input);
+  if (!keys.length) return "";
+  // The overwhelmingly common shape, and the one where a key label adds
+  // nothing: one string argument, such as a command or a path.
+  if (keys.length === 1 && typeof input[keys[0]] === "string") {
+    return input[keys[0]];
+  }
+  return keys
+    .map((key) => {
+      const value = input[key];
+      const shown = typeof value === "string" ? value : safeJson(value);
+      return shown.includes("\n") ? key + ":\n" + shown : key + ": " + shown;
+    })
+    .join("\n");
+}
+
 // The composer only ever builds {type: "text", text} blocks (protocol.py's
 // _BLOCK_SPECS also allows image_path, but there is no upload control in
 // this pane), so this only needs to join the text blocks a `turn` record's
@@ -176,7 +204,7 @@ export function initChat({ send }) {
 
   function updateToolCard(rec, tool) {
     rec.summary.textContent = shortToolName(tool.name);
-    rec.inputEl.textContent = safeJson(tool.input);
+    rec.inputEl.textContent = formatToolInput(tool.input);
     if (tool.result) {
       rec.resultEl.hidden = false;
       rec.resultEl.textContent = tool.result.text;
@@ -359,7 +387,7 @@ export function initChat({ send }) {
         chatPendingEl.appendChild(rec.card);
       }
       rec.toolEl.textContent = shortToolName(req.tool);
-      rec.inputEl.textContent = safeJson(req.input);
+      rec.inputEl.textContent = formatToolInput(req.input);
       // A card whose decision is in flight stays visible and stops accepting
       // clicks, so a second click cannot send a second decision for one
       // request and the human can see which answer is on its way.
@@ -464,6 +492,11 @@ export function initChat({ send }) {
       case "permission_resolved":
         reportResolution(event);
         store.removeChatPermissionRequest(event.request_id);
+        break;
+      case "agent_status":
+        // The hello frame's `session.agent` is only the status at the moment
+        // this connection was accepted; this is what keeps it current.
+        store.setChatAgentStatus(event.status);
         break;
       case "session_reset":
         store.resetChatTurns();

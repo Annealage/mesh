@@ -49,7 +49,12 @@
       <div id="mResult" class="mresult"><span class="empty">Pick two pins to measure.</span></div>
     </div>
     <div id="agentPins" class="agentsec"></div>
-    <div id="pins"><div class="empty">No pins yet, tap “Add pin”, then tap a visible part.</div></div>
+    <!-- Empty, because js/pins.js owns the empty-state message: it appends one
+         when there are no pins and removes it when there are. A copy here as
+         well would be a second element saying the same thing that nothing ever
+         removes, so it would still be claiming there are no pins while pins
+         were listed underneath it. -->
+    <div id="pins"></div>
     <footer>
       <div class="rowbtns">
         <button id="clear">Clear all</button>

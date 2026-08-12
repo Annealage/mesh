@@ -587,8 +587,17 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         page.click("#modeBtn")
         page.wait_for_function("window.mesh.store.getState().mode === 'annotate'")
 
+        assert page.locator("#pins .empty").count() == 1, \
+            "an empty pin list should say so, exactly once"
+
         page.click("#app canvas")
         page.wait_for_function("window.mesh.store.getState().pins.length === 1")
+
+        # The empty-state message is owned by js/pins.js alone. A second copy
+        # written into viewer.html would be an element nothing removes, still
+        # claiming there are no pins while this pin was listed underneath it.
+        assert page.locator("#pins .empty").count() == 0, \
+            "\"no pins yet\" must not survive alongside a pin"
 
         # press_sequentially dispatches one keydown/input pair per
         # character, the way a real keyboard does; page.fill sets the whole
@@ -1090,6 +1099,37 @@ def test_a_decision_that_did_not_apply_says_so(browser, chat_server):
         assert "did not apply" in message
         assert "was allowed" in message
         page.wait_for_selector(card, state="detached")
+    finally:
+        page.close()
+
+
+def test_a_multiline_command_is_shown_as_a_script_not_as_escapes(browser, chat_server):
+    """A Bash command is a script, and it is the field a human most needs to read
+    before approving it. Rendered as JSON its every line break becomes a literal
+    backslash-n and the whole thing arrives as one unreadable line.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        command = "python3 - <<'EOF'\nimport struct\nprint('hi')\nEOF"
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_11", tool="Bash",
+            input={"command": command, "description": "measure the STL"}))
+
+        card = "div.permcard[data-request-id='pr_11']"
+        page.wait_for_selector(card)
+        shown = page.evaluate(
+            "(sel) => document.querySelector(sel).textContent", card + " .toolinput")
+
+        assert "\\n" not in shown, "line breaks must be line breaks, not escapes"
+        assert "import struct" in shown
+        assert shown.count("\n") >= 3
+        # The second argument is still shown; it is not dropped in favour of the
+        # first just because the first is the interesting one.
+        assert "measure the STL" in shown
     finally:
         page.close()
 
