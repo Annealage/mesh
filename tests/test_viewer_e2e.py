@@ -1162,3 +1162,43 @@ def test_model_text_is_escaped_and_never_executes(browser, chat_server):
         assert "onerror" in rendered
     finally:
         page.close()
+
+
+# 19. Agent-authored callout text is never markup ------------------------------
+
+def test_a_callout_carrying_markup_renders_as_text_not_html(browser, mesh_server):
+    """mesh-callouts.json is written by the agent and served verbatim, with no
+    field validation, so every field in it is untrusted input to this page.
+
+    The escalation this closes is specific rather than theoretical: script
+    running in the viewer's origin can set the chat composer's value and click
+    Send, so markup in a callout field becomes an arbitrary instruction to an
+    agent holding a shell. A crafted STL filename reaches the pin list the same
+    way, via the manifest's `part`.
+    """
+    page = browser.new_page()
+    fired = page.evaluate_handle("() => { window.__xss = false; return null; }")
+    del fired
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+
+        payload = '<img src=x onerror="window.__xss = true">'
+        (mesh_server.serve_dir / "mesh-callouts.json").write_text(json.dumps({
+            "annotations": [{
+                "id": 1, "part": payload, "label": payload,
+                "point": [0, 0, 0], "comment": "look here",
+            }],
+        }))
+        page.wait_for_function(
+            "() => document.querySelectorAll('#agentPins .apin').length === 1",
+            timeout=15000)
+
+        row = page.locator("#agentPins .apin .part").first
+        # The markup arrived as characters, so it is visible as text and no
+        # element was created from it.
+        assert payload in row.inner_text()
+        assert page.evaluate("() => document.querySelectorAll('#agentPins img').length") == 0
+        assert page.evaluate("() => window.__xss === true") is False
+    finally:
+        page.close()

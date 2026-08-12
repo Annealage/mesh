@@ -25,7 +25,7 @@
 import * as THREE from "three";
 import { store } from "./store.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
-import { toast } from "./ui.js";
+import { buildMetaRows, toast } from "./ui.js";
 import { isNarrow } from "./layout.js";
 
 const USER_COLOR = 0xe86b34;
@@ -215,9 +215,8 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   // reconciliation exists to avoid.
   function updatePinRow(row, p) {
     row.num.textContent = p.id;
-    row.meta.innerHTML =
-      '<div class="part">' + p.part + " · <span class=\"label\">" + p.label + "</span></div>" +
-      '<div class="loc">[' + p.point[0] + ", " + p.point[1] + ", " + p.point[2] + "] mm</div>";
+    row.meta.replaceChildren(
+      ...buildMetaRows(p.part, p.label, p.point, (v) => v).children);
     row.ta.placeholder = "Comment for pin #" + p.id + "…";
     if (row.ta !== document.activeElement && row.ta.value !== p.comment) {
       row.ta.value = p.comment;
@@ -350,12 +349,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const n = document.createElement("div");
       n.className = "num";
       n.textContent = num;
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      meta.innerHTML =
-        '<div class="part">' + (a.part || "unknown") +
-        (a.label ? " · <span class=\"label\">" + a.label + "</span>" : "") + "</div>" +
-        '<div class="loc">[' + p.map((v) => round(v, 2)).join(", ") + "] mm</div>";
+      const meta = buildMetaRows(a.part || "unknown", a.label || "", p, round);
       top.append(n, meta);
       const cmt = document.createElement("div");
       cmt.className = "cmt";
@@ -392,6 +386,11 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
         store.setCallouts(list);
       }
     } catch (e) {
+      // Only the fetch and the JSON parse are expected to fail transiently. An
+      // error raised by a store subscriber reaches here too, because
+      // setCallouts notifies synchronously inside this try, and swallowing that
+      // silently is how a real defect looks exactly like a dropped request.
+      if (!(e instanceof TypeError || e instanceof SyntaxError)) throw e;
       // transient network hiccup; the next poll tick, or the next
       // callouts_changed event once the socket recovers, tries again
     }

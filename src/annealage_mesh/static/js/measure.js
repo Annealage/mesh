@@ -88,8 +88,21 @@ export function initMeasure({ scene, markerRadius }) {
       [mA, validA],
       [mB, validB],
     ].forEach(([sel, val]) => {
-      sel.innerHTML =
-        '<option value="">-</option>' + items.map((it) => '<option value="' + it.key + '">' + it.label + "</option>").join("");
+      // Option text is built as a text node for the same reason the pin and
+      // callout rows are: an item's label carries a model name from an STL
+      // filename or a callout's own part field, neither of which this viewer
+      // controls.
+      sel.replaceChildren();
+      const none = document.createElement("option");
+      none.value = "";
+      none.textContent = "-";
+      sel.append(none);
+      items.forEach((it) => {
+        const opt = document.createElement("option");
+        opt.value = it.key;
+        opt.textContent = it.label;
+        sel.append(opt);
+      });
       sel.value = val;
     });
     updateMeasure(items, validA, validB);
