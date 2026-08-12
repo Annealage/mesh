@@ -21,7 +21,8 @@ from microdot import Request
 from microdot.test_client import TestClient
 
 from annealage_mesh import paths
-from annealage_mesh.app import MAX_REQUEST_BODY, create_app
+from annealage_mesh.app import DEFAULT_PORT, MAX_REQUEST_BODY, create_app
+from conftest import TEST_HOST, make_test_client
 from annealage_mesh.http import routes_viewer
 
 pytestmark = pytest.mark.asyncio
@@ -346,7 +347,8 @@ def static_client_factory(tmp_path, monkeypatch):
         monkeypatch.setattr(routes_viewer, "STATIC_DIR", static_dir)
         served = tmp_path / "served"
         served.mkdir()
-        return TestClient(create_app(served)), static_dir
+        return make_test_client(
+            create_app(served, host=TEST_HOST, port=DEFAULT_PORT)), static_dir
     return make
 
 

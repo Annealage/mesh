@@ -11,7 +11,20 @@ rather than inline in every test that needs it.
 import pytest
 from microdot.test_client import TestClient
 
-from annealage_mesh.app import create_app
+from annealage_mesh.app import DEFAULT_PORT, create_app
+
+# Every app validates the inbound Host header against the address it is bound
+# to, so a test client has to send one that truthfully names this app or every
+# request is refused before it reaches a route. microdot's TestClient
+# otherwise defaults to "example.com:1234", which is exactly the mismatched
+# name that check exists to refuse.
+TEST_HOST = "127.0.0.1"
+TEST_AUTHORITY = "%s:%d" % (TEST_HOST, DEFAULT_PORT)
+
+
+def make_test_client(app):
+    """A TestClient whose Host header names the bind ``app`` was built for."""
+    return TestClient(app, host=TEST_AUTHORITY)
 
 
 @pytest.fixture
@@ -22,7 +35,7 @@ def served_dir(tmp_path):
 
 @pytest.fixture
 def client(served_dir):
-    return TestClient(create_app(served_dir))
+    return make_test_client(create_app(served_dir, host=TEST_HOST, port=DEFAULT_PORT))
 
 
 @pytest.fixture

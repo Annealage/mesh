@@ -11,6 +11,7 @@ import { initModels } from "./models.js";
 import { initPins } from "./pins.js";
 import { initMeasure } from "./measure.js";
 import { initLayout } from "./layout.js";
+import { initWs } from "./ws.js";
 
 const appEl = document.getElementById("app");
 
@@ -21,7 +22,7 @@ const scene3d = initScene(appEl, { getMeshes: () => meshes });
 
 initModels({ scene: scene3d.scene, fitView: scene3d.fitView, meshes });
 
-initPins({
+const pinsApi = initPins({
   scene: scene3d.scene,
   camera: scene3d.camera,
   controls: scene3d.controls,
@@ -33,6 +34,15 @@ initPins({
 initMeasure({ scene: scene3d.scene, markerRadius: scene3d.markerRadius });
 
 initLayout();
+
+// The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
+// the socket is not live; ws.js owns that decision, pins.js only owns the
+// poll's mechanics, so the three functions cross the boundary here.
+initWs({
+  startCalloutsPoll: pinsApi.startCalloutsPoll,
+  stopCalloutsPoll: pinsApi.stopCalloutsPoll,
+  refetchCallouts: pinsApi.refetchCallouts,
+});
 
 // Inspection surface for the browser console and for the Playwright tests
 // in tests/test_viewer_e2e.py. Not read by any other module in this tree.

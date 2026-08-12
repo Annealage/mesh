@@ -21,6 +21,7 @@ these for real with:
 import glob
 import json
 import os
+import secrets
 import socket
 import struct
 import threading
@@ -83,17 +84,35 @@ class _ServerThread:
     thread of its own; `start` blocks the calling (test) thread only until
     `on_ready` fires, never by making an HTTP call into the loop it is
     waiting on.
+
+    ``token``, when given, is passed to ``mesh_app.run`` verbatim, the same
+    fixed-token path ``--token`` gives a real invocation (M4 brief): a test
+    that needs a known, reusable value for the URL fragment and the `/ws`
+    query parameter cannot rely on a per-run random one it never sees. Left
+    ``None`` for every test that predates M4's auth, so those calls into
+    ``mesh_app.run`` are unchanged and unaffected by whether this server's
+    build has grown a ``token`` parameter yet.
     """
 
-    def __init__(self, serve_dir):
+    def __init__(self, serve_dir, token=None):
         self.serve_dir = serve_dir
         self.host = "127.0.0.1"
         self.port = _free_port()
         self.base_url = "http://%s:%d" % (self.host, self.port)
+        self.token = token
         self._loop = None
         self._task = None
         self._thread = None
         self._ready = threading.Event()
+
+    @property
+    def viewer_url(self):
+        """The URL a human (or this test) opens: base plus the token
+        fragment, `#t=<token>`, mirroring how the real startup banner embeds
+        it (M4 brief) so a bookmark of the visible address bar, which never
+        includes a fragment, cannot carry the token anywhere it would be
+        logged."""
+        return self.base_url + "/#t=" + self.token
 
     def start(self):
         def _run():
@@ -102,10 +121,13 @@ class _ServerThread:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
+            run_kwargs = {"on_ready": self._ready.set}
+            if self.token is not None:
+                run_kwargs["token"] = self.token
             # on_ready is threading.Event.set: synchronous, non-blocking,
             # not awaitable, so run() proceeds immediately after calling it
             # rather than waiting on anything that touches this same loop.
-            coro = mesh_app.run(self.serve_dir, self.host, self.port, on_ready=self._ready.set)
+            coro = mesh_app.run(self.serve_dir, self.host, self.port, **run_kwargs)
             task = loop.create_task(coro)
             self._task = task
             # Cancelling the task alone would leave run_forever spinning
@@ -126,10 +148,22 @@ class _ServerThread:
             raise RuntimeError("annealage_mesh server did not become ready within 10s")
 
     def stop(self):
+        """Stop the server, and tolerate being called twice.
+
+        A test that stops a server mid-run to drop a viewer's socket leaves its
+        fixture's own teardown to call this again on a loop that is already
+        closed, where ``call_soon_threadsafe`` raises rather than no-opping.
+        Idempotence here is cheaper than making every such test remember to
+        neutralise its fixture.
+        """
         if self._loop is None:
             return
-        self._loop.call_soon_threadsafe(self._task.cancel)
+        try:
+            self._loop.call_soon_threadsafe(self._task.cancel)
+        except RuntimeError:
+            return  # already stopped: the loop is closed
         self._thread.join(timeout=5)
+        self._loop = None
 
 
 def _cube_stl_bytes(center, half):
@@ -193,6 +227,65 @@ def mesh_server(served_dir):
         yield server
     finally:
         server.stop()
+
+
+@pytest.fixture
+def token_mesh_server(tmp_path_factory):
+    """A fresh, single-model, token-gated server for one test.
+
+    Function-scoped rather than shared with `mesh_server` above: the tests
+    that use this fixture toggle the browser's network state, hand-edit a
+    file the server watches, and force a protocol mismatch, none of which
+    should carry any state into a sibling test, and none of which any of
+    the eight pre-M4 tests need a token for at all. Each instance gets its
+    own directory, its own port (`_ServerThread` already draws a fresh one)
+    and its own `secrets.token_urlsafe` value, exactly the shape a real
+    per-run token takes.
+    """
+    d = tmp_path_factory.mktemp("mesh_e2e_auth")
+    (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
+    server = _ServerThread(d, token=secrets.token_urlsafe(16))
+    server.start()
+    try:
+        yield server
+    finally:
+        server.stop()
+
+
+def _wait_connection_state(page, state, timeout=15000):
+    """Block until `window.mesh.store`'s `connection` key equals `state`.
+
+    Centralised for the same reason `_wait_both_meshes_loaded` is: every M4
+    test below needs this precondition before it can assert anything about
+    what caused the transition into or out of that state.
+    """
+    page.wait_for_function(
+        "(s) => window.mesh && window.mesh.store.getState().connection === s",
+        arg=state, timeout=timeout,
+    )
+
+
+def _wait_for_request_growth(page, requests, baseline, timeout=5.0):
+    """Block until ``requests`` holds more entries than it did at ``baseline``.
+
+    Ties a wait to an actual request landing rather than a fixed sleep
+    guessed to be long enough: a request already known to be expected
+    (e.g. handleHello's own refetchCallouts, fired the instant the
+    connection state flips to "live") can still be in flight when a fixed
+    margin expires under a slow or loaded run, landing later and being
+    miscounted against whatever comparison follows the margin.
+    """
+    deadline = time.time() + timeout
+    while len(requests) <= baseline:
+        if time.time() >= deadline:
+            raise AssertionError(
+                "no new request landed within %.1fs (stayed at %d)" % (timeout, len(requests)))
+        # page.wait_for_timeout, not time.sleep: the synchronous Playwright API
+        # dispatches events only while a call into it is in progress, so a bare
+        # sleep leaves every queued "request" event undelivered until the next
+        # such call. A loop that sleeps while waiting for requests to arrive
+        # therefore sees none arrive, however long it waits.
+        page.wait_for_timeout(20)
 
 
 @pytest.fixture(scope="module")
@@ -527,3 +620,215 @@ def test_reload_revalidates_the_vendored_three_js_rather_than_refetching(
         assert three[0] == 304, "expected a revalidation, got %r" % (three,)
     finally:
         page.close()
+
+
+# 9. A hand-edited callouts file arrives by push, not by the 1.5s poll ------
+
+def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_server):
+    """M4's whole demonstrable deliverable (plan section 4, milestone M4):
+    writing mesh-callouts.json by hand, with the socket live and nothing
+    reloaded, makes a pin appear. Fact 4 in the M4 brief is why this has to
+    be a browser test at all: a coded close and a pushed event both need a
+    real socket to observe.
+
+    Proved two ways, per the brief, not just one: the store's callouts
+    length changes inside a window no 1.5s poll interval could produce, and
+    exactly one /callouts request happens for the whole edit, the one the
+    push itself triggers. A flaky timing margin alone would leave open the
+    possibility that a poll just happened to land early; the request count
+    rules that out regardless of how fast or slow the run is.
+    """
+    server = token_mesh_server
+    page = browser.new_page()
+    callouts_requests = []
+    page.on("request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        assert page.evaluate("window.mesh.store.getState().callouts.length") == 0
+
+        # handleHello's own refetchCallouts (js/ws.js) fires in the same
+        # tick "live" is set, but the fetch it starts is itself async;
+        # waiting for that one request to actually land, rather than a
+        # fixed margin, is what makes the baseline below trustworthy
+        # instead of leaving that request still in flight to be miscounted
+        # against the file-edit request that follows.
+        _wait_for_request_growth(page, callouts_requests, 0)
+        baseline = len(callouts_requests)
+
+        record = {"annotations": [{
+            "id": 1, "part": "alpha", "label": "+Z",
+            "point": [0.0, 0.0, 10.0], "comment": "hand-edited callout",
+        }]}
+        callouts_path = server.serve_dir / "mesh-callouts.json"
+        start = time.time()
+        # Written via a temp-file-plus-rename rather than a direct write, so
+        # the watcher's debounce (M4 brief: "the agent writes this file
+        # directly and the published skill does not require an atomic
+        # write") is exercised on a genuinely atomic replace rather than
+        # relying on a single write() call being fast enough to look atomic
+        # on this filesystem.
+        tmp_path = callouts_path.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps(record))
+        os.replace(tmp_path, callouts_path)
+
+        page.wait_for_function(
+            "() => window.mesh.store.getState().callouts.length === 1", timeout=5000)
+        elapsed = time.time() - start
+
+        assert page.evaluate("window.mesh.store.getState().callouts[0].comment") == \
+            "hand-edited callout"
+        assert page.evaluate("window.mesh.store.getState().connection") == "live", \
+            "the socket must still be live; a fallback poll would also explain the pin appearing"
+        assert len(callouts_requests) - baseline == 1, (
+            "expected exactly one /callouts fetch after the baseline (the push-triggered "
+            "refetch), got %d; a second one would mean a poll was also running"
+            % (len(callouts_requests) - baseline))
+        assert elapsed < 1.2, (
+            "took %.3fs; the 1.5s poll interval could have produced this on its own, "
+            "which is exactly what this test must rule out" % elapsed)
+    finally:
+        page.close()
+
+
+# 10. A protocol-version mismatch closes the socket with code 4400 ----------
+
+def test_protocol_version_mismatch_closes_with_code_4400(browser, token_mesh_server):
+    """Verified fact 4 in the M4 brief is explicit that this is the one
+    post-handshake close code this milestone ships, and that it can only be
+    asserted here: microdot's in-process TestClient silently discards every
+    frame that is not TEXT or BINARY, so a CLOSE frame's code byte never
+    reaches it, and any test that "asserts" this through TestClient passes
+    vacuously.
+
+    Drives a raw WebSocket from page script rather than through this
+    project's own js/ws.js, because ws.js always sends its own hard-coded
+    PROTOCOL_VERSION and so can never produce this frame from inside this
+    test run; the mismatch has to be forged by hand, which is also exactly
+    what a genuinely stale cached page would do without meaning to.
+    """
+    server = token_mesh_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        close_code = page.evaluate(
+            """(token) => new Promise((resolve, reject) => {
+                const ws = new WebSocket(
+                    "ws://" + location.host + "/ws?t=" + encodeURIComponent(token));
+                const giveUp = setTimeout(
+                    () => reject(new Error("no close event within 5s")), 5000);
+                ws.addEventListener("open", () => {
+                    ws.send(JSON.stringify({v: 999, type: "hello", token: token}));
+                });
+                ws.addEventListener("close", (ev) => {
+                    clearTimeout(giveUp);
+                    resolve(ev.code);
+                });
+            })""",
+            server.token,
+        )
+        assert close_code == 4400
+    finally:
+        page.close()
+
+
+# 11. No token in the URL: the page ends refused, not stuck connecting -----
+
+def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh_server):
+    """Per the M4 brief, fact 2: an auth failure on /ws is an HTTP 403
+    before any upgrade, never a close code, so the browser's WebSocket API
+    (per fact 2's own consequence) cannot see why the handshake failed.
+    js/ws.js resolves that blind spot with a plain fetch of the same path,
+    which does expose the status; the outcome a phone user with no terminal
+    actually needs is the "refused" connection state and a message telling
+    them what to do, both asserted here.
+
+    Opens the page with no `#t=...` fragment at all, the exact shape of a
+    bookmark, a shared link with the fragment stripped, or a plain reload
+    of a page that already dropped its own fragment on load: none of those
+    carry a token forward, since none of them are the printed URL from a
+    fresh server start.
+    """
+    server = token_mesh_server
+    page = browser.new_page()
+    try:
+        page.goto(server.base_url + "/")
+        _wait_connection_state(page, "refused")
+
+        assert page.locator("#err").is_visible()
+        message = page.locator("#err").inner_text().lower()
+        assert "stale" in message
+        assert "reopen the url" in message
+    finally:
+        page.close()
+
+
+# 12. A dropped socket resumes the poll, and a reconnect stops it again ----
+
+def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_mesh_server):
+    """Plan section 3.3 / the M4 brief: "a viewer whose socket is closed or
+    never opened resumes the 1500 ms poll after one backoff interval,"
+    and "the poll and the push must never both be running."
+
+    The socket is dropped by stopping the server, which is one of the causes
+    the fallback exists for (the plan names "a network blip, a laptop sleep or
+    a server restart") and, unlike the alternatives, actually drops it.
+    Emulating the browser as offline does not: measured against a real
+    Chromium, ``context.set_offline(True)`` flips ``navigator.onLine`` to false
+    and fires the ``offline`` event, but leaves an already-established
+    WebSocket open and still delivering the server's pings, so the page
+    correctly goes on reporting "live" and such a test would be asserting on a
+    drop that never happened.
+
+    Checked in both directions: /callouts requests resume once the indicator
+    reports "polling", and they stop again once it reports "live" after a
+    server is listening again, so the two states this test can directly
+    observe never overlap with which connection state js/ws.js reports.
+    """
+    server = token_mesh_server
+    page = browser.new_page()
+    replacement = None
+    callouts_requests = []
+    page.on("request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        callouts_requests.clear()
+
+        server.stop()
+        try:
+            _wait_connection_state(page, "polling", timeout=15000)
+            deadline = time.time() + 6.0
+            while time.time() < deadline and len(callouts_requests) < 2:
+                page.wait_for_timeout(100)
+            assert len(callouts_requests) >= 2, \
+                "the fallback poll never fired while the socket was down"
+        finally:
+            # Same directory, same port and the same token, so the page's own
+            # reconnect attempts start succeeding without it being reloaded:
+            # this is a server restart from the page's point of view, which is
+            # exactly the case being covered.
+            replacement = _ServerThread(server.serve_dir, token=server.token)
+            replacement.port = server.port
+            replacement.base_url = server.base_url
+            replacement.start()
+
+        pre_reconnect = len(callouts_requests)
+        _wait_connection_state(page, "live", timeout=20000)
+        # Going live triggers exactly one /callouts request of its own
+        # (handleHello's refetchCallouts); waiting for it to actually land
+        # before taking the baseline below is what stops a slow run from
+        # leaving it still in flight to land during the sleep that
+        # follows, where it would be miscounted as evidence the poll kept
+        # running after reconnecting.
+        _wait_for_request_growth(page, callouts_requests, pre_reconnect)
+        baseline = len(callouts_requests)
+        page.wait_for_timeout(2000)
+        assert len(callouts_requests) == baseline, \
+            "the poll kept firing after the socket reconnected and went live again"
+    finally:
+        page.close()
+        if replacement is not None:
+            replacement.stop()

@@ -300,9 +300,10 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     }
   });
 
-  // ---- agent callouts: rendered from state.callouts, the poll's only writer ----
+  // ---- agent callouts: rendered from state.callouts, reaching it only via refetchCallouts/setCallouts below ----
   const agentPinsDiv = document.getElementById("agentPins");
   let agentSig = null;
+  let calloutsGen = 0; // bumped on every refetchCallouts call; guards against an in-flight fetch applying its reply after a later call has already started
 
   function clearAgentMarkers() {
     agentSide.forEach((m) => {
@@ -368,11 +369,22 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     });
   });
 
-  async function pollAgent() {
+  // ws.js pushes a callouts_changed event over the socket when it is live
+  // and calls refetchCallouts directly; startCalloutsPoll/stopCalloutsPoll
+  // are ws.js's fallback for when the socket is not live. Whichever one is
+  // driving is ws.js's decision, not this module's: pollTimer is only ever
+  // non-null while ws.js has decided the socket is down, so the poll and
+  // the push are never both running, which keeps setCallouts a single
+  // logical writer even though both paths call it.
+  let pollTimer = null;
+
+  async function refetchCallouts() {
+    const gen = ++calloutsGen;
     try {
       const res = await fetch("/callouts", { cache: "no-store" });
       if (!res.ok) return;
       const j = await res.json();
+      if (gen !== calloutsGen) return; // a later refetchCallouts call has since started; this reply is stale
       const list = Array.isArray(j) ? j : j && Array.isArray(j.annotations) ? j.annotations : [];
       const sig = JSON.stringify(list);
       if (sig !== agentSig) {
@@ -380,11 +392,22 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
         store.setCallouts(list);
       }
     } catch (e) {
-      // transient network hiccup; the next tick tries again
+      // transient network hiccup; the next poll tick, or the next
+      // callouts_changed event once the socket recovers, tries again
     }
   }
-  pollAgent();
-  setInterval(pollAgent, 1500);
+
+  function startCalloutsPoll() {
+    if (pollTimer !== null) return; // already running; a second interval would double every refetch
+    refetchCallouts();
+    pollTimer = setInterval(refetchCallouts, 1500);
+  }
+
+  function stopCalloutsPoll() {
+    if (pollTimer === null) return;
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 
   // ---- legend toggles ----
   const tgAgent = document.getElementById("tgAgent");
@@ -398,4 +421,17 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   store.subscribe("showUser", (state) => {
     markerGroup.visible = state.showUser;
   });
+
+  // Unconditional, so first paint of the callout list never depends on the
+  // socket reaching hello first: ws.js's own refetchCallouts calls (on hello
+  // and on callouts_changed) cover every update after this one, but without
+  // this call the panel would show nothing until that first hello arrives,
+  // even though /callouts has been servable since the page loaded.
+  refetchCallouts();
+
+  // Handed to ws.js by main.js, which is the only place these three and
+  // ws.js's connect logic are both in scope. refetchCallouts is exposed on
+  // its own, separately from the poll, because ws.js also calls it once,
+  // outside the poll, on every hello and on every callouts_changed event.
+  return { startCalloutsPoll, stopCalloutsPoll, refetchCallouts };
 }

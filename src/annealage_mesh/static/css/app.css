@@ -13,6 +13,14 @@ body { display: flex; flex-direction: column; }
   background: rgba(20,23,28,.92); border-bottom: 1px solid #2c313a; backdrop-filter: blur(4px);
 }
 #topbar .title { font-weight: 600; color: #9aa; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; margin-right: auto; white-space: nowrap; }
+#topbar .conn {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 10px;
+  border: 1px solid #3a3f47; background: #2a2e35; color: #9aa; white-space: nowrap; cursor: default;
+}
+#topbar .conn[data-state="live"] { background: #1e3a24; border-color: #2f5c39; color: #9fe0a8; }
+#topbar .conn[data-state="connecting"] { background: #3a2f1e; border-color: #5c4a2f; color: #e0c07f; }
+#topbar .conn[data-state="polling"] { background: #2a2e35; border-color: #3a3f47; color: #9aa; }
+#topbar .conn[data-state="refused"] { background: #3a1e1e; border-color: #5c2f2f; color: #e8a0a0; }
 #topbar button {
   min-height: 38px; padding: 0 13px; border-radius: 7px; border: 1px solid #3a3f47;
   background: #2a2e35; color: #d6d8dc; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
@@ -21,7 +29,7 @@ body { display: flex; flex-direction: column; }
 #topbar #modeBtn.on { background: #e86b34; border-color: #e86b34; color: #14161a; }
 #topbar #panelBtn.on { background: #2f3946; border-color: #4a586a; }
 #topbar #upBtn { font-size: 11px; }
-@media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } }
+@media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } #topbar .conn { padding: 3px 7px; } }
 
 /* ---------- narrow-viewport tab bar ----------
    Replaces the Panel button and the drawer at 900px and below: arbitrating

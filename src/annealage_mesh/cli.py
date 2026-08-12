@@ -9,11 +9,11 @@ from pathlib import Path
 
 from . import __version__
 from . import app as app_module
+from . import net
 from . import paths
 from .http.routes_viewer import VIEWER_HTML
 
 DEFAULT_PORT = 8765
-DEFAULT_HOST = "0.0.0.0"
 
 
 def build_parser():
@@ -29,8 +29,16 @@ def build_parser():
     )
     ap.add_argument("--port", type=int, default=DEFAULT_PORT,
                      help="TCP port (default: %(default)s)")
-    ap.add_argument("--host", default=DEFAULT_HOST,
-                     help="bind address (default: %(default)s)")
+    ap.add_argument("--host", default=None,
+                     help="bind address: an IP, a resolvable name, 0.0.0.0 for every "
+                          "interface, or the alias \"tailscale\" to bind this host's "
+                          "tailnet address (default: 127.0.0.1, this machine only)")
+    ap.add_argument("--origin", action="append", default=[], metavar="ORIGIN",
+                     help="an additional allowed browser Origin, repeatable; needed "
+                          "when a reverse proxy or \"tailscale serve\" fronts this "
+                          "server under another name or scheme")
+    ap.add_argument("--token", default=None,
+                     help="use this per-run token instead of a generated one")
     ap.add_argument("--no-open", action="store_true",
                      help="do not try to open a browser automatically")
     ap.add_argument("--version", action="version", version="annealage-mesh %s" % __version__)
@@ -57,13 +65,25 @@ def main(argv=None):
     if not VIEWER_HTML.exists():
         sys.stderr.write("error: packaged viewer.html missing: %s\n" % VIEWER_HTML)
         return 2
-    if port_in_use(args.port, args.host):
+
+    # Resolved before the port check, so a --host that cannot be resolved is
+    # reported as the naming problem it is rather than as a bind failure on
+    # whatever address a fallback would have chosen. resolve_bind raises rather
+    # than widening a bind, which is the whole point of the tailscale alias.
+    try:
+        bind = net.resolve_bind(args.host)
+    except net.BindError as exc:
+        sys.stderr.write("error: %s\n" % exc)
+        return 2
+
+    if port_in_use(args.port, bind.address):
         sys.stderr.write(
-            "error: port %d is already in use, stop whatever is using it, "
-            "or pass --port.\n" % args.port)
+            "error: port %d is already in use on %s, stop whatever is using it, "
+            "or pass --port.\n" % (args.port, bind.address))
         return 1
 
-    open_url = "http://localhost:%d/" % args.port
+    token = net.generate_token(args.token)
+    open_url = net.viewer_url(bind, args.port, token)
 
     async def on_ready():
         sys.stdout.write("Annealage Mesh\n")
@@ -73,7 +93,10 @@ def main(argv=None):
         sys.stdout.write("  comments log      : %s\n" % paths.comments_log_path(serve_dir))
         sys.stdout.write("  agent callouts    : %s  (agent writes here to show pins)\n"
                           % paths.callouts_path(serve_dir))
-        sys.stdout.write("  open              : %s\n" % open_url)
+        # The exposure banner prints every run, whatever the bind, because a
+        # default or a persisted setting means the user never typed a flag
+        # that would have reminded them what this is reachable on.
+        sys.stdout.write("%s\n" % net.format_banner(bind, args.port, token))
         sys.stdout.write("  (Ctrl-C to stop)\n\n")
         sys.stdout.flush()
         if not args.no_open:
@@ -90,7 +113,9 @@ def main(argv=None):
                 pass  # never fail startup just because a browser couldn't be opened
 
     try:
-        asyncio.run(app_module.run(serve_dir, args.host, args.port, on_ready=on_ready))
+        asyncio.run(app_module.run(
+            serve_dir, bind.address, args.port, on_ready=on_ready,
+            token=token, extra_origins=tuple(args.origin)))
     except KeyboardInterrupt:
         pass
     sys.stdout.write("\nshutting down\n")

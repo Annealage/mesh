@@ -55,6 +55,16 @@
  *                 layout.js's TABS entries.
  *   panelOpen     boolean
  *                 whether the side panel is shown at wide viewports.
+ *   connection    'connecting' | 'live' | 'polling' | 'refused'
+ *                 ws.js's view of the /ws socket, read by the topbar
+ *                 indicator. 'live' means callouts arrive by push;
+ *                 'polling' means ws.js has fallen back to the 1.5s
+ *                 /callouts poll, whether because the socket has not yet
+ *                 reconnected or because it never will again this page
+ *                 load (a protocol-version mismatch); 'refused' means a
+ *                 pre-handshake 403 was confirmed, most likely a stale
+ *                 token from a server restart, and the fallback poll runs
+ *                 under this state too.
  */
 
 let state = Object.freeze({
@@ -71,6 +81,7 @@ let state = Object.freeze({
   measure: Object.freeze({ a: "", b: "" }),
   activeTab: "model",
   panelOpen: false,
+  connection: "connecting",
 });
 
 // Assigns pin ids. Kept outside `state` because it is a generator, not a
@@ -248,6 +259,12 @@ function setPanelOpen(v) {
   }, ["panelOpen"]);
 }
 
+function setConnection(v) {
+  commit(() => {
+    state = { ...state, connection: v };
+  }, ["connection"]);
+}
+
 export const store = {
   getState,
   subscribe,
@@ -267,4 +284,5 @@ export const store = {
   setMeasure,
   setActiveTab,
   setPanelOpen,
+  setConnection,
 };
