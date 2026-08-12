@@ -82,4 +82,4 @@ Copy `skill/annealage-mesh/` into `~/.claude/skills/` (or a plugin's skills dire
 
 - The server auto-discovers `*.stl` in `<dir>` on each `/manifest` request, so you don't need to restart it after regenerating STLs — just tell the human to refresh.
 - Coordinates are whatever units/axes the STL was authored in; there is no conversion. If the model is Y-up, tell the human to use the viewer's "Z-up / Y-up" toggle.
-- Zero runtime Python dependencies, so `uvx annealage-mesh` starts near-instantly.
+- One pure-Python runtime dependency (microdot), so `uvx annealage-mesh` starts near-instantly.

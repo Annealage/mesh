@@ -7,7 +7,7 @@ name = "annealage-mesh"
 version = "0.1.0"
 description = "Local web tool for pin-comment review of 3D-print STL models, by a human and an AI agent"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE", "skill/annealage-mesh/LICENSE"]
 authors = [
@@ -22,17 +22,17 @@ classifiers = [
     "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Software Development :: Testing",
 ]
-dependencies = []
+dependencies = ["microdot>=2.6,<3"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "pytest-asyncio>=0.23"]
 
 [project.scripts]
 annealage-mesh = "annealage_mesh.cli:main"
@@ -43,9 +43,6 @@ Repository = "https://github.com/Annealage/mesh"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/annealage_mesh"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"src/annealage_mesh/static/viewer.html" = "annealage_mesh/static/viewer.html"
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -58,3 +55,17 @@ include = [
     "CONTRIBUTING.md",
     "REUSE.toml",
 ]
+
+# hatchling applies the repo .gitignore to package contents by default, so a
+# static/ subdirectory whose name matches a gitignore pattern (this repo's
+# .gitignore has "lib/", "build/", "parts/" and "var/") would silently drop
+# out of both the sdist and the wheel. "artifacts" bypasses that VCS-ignore
+# filtering, so everything under static/ ships regardless of directory
+# naming. Both the sdist and the wheel targets need this entry: the release
+# workflow (.github/workflows/publish.yml) runs plain `uv build`, which
+# builds the wheel from the sdist it just produced rather than from the
+# working tree, so a wheel-only override here would ship a wheel with the
+# assets during local `--wheel` testing while the published wheel, built
+# from an sdist missing them, would silently drop them again.
+[tool.hatch.build]
+artifacts = ["src/annealage_mesh/static/**"]
