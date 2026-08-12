@@ -18,6 +18,7 @@ import dataclasses
 import errno
 import json
 import os
+import secrets
 import sys
 from pathlib import Path
 from typing import Optional
@@ -100,8 +101,8 @@ def _read_record(path: Path):
 class Lock:
     """A held ``.mesh/lock``, releasable exactly once.
 
-    Returned only by a successful ``acquire``; the file descriptor this
-    holds came from the ``O_CREAT | O_EXCL`` open that created it, so
+    Returned only by a successful ``acquire``; the file descriptor this holds
+    is the one whose inode ``_claim`` linked into place as the sole winner, so
     holding this object is itself the proof of exclusive ownership.
     """
 
@@ -133,6 +134,51 @@ class Lock:
         self.release()
 
 
+def _claim(path: Path, payload: bytes) -> Optional["Lock"]:
+    """Try to become the holder of ``path``, returning a held ``Lock`` or None.
+
+    The record is written to a uniquely named sibling first and only then linked
+    into place, rather than creating ``path`` empty and filling it in
+    afterwards. ``os.link`` is as atomic an arbiter as ``O_CREAT | O_EXCL``, it
+    fails with ``FileExistsError`` for exactly the same reason, and it publishes
+    the name and its contents in the same instant.
+
+    Creating the final name empty and writing to it afterwards leaves a window,
+    microseconds wide but reachable by two starts issued together, in which the
+    file exists and holds nothing. A racer that read it there saw an unparseable
+    record and reported the lock corrupt, and the advice that accompanies that
+    is to check nothing is running and delete the file by hand: advice to delete
+    the live lock of the process that had just won the race, which would then
+    permit the second server this lock exists to prevent.
+
+    The returned ``Lock`` holds the descriptor opened on the temporary name.
+    After the link both names refer to one inode, so it is the same open file
+    the holder would have had either way, and releasing it unlinks the name a
+    caller can see.
+    """
+    unique = "%s.%d.%s.tmp" % (path.name, os.getpid(), secrets.token_hex(4))
+    tmp = path.with_name(unique)
+    fd = os.open(str(tmp), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    try:
+        os.write(fd, payload)
+        try:
+            os.link(str(tmp), str(path))
+        except FileExistsError:
+            os.close(fd)
+            return None
+    except BaseException:
+        os.close(fd)
+        raise
+    finally:
+        # The temporary name has done its work whether or not the link landed,
+        # and leaving one behind would litter .mesh/ with a file per lost race.
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
+    return Lock(path, fd)
+
+
 def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lock:
     """Create and hold ``.mesh/lock`` under ``mesh_dir``, or raise.
 
@@ -142,9 +188,9 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
 
     The reclaim path is race-free by construction rather than by locking
     around the reclaim itself: after unlinking a record whose pid this
-    process observed to be dead, the only next step is to retry the same
-    ``O_CREAT | O_EXCL`` open, never to write on the strength of that
-    observation. If a different process wins the create in the gap between
+    process observed to be dead, the only next step is to retry the claim,
+    never to write on the strength of that observation. If a different
+    process wins the create in the gap between
     this process's unlink and its retry, that create is what makes the file
     exist again, and this process's retry then fails ``EEXIST`` against
     *that* fresh record, which this function reads and correctly reports as
@@ -161,13 +207,9 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
     payload = json.dumps({"pid": pid, "port": port, "token": token}).encode("utf-8")
 
     while True:
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            pass
-        else:
-            os.write(fd, payload)
-            return Lock(path, fd)
+        acquired = _claim(path, payload)
+        if acquired is not None:
+            return acquired
 
         try:
             held_pid, held_port, held_token = _read_record(path)

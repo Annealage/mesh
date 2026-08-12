@@ -130,6 +130,7 @@ export function initWs({
   startCalloutsPoll,
   stopCalloutsPoll,
   refetchCallouts,
+  refetchModels,
   onHello = () => {},
   onAgentEvent = () => {},
 }) {
@@ -278,6 +279,11 @@ export function initWs({
     // server's 500-event ring, so a gap longer than that would otherwise
     // leave a stale callout list with no further event to prompt a refetch.
     refetchCallouts();
+    // And the models, for the reason above: a `models_changed` push that
+    // happened while the socket was down is not in the replay this page will
+    // act on, so a part regenerated during the gap would otherwise stay stale
+    // until something else changed.
+    refetchModels();
     onHello(frame.session);
   }
 
@@ -286,6 +292,8 @@ export function initWs({
     const kind = frame.event && frame.event.kind;
     if (kind === "callouts_changed") {
       refetchCallouts();
+    } else if (kind === "models_changed") {
+      refetchModels();
     } else {
       onAgentEvent(frame.event);
     }

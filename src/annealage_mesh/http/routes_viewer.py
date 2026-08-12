@@ -270,6 +270,13 @@ def register_routes(app, serve_dir):
             return log_state["fd"]
 
     get_index, invalidate_index = _make_index_cache(paths.build_model_index, serve_dir)
+    # Published so the models watcher can drop the cached scan at the moment it
+    # decides the directory changed. Without that, the watcher's push races the
+    # cache: the browser refetches ``/manifest`` immediately, is served the scan
+    # from before the change, and since one event has already been sent there is
+    # nothing left to prompt another fetch. A part added during a session would
+    # then stay invisible until something else happened to change.
+    app.mesh_invalidate_model_index = invalidate_index
     get_static_index, invalidate_static_index = _make_index_cache(
         paths.build_static_index, STATIC_DIR)
 

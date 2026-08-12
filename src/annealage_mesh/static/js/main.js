@@ -21,7 +21,11 @@ const meshes = {};
 
 const scene3d = initScene(appEl, { getMeshes: () => meshes });
 
-initModels({ scene: scene3d.scene, fitView: scene3d.fitView, meshes });
+const modelsApi = initModels({
+  scene: scene3d.scene,
+  fitView: scene3d.fitView,
+  meshes,
+});
 
 const pinsApi = initPins({
   scene: scene3d.scene,
@@ -52,6 +56,7 @@ wsApi = initWs({
   startCalloutsPoll: pinsApi.startCalloutsPoll,
   stopCalloutsPoll: pinsApi.stopCalloutsPoll,
   refetchCallouts: pinsApi.refetchCallouts,
+  refetchModels: modelsApi.refetchModels,
   onHello: chatApi.handleHello,
   onAgentEvent: chatApi.handleEvent,
 });

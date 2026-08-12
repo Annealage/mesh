@@ -215,6 +215,27 @@ class CalloutsChanged(AgentEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class ModelsChanged(AgentEvent):
+    """The served directory's set of models, or one model's bytes, changed.
+
+    This is what makes the tool a modelling loop rather than a review surface.
+    An agent that edits a CAD source and regenerates an STL has changed the
+    thing being discussed, and without this the viewer goes on showing the
+    previous geometry until the human reopens the page, which is the one moment
+    they are least likely to suspect the picture is stale.
+
+    Carries no payload, for the same reason ``CalloutsChanged`` does not: the
+    browser refetches ``/manifest`` and reloads geometry through the single
+    writer of that state. Naming the changed files here would put the same facts
+    on two paths, and the reload is cheap regardless, because ``/model`` answers
+    a conditional request and an unchanged part costs a 304.
+    """
+
+    kind: ClassVar[str] = "models_changed"
+    viewer: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
 class ViewerPrimary(AgentEvent):
     """Announces which connection now receives ``call`` frames.
 

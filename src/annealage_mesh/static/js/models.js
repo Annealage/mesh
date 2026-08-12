@@ -54,7 +54,23 @@ export function initModels({ scene, fitView, meshes }) {
     if (m) m.visible = !!store.getState().visibility[rel];
   }
 
-  function loadPart(model) {
+  // Assigned on first sight and kept, rather than taken from the model's index
+  // in the manifest: the manifest is sorted, so a newly generated part landing
+  // alphabetically first would otherwise shift every other part's colour, and
+  // the colours are what the parts list, the callout dots and the pins all
+  // identify a part by.
+  const colorFor = new Map();
+  let nextColor = 0;
+
+  function colorOf(rel) {
+    if (!colorFor.has(rel)) {
+      colorFor.set(rel, PALETTE[nextColor % PALETTE.length]);
+      nextColor += 1;
+    }
+    return colorFor.get(rel);
+  }
+
+  function loadPart(model, { fit = false } = {}) {
     loader.load(
       urlFor(model.rel),
       (geo) => {
@@ -74,15 +90,33 @@ export function initModels({ scene, fitView, meshes }) {
         const mesh = new THREE.Mesh(geo, mat);
         mesh.userData.rel = model.rel;
         mesh.userData.label = model.label;
+        // A regenerated part replaces the mesh standing in for it. Dropping the
+        // old one from the scene and releasing its GPU buffers is what stops a
+        // modelling session that regenerates a part twenty times from leaving
+        // twenty overlapping copies of it in the view and twenty buffers on the
+        // card, neither of which three.js reclaims on its own.
+        disposeMesh(model.rel);
         meshes[model.rel] = mesh;
         applyVisibility(model.rel);
         scene.add(mesh);
         loadedCount += 1;
-        if (loadedCount === 1 || meshes[model.rel].visible) fitView();
+        // Only ever on the first load. Reframing the camera because a part was
+        // regenerated would move the view out from under someone who had just
+        // lined it up on the detail they were asking about.
+        if (fit && loadedCount === 1) fitView();
       },
       undefined,
       () => showError("Failed to load " + model.label + ", is it in the served directory?"),
     );
+  }
+
+  function disposeMesh(rel) {
+    const previous = meshes[rel];
+    if (!previous) return;
+    scene.remove(previous);
+    if (previous.geometry) previous.geometry.dispose();
+    if (previous.material) previous.material.dispose();
+    delete meshes[rel];
   }
 
   store.subscribe("visibility", () => {
@@ -114,7 +148,9 @@ export function initModels({ scene, fitView, meshes }) {
   }
 
   function renderParts(state) {
+    const listed = new Set();
     state.models.forEach((m) => {
+      listed.add(m.rel);
       let row = partRows.get(m.rel);
       if (!row) {
         row = makePartRow(m);
@@ -123,6 +159,14 @@ export function initModels({ scene, fitView, meshes }) {
       }
       row.cb.checked = !!state.visibility[m.rel];
     });
+    // A part deleted from the directory loses its row. Without this the list
+    // would keep offering a checkbox for a file that no longer exists, and
+    // toggling it would silently do nothing.
+    for (const [rel, row] of partRows) {
+      if (listed.has(rel)) continue;
+      row.lab.remove();
+      partRows.delete(rel);
+    }
   }
   store.subscribe("models", renderParts);
   store.subscribe("visibility", renderParts);
@@ -155,25 +199,48 @@ export function initModels({ scene, fitView, meshes }) {
     });
   }
 
-  async function loadManifest() {
+  /**
+   * Refetch the manifest and bring the scene into line with it.
+   *
+   * Called once on load and again whenever the server pushes `models_changed`,
+   * which is what makes an agent regenerating a part visible without the human
+   * reloading. `first` distinguishes the two only for the things that should
+   * happen once: framing the camera, and complaining that the directory is
+   * empty (a directory the human is about to generate a part into is not an
+   * error, and saying so mid-session would be noise).
+   *
+   * Geometry is reloaded for every listed model rather than only the changed
+   * ones, because the event deliberately does not say which changed. That is
+   * cheap rather than wasteful: `/model` answers a conditional request, so a
+   * part whose bytes are unchanged costs one 304 and no transfer.
+   */
+  async function loadManifest({ first = false } = {}) {
     try {
       const res = await fetch("/manifest", { cache: "no-store" });
       const j = await res.json();
       const models = j && Array.isArray(j.models) ? j.models : [];
       if (!models.length) {
-        showError("No STLs found in the served directory.");
+        // Every part is gone, so the scene should be too, rather than left
+        // showing models the directory no longer contains.
+        Object.keys(meshes).forEach(disposeMesh);
+        store.setModels([]);
+        if (first) showError("No STLs found in the served directory.");
         return;
       }
-      const withColor = models.map((m, i) => ({ ...m, color: PALETTE[i % PALETTE.length] }));
+      const withColor = models.map((m) => ({ ...m, color: colorOf(m.rel) }));
+      const listed = new Set(models.map((m) => m.rel));
+      Object.keys(meshes).forEach((rel) => {
+        if (!listed.has(rel)) disposeMesh(rel);
+      });
       store.setModels(withColor);
       updateTitle(models, j.dir);
-      withColor.forEach(loadPart);
+      withColor.forEach((m) => loadPart(m, { fit: first }));
     } catch (e) {
       showError("Failed to load /manifest: " + e.message);
     }
   }
 
-  loadManifest();
+  loadManifest({ first: true });
 
   // Surfaces a hard failure so it is not a silent black screen. three.js is
   // vendored and served from /static, so a page that gets this far has a
@@ -186,4 +253,10 @@ export function initModels({ scene, fitView, meshes }) {
       showError("No STLs loaded. The manifest listed models but none of them loaded from /model/.");
     }
   }, 4000);
+
+  // Handed to ws.js by main.js, the same way pins.js hands over
+  // refetchCallouts: ws.js calls this on a `models_changed` push, and once on
+  // every hello, since a reconnect may have missed the push that happened while
+  // the socket was down.
+  return { refetchModels: () => loadManifest() };
 }

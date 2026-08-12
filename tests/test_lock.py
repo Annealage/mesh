@@ -190,37 +190,59 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
     Real threads, not a mocked interleaving, because the property under
     test is the kernel's own atomicity guarantee on the ``open()`` call, not
     anything this project's code arbitrates itself.
+
+    The race is run repeatedly rather than once. The window this guards is the
+    few microseconds between the lock name coming into existence and the record
+    inside it being complete, and one attempt hits that window perhaps a quarter
+    of the time: often enough to have shown up as an intermittent failure,
+    rarely enough to have been mistaken for one. Twenty rounds turn it from a
+    coin toss into a test.
+
+    A loser that reports the lock *corrupt* is the specific failure, because the
+    advice attached to that is to check nothing is running and delete the file
+    by hand, which here would mean deleting the live lock of the process that
+    had just won.
     """
     mesh_dir = tmp_path / ".mesh"
-    barrier = threading.Barrier(2)
-    results = [None, None]
 
-    def attempt(i, port, token):
-        barrier.wait()
-        try:
-            results[i] = ("ok", lock.acquire(mesh_dir, port, token))
-        except lock.LockHeld as exc:
-            results[i] = ("held", exc)
-        except lock.LockCorrupt as exc:
-            results[i] = ("corrupt", exc)
+    for round_number in range(20):
+        barrier = threading.Barrier(2)
+        results = [None, None]
 
-    t1 = threading.Thread(target=attempt, args=(0, 1111, "tok-1"))
-    t2 = threading.Thread(target=attempt, args=(1, 2222, "tok-2"))
-    t1.start()
-    t2.start()
-    t1.join(timeout=5)
-    t2.join(timeout=5)
+        def attempt(i, port, token):
+            barrier.wait()
+            try:
+                results[i] = ("ok", lock.acquire(mesh_dir, port, token))
+            except lock.LockHeld as exc:
+                results[i] = ("held", exc)
+            except lock.LockCorrupt as exc:
+                results[i] = ("corrupt", exc)
 
-    outcomes = [r[0] for r in results]
-    assert outcomes.count("ok") == 1, "exactly one racer must win the create: got %r" % outcomes
-    assert outcomes.count("held") == 1, "the loser must see the winner as a live holder: got %r" % outcomes
+        t1 = threading.Thread(target=attempt, args=(0, 1111, "tok-1"))
+        t2 = threading.Thread(target=attempt, args=(1, 2222, "tok-2"))
+        t1.start()
+        t2.start()
+        t1.join(timeout=5)
+        t2.join(timeout=5)
 
-    winner = next(r[1] for r in results if r[0] == "ok")
-    loser_exc = next(r[1] for r in results if r[0] == "held")
-    # The loser's LockHeld must describe the winner's own record, not a
-    # third, phantom holder.
-    winner_record = json.loads(lock.lock_path(mesh_dir).read_bytes())
-    assert loser_exc.pid == winner_record["pid"] == os.getpid()
+        outcomes = [r[0] for r in results]
+        assert outcomes.count("ok") == 1, (
+            "round %d: exactly one racer must win the create: got %r"
+            % (round_number, outcomes))
+        assert outcomes.count("held") == 1, (
+            "round %d: the loser must see the winner as a live holder, never a "
+            "corrupt record: got %r" % (round_number, outcomes))
+
+        winner = next(r[1] for r in results if r[0] == "ok")
+        loser_exc = next(r[1] for r in results if r[0] == "held")
+        # The loser's LockHeld must describe the winner's own record, not a
+        # third, phantom holder.
+        winner_record = json.loads(lock.lock_path(mesh_dir).read_bytes())
+        assert loser_exc.pid == winner_record["pid"] == os.getpid()
+        assert loser_exc.port == winner_record["port"]
+        # No temporary file is left behind by the round the loser lost.
+        assert sorted(p.name for p in mesh_dir.iterdir()) == ["lock"]
+        winner.release()
     assert loser_exc.port == winner_record["port"]
     assert loser_exc.token == winner_record["token"]
     winner.release()
@@ -269,3 +291,49 @@ def test_viewer_only_mode_never_locks_and_a_second_one_also_starts(tmp_path, mon
     assert rc2 == 0
     assert len(calls) == 2
     assert not lock.lock_path(tmp_path / ".mesh").exists()
+
+
+def test_the_record_is_complete_before_the_lock_name_exists(tmp_path, monkeypatch):
+    """The invariant the racing test can only sample: at the instant the lock
+    name is published, the record behind it is already whole.
+
+    Asserted at the publishing call itself rather than by racing threads,
+    because the window it guards is microseconds wide and a test that has to
+    land inside it catches a regression only some of the time. Creating the
+    final name first and writing into it afterwards cannot satisfy this, since
+    there is no call at which the name does not yet exist and the content
+    already does.
+    """
+    mesh_dir = tmp_path / ".mesh"
+    observed = {}
+    real_link = os.link
+
+    def spy(src, dst):
+        observed["published_bytes"] = os.stat(src).st_size and open(src, "rb").read()
+        observed["name_existed_first"] = os.path.exists(dst)
+        return real_link(src, dst)
+
+    monkeypatch.setattr(lock.os, "link", spy)
+
+    held = lock.acquire(mesh_dir, 4242, "tok-atomic")
+    try:
+        assert observed, "the lock name was published without os.link"
+        assert observed["name_existed_first"] is False
+        assert json.loads(observed["published_bytes"]) == {
+            "pid": os.getpid(), "port": 4242, "token": "tok-atomic"}
+    finally:
+        held.release()
+
+
+def test_claiming_never_interprets_an_existing_record(tmp_path):
+    """Whoever loses the claim reports what the file says, and the claim itself
+    reports only whether it won. Keeping those apart is why a loser can no
+    longer describe a record it read too early."""
+    mesh_dir = tmp_path / ".mesh"
+    mesh_dir.mkdir()
+    path = lock.lock_path(mesh_dir)
+    path.write_bytes(b"")   # the exact state the old create-then-write left behind
+
+    assert lock._claim(path, b'{"pid": 1, "port": 2, "token": "t"}') is None
+    assert path.read_bytes() == b"", "a lost claim must not touch the holder's file"
+    assert sorted(p.name for p in mesh_dir.iterdir()) == ["lock"]
