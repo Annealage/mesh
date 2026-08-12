@@ -14,7 +14,9 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 ## Install
 
-Annealage Mesh is a Python package with one pure-Python runtime dependency, [microdot](https://github.com/miguelgrinberg/microdot) (three.js 0.160.0 is vendored inside the package and served from /static, so the viewer needs no network access), and needs Python 3.10+.
+Annealage Mesh is a Python package needing Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code.
+
+Be ready for the size. The SDK bundles the Claude Code CLI itself, so the first install pulls down roughly 90 MB rather than a few tens of kilobytes. That is the cost of the chat pane being part of the tool rather than something you wire up separately. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
 
 Run it straight from GitHub, nothing to install, via uv:
 

@@ -21,7 +21,7 @@ or, if the package is already installed (or once it's on PyPI, `uvx annealage-me
 annealage-mesh <dir> --no-open &
 ```
 
-Useful flags: `--port PORT` (default 8765), `--host HOST` (default `0.0.0.0`), `--no-open` (skip auto-opening a browser — usually correct when launched from an agent session). Then tell the human the URL printed on startup (e.g. `http://localhost:8765/`) and what to do: switch to "Add pin" mode, click points on the model, type comments, hit Submit.
+Useful flags: `--port PORT` (default 8765), `--host HOST` (default `127.0.0.1`, this machine only; pass `tailscale` to bind the host's tailnet address, or an explicit address including `0.0.0.0`), `--no-open` (skip auto-opening a browser — usually correct when launched from an agent session). Then tell the human the URL printed on startup (e.g. `http://localhost:8765/`) and what to do: switch to "Add pin" mode, click points on the model, type comments, hit Submit.
 
 ## Reading human comments
 
@@ -82,4 +82,4 @@ Copy `skill/annealage-mesh/` into `~/.claude/skills/` (or a plugin's skills dire
 
 - The server auto-discovers `*.stl` in `<dir>` on each `/manifest` request, so you don't need to restart it after regenerating STLs — just tell the human to refresh.
 - Coordinates are whatever units/axes the STL was authored in; there is no conversion. If the model is Y-up, tell the human to use the viewer's "Z-up / Y-up" toggle.
-- One pure-Python runtime dependency (microdot), so `uvx annealage-mesh` starts near-instantly.
+- Two runtime dependencies: microdot, which is pure Python, and the Claude Agent SDK, which bundles the Claude Code CLI and so makes the first install roughly a 90 MB download. Later starts are fast; the first one is not.

@@ -29,7 +29,24 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Software Development :: Testing",
 ]
-dependencies = ["microdot>=2.6,<3"]
+# Agent mode is the default mode, so the SDK is a base dependency rather than
+# an extra. The cost is real and worth stating: the SDK's own wheel bundles a
+# ~300 MB `claude` binary, so installing this package downloads roughly 90 MB
+# of platform-specific wheel instead of a few tens of kilobytes. This package's
+# own wheel stays pure Python and platform-independent; only the dependency
+# resolves per platform, and upstream publishes wheels for macOS arm64 and
+# x86_64, manylinux aarch64 and x86_64, and win_amd64.
+#
+# The floor is 0.2.136 rather than 0.2.135 because that is the version the
+# permission-broker contract was verified against: a `can_use_tool` callback
+# must return PermissionResultAllow or PermissionResultDeny, and the plain dict
+# form that older examples show is rejected outright (docs/agent-chat-plan.md
+# section 2a, fact 14). The `<0.3` cap is load-bearing, since this design
+# depends on `Transport`, which the SDK documents as internal.
+dependencies = [
+    "microdot>=2.6,<3",
+    "claude-agent-sdk>=0.2.136,<0.3",
+]
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio>=0.23"]

@@ -348,26 +348,35 @@ Network isolation is enforced, not left to discipline: an autouse fixture points
 
 The pre-existing failure is fixed first: `tests/test_server.py::test_manifest_lists_stl` asserts exact dict equality while `/manifest` returns extra `dir` and `path` keys, and CI has been red since 2026-07-24. **The test is wrong, not the response.** `/manifest` is a documented contract consumed by the shipped viewer, `dir` and `path` are deliberate additions from commit `e43c065`, and removing them now would break the viewer's title rendering. The fix is a subset assertion on the keys the contract promises.
 
-CI: matrix `3.10`, `3.12`, `3.13`, with two jobs: one with base dependencies only, which proves the viewer-only path still installs light, and one with the `agent` extra on 3.12 only, so the 93 MB download happens once. The 3.9 leg is deleted along with the classifier.
+CI: matrix `3.10`, `3.12`, `3.13`, one job per version, each installing the base dependencies, which now include the SDK. The two-job split existed to keep the 90 MB download off the light leg; with the SDK a base dependency there is no light leg to protect, and a matrix leg that skipped it would be testing an install nobody performs. The 3.9 leg is deleted along with the classifier.
 
 ### 3.12 Packaging
 
 ```toml
 requires-python = ">=3.10"
-dependencies = ["microdot>=2.6,<3", "platformdirs>=4,<5"]
+dependencies = [
+    "microdot>=2.6,<3",
+    "claude-agent-sdk>=0.2.136,<0.3",
+    "platformdirs>=4,<5",
+]
 
 [project.optional-dependencies]
-agent = ["claude-agent-sdk>=0.2.135,<0.3"]
 dev = ["pytest>=7", "pytest-asyncio>=0.23"]
 ```
 
-`platformdirs` 4.11.2 is MIT, pure Python with zero dependencies of its own, and its `requires-python >=3.10` matches our floor exactly. It is a base dependency rather than agent-only because viewer-only mode reads the same user settings for bind host and port. `appdirs` is the better-known name but its last release was 2020; `platformdirs` is its maintained successor with the same API shape.
+**The SDK is a base dependency, not an extra**, decided by the maintainer on 2026-08-12: agent mode is the default mode and viewer-only is the exception, so the thing that makes the default mode work cannot be optional. The cost is the one the extra was invented to avoid and is accepted deliberately: the SDK's wheel bundles a roughly 300 MB `claude` binary, so installing this package downloads about 90 MB instead of tens of kilobytes. What that does **not** cost is portability of our own artifact: this package's wheel stays `py3-none-any`, and only the dependency resolves per platform, with upstream publishing wheels for macOS arm64 and x86_64, manylinux aarch64 and x86_64, and win_amd64. On a platform with no wheel, pip falls back to the SDK's 0.3 MB sdist, which carries no bundled binary, so `claude` then has to be on `PATH`; that is a real degradation and `doctor` should report which of the two is in use.
 
-Agent mode is an optional extra, and this is the most consequential packaging decision. Per fact 10, the SDK wheel is platform-tagged and embeds a 304 MB `claude` binary, so a hard dependency turns `uvx annealage-mesh` from about a 40 KB download into about 93 MB, platform-restricted, for someone who only wants to look at an STL. The `<0.3` cap is load-bearing because the design depends on `Transport`, documented as internal and subject to change.
+The floor moves from 0.2.135 to 0.2.136 because that is the version the permission-broker contract was verified against; see fact 14.
+
+`platformdirs` 4.11.2 is MIT, pure Python with zero dependencies of its own, and its `requires-python >=3.10` matches our floor exactly. `appdirs` is the better-known name but its last release was 2020; `platformdirs` is its maintained successor with the same API shape.
+
+The `<0.3` cap on the SDK is load-bearing because the design depends on `Transport`, documented as internal and subject to change.
+
+Rejected, and worth recording because it was the plan's own position first: making agent mode an extra so that someone who only wants to look at an STL pays 40 KB rather than 90 MB. That reasoning is sound about the download and wrong about the product. It optimises for the viewer-only user, who is the exception, at the cost of making the default mode fail on a fresh install until a second, differently-spelled install command is found. A tool whose headline feature is behind an extra advertises that the feature is an afterthought.
 
 `anyio`, `mcp` and `sniffio` are not declared; we never import them and they arrive under the extra as the SDK's own dependencies.
 
-`README.md` and `SKILL.md` both currently advertise zero runtime dependencies, Python 3.9+ and near-instant `uvx` start. Those claims get rewritten, not quietly dropped. The honest replacement: the viewer needs one pure-Python dependency and Python 3.10+, and the chat pane additionally needs `annealage-mesh[agent]`, which is a large download because it bundles the Claude Code CLI.
+`README.md` and `SKILL.md` both advertised zero runtime dependencies, Python 3.9+ and near-instant `uvx` start. Those claims are rewritten rather than quietly dropped: two runtime dependencies, Python 3.10+, and a first install of roughly 90 MB because the SDK bundles the Claude Code CLI. The size is stated plainly where a reader decides whether to install, not buried in a changelog.
 
 The single-file `force-include` of `viewer.html` in `pyproject.toml:50-51` is replaced by normal package-data inclusion of `src/annealage_mesh/static/**`. `REUSE.toml` gains an MIT entry for `static/js/vendor/*`, leaving the PolyForm-plus-MIT-skill arrangement intact.
 
@@ -458,7 +467,7 @@ Do not relitigate these without a stated reason.
 - **Multi-viewer is convenience, not collaboration**: several devices belonging to one person, not several people. No per-viewer identity appears in events or in pin authorship, because identity without authentication would be theatre and per-user auth is deferred. The forward seam is one nullable field: an event may carry the originating viewer's tab id, so a later collaborative mode has somewhere to put identity without a schema break.
 - Flat tool list, read-class pre-allowed via `allowed_tools`, write-class always prompting.
 - `capture_view` returns an image content block, not a path.
-- Agent mode is an optional extra; `requires-python >=3.10`; SDK pinned `>=0.2.135,<0.3`.
+- **Agent mode is the default mode and viewer-only is the exception**, so the SDK is a base dependency rather than an extra, accepting a roughly 90 MB install. `requires-python >=3.10`; SDK pinned `>=0.2.136,<0.3`.
 - Two fake layers: `AgentSession` fake for most tests, fake `Transport` as the SDK-upgrade canary.
 - `/manifest` keeps `dir` and `path`; the test is fixed, not the response.
 - `git init` plus one scaffold commit, and never an automatic commit after that.
