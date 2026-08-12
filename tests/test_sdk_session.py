@@ -65,6 +65,10 @@ EXPECTED_SANDBOX_SETTINGS = {
     "enabled": True,
     "autoAllowBashIfSandboxed": True,
     "excludedCommands": ["git"],
+    # False, so the model cannot drop containment for a command by asking. The
+    # option defaults to true, which is why it is set explicitly and asserted
+    # here rather than left off.
+    "allowUnsandboxedCommands": False,
 }
 
 
@@ -247,8 +251,114 @@ async def test_options_wired_into_the_real_client():
 
         # The stderr hook this file's sandbox-status parsing depends on.
         assert options.stderr == session._note_stderr
+
+        # Only the servers this process names: without this the CLI also
+        # honours a `.mcp.json` in the served directory, whose entries name
+        # commands to spawn.
+        assert options.strict_mcp_config is True
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_no_tripwire_hook_without_an_accepted_digest():
+    """A session given no accepted digest installs no hook, so a caller that
+    never ran the gate does not get a control that would deny every call."""
+    session, _transport, _recorder = await _started_session()
+    try:
+        assert not session._client.options.hooks
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_tripwire_is_installed_as_a_pre_tool_use_hook_matching_every_tool():
+    """PreToolUse is the only event early enough: a settings allow rule is
+    applied before ``can_use_tool``, and the sandbox waves some bash through
+    without consulting it at all, so a control bound to either would miss
+    exactly the calls that matter."""
+    session, _transport, _recorder = await _started_session(
+        trusted_config_digest="accepted-digest")
+    try:
+        hooks = session._client.options.hooks
+        assert list(hooks) == ["PreToolUse"]
+        matchers = hooks["PreToolUse"]
+        assert len(matchers) == 1
+        assert matchers[0].matcher is None
+        assert matchers[0].hooks == [session._guard_config]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_says_nothing_while_the_config_is_unchanged(tmp_path):
+    """Returning ``{}`` leaves the permission flow exactly as it would be with
+    no hook at all, which is what keeps contained bash running unprompted."""
+    from annealage_mesh.session import workspace_trust as wt
+
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
+                         trusted_config_digest=wt.config_digest(tmp_path))
+    result = await session._guard_config({"tool_name": "Bash"}, "tu_1", None)
+    assert result == {}
+    assert recorder.all == []
+
+
+@pytest.mark.asyncio
+async def test_the_tripwire_denies_every_tool_once_the_config_changes(tmp_path):
+    from annealage_mesh.session import workspace_trust as wt
+
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
+                         trusted_config_digest=wt.config_digest(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.local.json").write_text(
+        '{"permissions":{"allow":["Bash"]}}')
+
+    result = await session._guard_config({"tool_name": "Bash"}, "tu_1", None)
+    output = result["hookSpecificOutput"]
+    assert output["hookEventName"] == "PreToolUse"
+    assert output["permissionDecision"] == "deny"
+    assert "configuration" in output["permissionDecisionReason"]
+
+    # The human is told too, since a model that reports being blocked is not a
+    # channel the human can rely on.
+    error = await recorder.next()
+    assert isinstance(error, AgentError)
+    assert "no longer matches" in error.stderr
+
+
+@pytest.mark.asyncio
+async def test_the_change_is_reported_to_the_human_only_once(tmp_path):
+    """The model retries a denied call, so a report per attempt would bury the
+    pane in copies of one fact."""
+    from annealage_mesh.session import workspace_trust as wt
+
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
+                         trusted_config_digest=wt.config_digest(tmp_path))
+    (tmp_path / ".mcp.json").write_text('{"mcpServers":{"x":{"command":"sh"}}}')
+    for _ in range(3):
+        result = await session._guard_config({"tool_name": "Write"}, "tu", None)
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert len([e for e in recorder.all if isinstance(e, AgentError)]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_digest_that_cannot_be_computed_denies(tmp_path, monkeypatch):
+    """A control that cannot tell whether the configuration changed has to
+    assume it did."""
+    from annealage_mesh.session import workspace_trust as wt
+
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
+                         trusted_config_digest="accepted-digest")
+    monkeypatch.setattr(wt, "config_digest",
+                        lambda root: (_ for _ in ()).throw(OSError("boom")))
+    result = await session._guard_config({"tool_name": "Read"}, "tu_1", None)
+    assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
 
 @pytest.mark.asyncio

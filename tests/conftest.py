@@ -27,6 +27,19 @@ def make_test_client(app):
     return TestClient(app, host=TEST_AUTHORITY)
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_config(tmp_path_factory, monkeypatch):
+    """Point the user configuration directory at a scratch path for every test.
+
+    The workspace-trust store records which directories' Claude configuration a
+    human has accepted, and it lives in the user's own configuration directory
+    by design. A test that reached the real one would record acceptances against
+    the developer's account, and one that read it could pass or fail according
+    to what that developer had accepted earlier.
+    """
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("config")))
+
+
 @pytest.fixture
 def served_dir(tmp_path):
     (tmp_path / "widget.stl").write_bytes(b"solid widget\nendsolid widget\n")

@@ -36,6 +36,15 @@ announcing that only on the child's stderr, so this file captures that stream
 and parses it. The banner and ``doctor`` read ``sandbox_status()`` and state
 which posture is actually in effect. A human who asked for a contained shell
 and silently got a prompting one has been misled.
+
+**The served directory's Claude configuration is watched for the whole run.**
+A settings file there can allow tools outright, and an allow rule is applied
+before ``can_use_tool`` is consulted, so such a file decides permissions
+instead of the human. The CLI re-reads those files while the session runs,
+which means accepting them once at startup does not keep them accepted. The
+``PreToolUse`` hook installed here re-checks their digest on every tool call
+and denies the call when it has changed. See ``session/workspace_trust.py``
+for what is watched and why that is the boundary.
 """
 
 import asyncio
@@ -50,6 +59,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    HookMatcher,
     ResultMessage,
     StreamEvent,
     SystemMessage,
@@ -58,6 +68,8 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+
+from . import workspace_trust
 
 from .base import (
     AGENT_CONNECTING,
@@ -96,10 +108,22 @@ SETTING_SOURCES = ("user", "project", "local")
 # Bash runs contained and unprompted; edit, write and network still reach the
 # broker. ``git`` is excluded because it has to see the real filesystem to work
 # on the project's own repository.
+#
+# ``allowUnsandboxedCommands`` is false because it defaults to true, and while
+# true a command may opt out of containment by setting
+# ``dangerouslyDisableSandbox``, which the model does when a sandbox denial
+# blocks something it judges reasonable. That turns the posture from "bash is
+# contained" into "bash is contained until it would rather not be": the opt-out
+# reaches the broker, so a human is asked, but they are asked to approve a
+# command whose containment has already been dropped, and the card looks like
+# any other. False leaves exactly two ways to run outside the sandbox, both
+# chosen here rather than by the model: the ``excludedCommands`` above, and
+# viewer-only mode, which runs no agent at all.
 SANDBOX_SETTINGS = {
     "enabled": True,
     "autoAllowBashIfSandboxed": True,
     "excludedCommands": ["git"],
+    "allowUnsandboxedCommands": False,
 }
 
 # How the CLI announces that a requested sandbox could not engage. Matched
@@ -169,7 +193,7 @@ class SdkSession:
     def __init__(self, on_event, *, cwd, session_id, broker=None, model=None,
                  permission_mode=None, resume=None, sandbox=True,
                  mcp_servers=None, extra_allowed_tools=(), transport=None,
-                 on_sdk_session_id=None):
+                 on_sdk_session_id=None, trusted_config_digest=None):
         self._on_event = on_event
         self.cwd = str(cwd)
         self.session_id = session_id
@@ -183,6 +207,11 @@ class SdkSession:
         self._extra_allowed_tools = tuple(extra_allowed_tools)
         self._transport = transport
         self._on_sdk_session_id = on_sdk_session_id
+        # The digest the startup gate accepted for this directory's Claude
+        # configuration. None means no gate ran, which is the case for tests
+        # that drive this class directly, and installs no tripwire.
+        self._trusted_config_digest = trusted_config_digest
+        self._config_change_reported = False
 
         self._status = AGENT_CONNECTING
         self._client = None
@@ -333,9 +362,18 @@ class SdkSession:
             include_partial_messages=True,
             stderr=self._note_stderr,
             mcp_servers=self._mcp_servers,
+            # Only the servers named above. Without this the CLI also honours a
+            # `.mcp.json` in the served directory, and an entry there names a
+            # command to spawn, so an unreviewed file in a downloaded folder
+            # would choose processes to run.
+            strict_mcp_config=True,
         )
         if self._sandbox_requested:
             kwargs["sandbox"] = dict(SANDBOX_SETTINGS)
+        if self._trusted_config_digest is not None:
+            kwargs["hooks"] = {
+                "PreToolUse": [HookMatcher(matcher=None, hooks=[self._guard_config])],
+            }
         if self._broker is not None:
             kwargs["can_use_tool"] = self._broker.ask
         if self._model:
@@ -348,6 +386,65 @@ class SdkSession:
             # project root, and an id stays inspectable on disk.
             kwargs["resume"] = self._resume
         return ClaudeAgentOptions(**kwargs)
+
+    # -- the configuration tripwire ----------------------------------------
+
+    async def _guard_config(self, hook_input, tool_use_id, context) -> dict:
+        """Refuse every tool call once this directory's Claude configuration changes.
+
+        Installed as a ``PreToolUse`` hook, which is the only place this check
+        works. A settings file's allow rule is applied *before*
+        ``can_use_tool``, so the broker never sees a call such a rule covers,
+        and the CLI re-reads those files during the run, so a file written
+        mid-session takes effect at once. A hook runs earlier than both: it is
+        consulted for every call, including the ones an allow rule would have
+        waved through and the ones the sandbox auto-approves without asking the
+        broker.
+
+        Returning ``{}`` expresses no opinion and leaves the permission flow
+        exactly as it would be without this hook, which is what keeps the
+        sandboxed-bash posture intact: a contained command still runs
+        unprompted.
+
+        The digest costs a read of a handful of small files per tool call.
+        Watching the files rather than the ways they could be written is what
+        makes this indifferent to whether a change arrived through ``Write``, a
+        shell redirect, or a ``git checkout``.
+
+        A failure to compute the digest denies, because a control that cannot
+        tell whether configuration changed has to assume it did.
+        """
+        try:
+            current = workspace_trust.config_digest(self.cwd)
+            unchanged = current == self._trusted_config_digest
+        except Exception as exc:
+            sys.stderr.write("warning: could not check the served directory's "
+                             "Claude configuration: %r\n" % (exc,))
+            unchanged = False
+        if unchanged:
+            return {}
+        if not self._config_change_reported:
+            self._config_change_reported = True
+            self._emit(AgentError(
+                stderr="the Claude configuration under %s no longer matches what was "
+                       "accepted when this session started" % self.cwd,
+                remediation="tool calls are refused until this is resolved, because a "
+                            "settings file there can grant tools without asking; "
+                            "inspect .claude/ and .mcp.json, then restart mesh to "
+                            "review and accept the current contents",
+            ))
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "Mesh refuses this call: the Claude configuration in the served "
+                    "directory changed after the human accepted it, and configuration "
+                    "there can grant tool permissions without asking. Do not attempt to "
+                    "modify .claude/ or .mcp.json. Tell the human what you were trying "
+                    "to do and that mesh must be restarted to review the change."),
+            },
+        }
 
     # -- stderr and the sandbox --------------------------------------------
 

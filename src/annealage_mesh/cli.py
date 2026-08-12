@@ -64,6 +64,11 @@ def build_parser():
     ap.add_argument("--no-agent", action="store_true",
                      help="viewer only: no agent session, no lock, several may run "
                           "at once against the same directory")
+    ap.add_argument("--trust-project-config", action="store_true",
+                     help="accept the Claude configuration in this directory "
+                          "(.claude/, .mcp.json), which can declare shell commands "
+                          "the agent's CLI runs. Recorded per directory against the "
+                          "exact content present, so a later change asks again")
     session_group = ap.add_mutually_exclusive_group()
     session_group.add_argument(
         "-c", "--continue", dest="continue_", action="store_true",
@@ -221,6 +226,7 @@ def main(argv=None):
     mesh_sid = None
     resumed = False
     held_lock = None
+    trusted_digest = None
 
     if mode == "agent":
         # Checked before a session is resolved, a lock taken or a port bound, so
@@ -241,6 +247,21 @@ def main(argv=None):
                 % (" and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
                    ", ".join(missing), sdk_requirements.SANDBOX_PACKAGES))
             return 2
+
+        # Before the session opens, because what this gate prevents is a
+        # session-start hook running, and by the time a session exists that has
+        # already happened. Viewer-only mode starts no agent CLI, so nothing in
+        # the directory is ever read as configuration and the gate is moot.
+        from .session import workspace_trust
+        trusted_digest = workspace_trust.config_digest(serve_dir)
+        if trusted_digest != workspace_trust.EMPTY_DIGEST:
+            store = workspace_trust.TrustStore()
+            if args.trust_project_config:
+                store.accept(serve_dir, trusted_digest)
+            elif not store.accepted(serve_dir, trusted_digest):
+                sys.stderr.write(workspace_trust.refusal_message(
+                    serve_dir, workspace_trust.present(serve_dir)))
+                return 2
 
         if args.continue_:
             mesh_sid = sessions.resolve_continue(serve_dir)
@@ -332,6 +353,9 @@ def main(argv=None):
             resume=_resumable_sdk_id(serve_dir, mesh_sid) if resumed else None,
             on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
                 serve_dir, mesh_sid, sdk_id),
+            # What the gate above accepted, so the session can refuse tool
+            # calls if it stops being true while the run is in progress.
+            trusted_config_digest=trusted_digest,
         )
         built_session.append(session)
         return session
