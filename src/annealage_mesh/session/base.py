@@ -23,7 +23,7 @@ test with no event log and no registry in play at all, and what will let
 from __future__ import annotations
 
 import dataclasses
-from typing import ClassVar, Optional, Protocol, runtime_checkable
+from typing import ClassVar, Optional, Protocol, Tuple, runtime_checkable
 
 # session.agent values for the hello frame (plan section 3.3): the SDK
 # client is not yet constructed, is constructed and answering, or failed
@@ -33,6 +33,34 @@ from typing import ClassVar, Optional, Protocol, runtime_checkable
 AGENT_CONNECTING = "connecting"
 AGENT_READY = "ready"
 AGENT_UNAVAILABLE = "unavailable"
+
+
+@dataclasses.dataclass(frozen=True)
+class SandboxStatus:
+    """Whether bash is actually contained, as opposed to requested.
+
+    ``requested`` is what this process asked for, known before the child says
+    anything.
+
+    ``active`` is a prediction until the child contradicts it, and the wording
+    of the banner reflects that rather than overclaiming. It cannot be anything
+    stronger: the CLI announces a sandbox it could **not** engage, and says
+    nothing at all about one it could, so the only positive evidence available
+    is the absence of a denial, which is not evidence until a bash command has
+    actually run. What this process can check cheaply and correctly is the
+    negative case, and it does.
+
+    ``missing`` starts from a PATH check for the dependencies the CLI's own
+    message names, and is replaced by the child's list the moment the child
+    reports one. The child's word wins because it is the only party that knows
+    which sandbox implementation it tried; the PATH check exists so that the
+    startup banner is right on a machine that is plainly missing a dependency,
+    instead of staying silent until the first command runs.
+    """
+
+    requested: bool
+    active: bool
+    missing: Tuple[str, ...] = ()
 
 
 class UnknownRequest(Exception):
@@ -246,6 +274,13 @@ class AgentError(AgentEvent):
 class AgentSession(Protocol):
     """What ``http/ws.py`` needs from whatever is driving a conversation.
 
+    The four frame-handling coroutines are what ``ws.py`` dispatches to. The
+    four members after them are the lifecycle ``app.run`` and ``cli.py`` drive,
+    and they are declared here rather than left to duck typing because both
+    callers reach for them unconditionally: a session missing ``start`` fails
+    with ``AttributeError`` before a single request is served, which is a
+    contract worth stating once here instead of guarding at each call site.
+
     ``session_id``, ``sdk_session_id`` and ``cwd`` are read once per
     connection to build the ``hello`` frame's ``session`` object.
     ``sdk_session_id`` is ``None`` until the real SDK client has one to
@@ -287,4 +322,36 @@ class AgentSession(Protocol):
 
     async def interrupt(self) -> None:
         """Handle an inbound ``interrupt`` frame."""
+        ...
+
+    async def start(self) -> None:
+        """Bring the session up. Called once by ``app.run`` before serving.
+
+        Must not raise: the HTTP server starts first and independently and has
+        to keep serving the viewer whatever the agent does, so a failure here
+        belongs in an ``AgentError`` event with ``agent_status()`` left at
+        unavailable.
+        """
+        ...
+
+    async def close(self) -> None:
+        """Shut the session down. Called once from ``app.run``'s ``finally``,
+        while there is still a socket to carry any last event."""
+        ...
+
+    def on_viewer_presence(self, count: int) -> None:
+        """Note that ``count`` browser connections now exist.
+
+        Called on the same transitions as ``ViewerRegistry.add``/``remove``.
+        Reaching zero is what lets a session deny a request nobody is left to
+        answer, rather than holding a tool call open for the whole timeout.
+        """
+        ...
+
+    def sandbox_status(self):
+        """What containment is actually in effect, for the startup banner.
+
+        Returns an object with ``requested``, ``active`` and ``missing``. A
+        session with no shell to contain reports ``requested`` false.
+        """
         ...

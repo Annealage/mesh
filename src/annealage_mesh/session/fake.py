@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Callable, List, Optional, Set, Tuple
 
-from .base import AGENT_READY, AgentEvent, UnknownRequest
+from .base import AGENT_READY, AgentEvent, SandboxStatus, UnknownRequest
 
 
 class FakeSession:
@@ -52,6 +52,9 @@ class FakeSession:
         self.permission_decisions: List[Tuple[str, str, str]] = []
         self.decided_requests: Set[str] = set()
         self.interrupted = 0
+        self.started = 0
+        self.closed = 0
+        self.viewer_counts: List[int] = []
 
     def agent_status(self) -> str:
         return self._status
@@ -89,3 +92,23 @@ class FakeSession:
 
     async def interrupt(self) -> None:
         self.interrupted += 1
+
+    # -- lifecycle -----------------------------------------------------------
+    # Recorded rather than merely accepted, so a test can assert that whatever
+    # wired this session up actually drove it, and present at all because
+    # ``app.run`` calls start and close on any session it is given.
+
+    async def start(self) -> None:
+        self.started += 1
+
+    async def close(self) -> None:
+        self.closed += 1
+
+    def on_viewer_presence(self, count: int) -> None:
+        self.viewer_counts.append(count)
+
+    def sandbox_status(self) -> SandboxStatus:
+        """No shell, so nothing to contain and nothing requested. Reported as a
+        real answer rather than omitted, so the banner has one shape to render
+        for every session instead of a present case and an absent one."""
+        return SandboxStatus(requested=False, active=False, missing=())

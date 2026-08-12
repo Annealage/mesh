@@ -24,12 +24,16 @@ than inventing a second one:
   ``ViewerRegistry.add``/``remove``) calls ``viewer_connected`` and
   ``viewer_disconnected`` on the same transitions, so ``ask`` knows whether
   anyone exists to answer before it ever creates a request, and a request
-  already outstanding is denied the moment its last possible answerer
+  already outstanding is denied shortly after its last possible answerer
   leaves rather than at the end of a timeout that teaches nothing new.
-- Whatever builds a fresh or reconnecting viewer's ``hello`` reply calls
-  ``pending_requests`` and sends each one to that connection, since a
-  request outstanding long enough to fall off the ``EventLog``'s 500-event
-  ring is exactly what a plain seq replay cannot recover.
+  Shortly, not immediately: a page reload is a disconnect followed by a
+  connect, so see ``DEFAULT_NO_VIEWER_GRACE``.
+- ``pending_requests`` reports what is still outstanding. Nothing in the
+  reconnection path needs it: a viewer that reconnects replays the
+  ``permission_request`` and ``permission_resolved`` pair from the
+  ``EventLog``, and a request with no resolution in that replay is exactly
+  the card it should show. It is an inspection method, and what the tests
+  assert "nothing is left pending" against.
 - The shutdown sequence (plan section 3.4) calls ``shutdown`` once.
 
 Every request this broker opens is announced twice: a ``PermissionRequest``
@@ -72,6 +76,21 @@ PermissionResult = Union[PermissionResultAllow, PermissionResultDeny]
 # for the first and short enough for the second. Always injectable, per
 # the M5 brief: tests pass a small value, never sleep past a real one.
 DEFAULT_TIMEOUT = 300.0
+
+# How long the last viewer leaving is treated as possibly temporary before the
+# requests nobody is left to answer are denied.
+#
+# Reloading the page is a disconnect followed by a connect, and with one browser
+# open, which is the ordinary case, denying the instant the count reached zero
+# meant a reload cancelled whatever was being asked. The human came back to a
+# pane with no card and the model to a refusal it had done nothing to earn.
+#
+# A few seconds separates a reload from someone closing the laptop: long enough
+# that a page coming back finds its request still waiting, short enough that a
+# genuinely abandoned session is not held open on the chance somebody returns.
+# The five-minute timeout is what covers the case of a browser that never
+# returns at all.
+DEFAULT_NO_VIEWER_GRACE = 8.0
 
 # Never persisted and never covered by an allow-always grant (plan section
 # 5): a broad standing grant for the one tool with unrestricted shell
@@ -120,12 +139,18 @@ class PermissionBroker:
         permissions_path: Optional[Union[str, Path]] = None,
         timeout: float = DEFAULT_TIMEOUT,
         viewer_url: Optional[str] = None,
+        no_viewer_grace: float = DEFAULT_NO_VIEWER_GRACE,
     ):
         self._on_event = on_event
         self._permissions_path = Path(permissions_path) if permissions_path is not None else None
         self._timeout = timeout
         self._viewer_url = viewer_url
+        self._no_viewer_grace = no_viewer_grace
         self._viewer_count = 0
+        # The pending call_later that will deny everything if no viewer comes
+        # back, or None when at least one viewer is present or the grace period
+        # has already elapsed.
+        self._no_viewer_timer = None
         self._shutdown = False
         self._next_id = 1
         # One future per outstanding request, keyed by the id ``ask``
@@ -318,8 +343,13 @@ class PermissionBroker:
         """Record one browser connection becoming available to answer a
         request. Call once per successful WebSocket upgrade, on the same
         transition that calls ``ViewerRegistry.add``, so ``ask`` stops
-        denying immediately once at least one viewer exists to ask."""
+        denying immediately once at least one viewer exists to ask.
+
+        Cancels any pending no-viewer denial, which is what makes a reload
+        keep an outstanding request rather than cancel it.
+        """
         self._viewer_count += 1
+        self._cancel_no_viewer_timer()
 
     def viewer_disconnected(self) -> None:
         """Record one browser connection going away, on the same
@@ -329,17 +359,51 @@ class PermissionBroker:
         registered.
 
         When this drops the count to zero, every request still awaiting a
-        decision is denied at once: waiting out the rest of ``ask``'s
-        timeout to learn that nobody is left to answer teaches the model
-        nothing a prompt denial would not, the same reasoning
-        ``viewers.py``'s own ``ViewerGone`` applies to a stalled tool
-        call. This is what keeps a request from outliving every viewer
-        that could have answered it, rather than merely from outliving
-        one particular viewer.
+        decision is denied after ``no_viewer_grace`` seconds: waiting out the
+        rest of ``ask``'s five-minute timeout to learn that nobody is left to
+        answer teaches the model nothing a prompt denial would not, the same
+        reasoning ``viewers.py``'s own ``ViewerGone`` applies to a stalled tool
+        call. This is what keeps a request from outliving every viewer that
+        could have answered it, rather than merely from outliving one
+        particular viewer.
+
+        The grace period is what separates "the human reloaded the page" from
+        "the human left". Denying on the transition itself made a reload cancel
+        whatever was being asked, since a reload is a disconnect followed a
+        moment later by a connect.
+
+        Scheduled on the running loop when there is one. Without a loop there is
+        nothing to schedule and nothing to wait for, so the denial happens
+        immediately, which is the behaviour a synchronous caller can observe and
+        the safe direction besides.
         """
         self._viewer_count = max(0, self._viewer_count - 1)
+        if self._viewer_count > 0:
+            return
+        self._cancel_no_viewer_timer()
+        if self._no_viewer_grace <= 0:
+            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+            return
+        self._no_viewer_timer = loop.call_later(
+            self._no_viewer_grace, self._deny_for_no_viewer)
+
+    def _deny_for_no_viewer(self) -> None:
+        """The grace period elapsed with nobody back. Guarded on the count
+        because a viewer that reconnected cancels the timer, and a timer already
+        firing cannot be cancelled."""
+        self._no_viewer_timer = None
         if self._viewer_count == 0:
             self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+
+    def _cancel_no_viewer_timer(self) -> None:
+        if self._no_viewer_timer is not None:
+            self._no_viewer_timer.cancel()
+            self._no_viewer_timer = None
 
     def _no_viewer_message(self) -> str:
         if self._viewer_url:
@@ -374,8 +438,14 @@ class PermissionBroker:
         """Deny every outstanding request and make every future ``ask``
         call deny immediately, for process shutdown (plan section 3.4).
         Idempotent: a second call finds nothing left pending and a flag
-        already set."""
+        already set.
+
+        Cancels any pending no-viewer denial first: the process is going, so
+        there is nothing left to wait for a browser to come back to, and a timer
+        outliving the loop it was scheduled on is worth not leaving behind.
+        """
         self._shutdown = True
+        self._cancel_no_viewer_timer()
         self._deny_all_pending(_DENY_SHUTDOWN, OUTCOME_SHUTDOWN)
 
     def _deny_all_pending(self, message: str, outcome: str) -> None:

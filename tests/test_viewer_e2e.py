@@ -257,30 +257,6 @@ def token_mesh_server(tmp_path_factory):
         server.stop()
 
 
-class _LifecycleFakeSession(FakeSession):
-    """`FakeSession` plus the async `start`/`close` lifecycle `app.run`
-    calls unconditionally on whatever `build_session` returns.
-
-    `FakeSession` implements the `AgentSession` Protocol from
-    `session/base.py`, which declares no `start` or `close` member; `app.run`
-    (not `create_app`, which these tests could use instead but do not, since
-    `run` is what every other server in this file goes through and the point
-    is to exercise the same startup and shutdown path a real `SdkSession`
-    gets) calls `await app.mesh_session.start()` right after building the app
-    and `await app.mesh_session.close()` from its shutdown `finally`, on any
-    session that is not `None`. A bare `FakeSession` wired through
-    `build_session` therefore fails `start()` with `AttributeError` before a
-    single request is served; these two no-ops are the minimum this file
-    needs to drive a fake session through that path at all.
-    """
-
-    async def start(self):
-        pass
-
-    async def close(self):
-        pass
-
-
 def _emit_on_loop(server, session, event):
     """Push a scripted `AgentEvent` through `session.emit` on `server`'s own
     event loop thread, then block until it has actually run.
@@ -346,7 +322,7 @@ def chat_server(tmp_path_factory):
     sessions = []
 
     def build_session(on_event):
-        session = _LifecycleFakeSession(on_event)
+        session = FakeSession(on_event)
         sessions.append(session)
         return session
 
@@ -1099,6 +1075,47 @@ def test_a_decision_that_did_not_apply_says_so(browser, chat_server):
         assert "did not apply" in message
         assert "was allowed" in message
         page.wait_for_selector(card, state="detached")
+    finally:
+        page.close()
+
+
+def test_reloading_re_shows_a_prompt_that_is_still_waiting(browser, chat_server):
+    """A request outstanding across a reload has to come back, and an answered one
+    must not. Both fall out of replaying the request-and-resolution pair from the
+    event log: a request with no resolution behind it is exactly the card the
+    pane should be showing.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_20", tool="Write", input={"file_path": "/tmp/a"}))
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_21", tool="Bash", input={"command": "ls"}))
+        _emit_on_loop(server, session, session_base.PermissionResolved(
+            request_id="pr_21", outcome="allow"))
+        page.wait_for_selector("div.permcard[data-request-id='pr_20']")
+        page.wait_for_selector("div.permcard[data-request-id='pr_21']", state="detached")
+
+        # Re-opening the tokened URL rather than page.reload(): ws.js strips the
+        # token from the address bar deliberately, so that a token cannot survive
+        # in a bookmark or a screen share, and a bare reload therefore arrives
+        # with no token and is refused. Re-opening the URL is what the pane's own
+        # "Reopen URL" state tells the human to do, and it is the same fresh
+        # connection and replay path either way.
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.wait_for_selector("div.permcard[data-request-id='pr_20']")
+        assert page.locator("div.permcard[data-request-id='pr_21']").count() == 0, \
+            "an answered request must not come back as a live card on reload"
+        # Still answerable after the reload, which is the point of re-showing it.
+        page.click("div.permcard[data-request-id='pr_20'] .pactions button:nth-of-type(1)")
+        _wait_until(lambda: ("pr_20", "allow", "") in session.permission_decisions,
+                    message="the decision made after a reload never reached the session")
     finally:
         page.close()
 

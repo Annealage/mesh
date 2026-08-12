@@ -1,6 +1,10 @@
 # Annealage Mesh: in-viewer agent chat, architecture and build plan
 
-Status: plan, not yet implemented. Branch `agent-chat`.
+Status: M1 to M5 implemented on branch `agent-chat`, so the headline feature works: a three-pane viewer, a streaming chat pane driving a real agent session in the served directory, human-in-the-loop approval, and session resume. M6 (mesh tools and browser remote control), M7 (images and the sketch overlay) and M8 (project scaffolding, settings, git and the remaining docs) are not built.
+
+Two things in this document are records rather than instructions, and are worth reading before implementing anything further: section 2b, on why the served directory's own Claude configuration is not trusted, and section 6, which lists what was deliberately deferred.
+
+Where the implementation departed from the plan as written, the plan has been amended rather than left to disagree with the code. Section 2's fact 2 carries a correction of that kind: its guess that `setting_sources` contains a settings file's allow rules is wrong, and facts 21 to 27 give what was measured instead.
 
 This document is the contract for the re-architecture. It is written to be sufficient for an implementer who has this file and the repo and nothing else. Where a claim about `claude-agent-sdk` matters, it is marked VERIFIED and the verification is stated, because several of these facts are counter-intuitive and one of them contradicts the SDK's own docstrings.
 

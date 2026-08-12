@@ -80,6 +80,7 @@ from .base import (
     AgentError,
     AgentStatus,
     PermissionRequest,
+    SandboxStatus,
     SessionReset,
     TextDelta,
     ToolResult,
@@ -164,34 +165,6 @@ _STDERR_KEEP_LINES = 200
 # the eight names it would list are pinned by a test, so a tool reaching that
 # list unintentionally still fails there.
 warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
-
-
-@dataclasses.dataclass(frozen=True)
-class SandboxStatus:
-    """Whether bash is actually contained, as opposed to requested.
-
-    ``requested`` is what this process asked for, known before the child says
-    anything.
-
-    ``active`` is a prediction until the child contradicts it, and the wording
-    of the banner reflects that rather than overclaiming. It cannot be anything
-    stronger: the CLI announces a sandbox it could **not** engage, and says
-    nothing at all about one it could, so the only positive evidence available
-    is the absence of a denial, which is not evidence until a bash command has
-    actually run. What this process can check cheaply and correctly is the
-    negative case, and it does.
-
-    ``missing`` starts from a PATH check for the dependencies the CLI's own
-    message names, and is replaced by the child's list the moment the child
-    reports one. The child's word wins because it is the only party that knows
-    which sandbox implementation it tried; the PATH check exists so that the
-    startup banner is right on a machine that is plainly missing a dependency,
-    instead of staying silent until the first command runs.
-    """
-
-    requested: bool
-    active: bool
-    missing: Tuple[str, ...] = ()
 
 
 class SdkSession:

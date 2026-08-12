@@ -134,13 +134,14 @@ def describe_agent_posture(mode, session):
 
     ``mode`` is ``"viewer"`` (no agent, no lock, today's behaviour) or
     ``"agent"``. ``session`` is whatever this run constructed to drive the
-    agent, or ``None`` when nothing has been constructed. A real session is
-    expected to expose ``sandbox_status()``, returning an object with
-    ``active`` (bool), ``requested`` (bool) and ``missing`` (a tuple of
-    dependency names, e.g. ``("socat",)``, taken from the sandboxed CLI
-    child's own stderr rather than a guess about which binaries happen to
-    be on PATH). No shared base class is required of that return value;
-    any object exposing those three attributes satisfies this.
+    agent, or ``None`` when nothing has been constructed, which in agent mode
+    means the factory never ran and the posture is genuinely unknown rather
+    than merely unreported.
+
+    ``AgentSession.sandbox_status()`` supplies the answer: ``requested``,
+    ``active``, and ``missing``, a tuple of dependency names taken from the
+    sandboxed CLI child's own stderr rather than from a guess about which
+    binaries happen to be on PATH.
 
     A human who chose the sandboxed posture and silently got the prompting
     one has been misled, and the only way to avoid that is to say which
@@ -150,8 +151,7 @@ def describe_agent_posture(mode, session):
     if mode == "viewer":
         return ["  agent: not running (viewer-only, no lock)"]
 
-    get_status = getattr(session, "sandbox_status", None)
-    status = get_status() if get_status is not None else None
+    status = session.sandbox_status() if session is not None else None
 
     if status is None:
         return [

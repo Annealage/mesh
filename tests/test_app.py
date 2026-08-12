@@ -128,3 +128,48 @@ async def test_run_returns_promptly_when_cancelled_with_a_connection_still_open(
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("127.0.0.1", port))
+
+
+# ---------------------------------------------------------------------------
+# The event log reaches disk, so a session can be resumed and priced
+# ---------------------------------------------------------------------------
+
+
+async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_path):
+    """The 500-event ring covers a browser reconnecting; only the file covers
+    the process exiting. `-c` resumes from it and `-r` prices a session from it,
+    so a log with nowhere to go leaves both reading an empty history and
+    reporting every session as 0 turns and $0.00.
+    """
+    from annealage_mesh import sessions
+    from annealage_mesh.session.base import TurnEnd
+    from annealage_mesh.session.fake import FakeSession
+
+    sid = sessions.create_session(tmp_path)
+    built = []
+
+    def build_session(on_event):
+        session = FakeSession(on_event, session_id=sid)
+        built.append(session)
+        return session
+
+    app_module.create_app(tmp_path, token="tok", mesh_session_id=sid,
+                          build_session=build_session)
+    built[0].emit(TurnEnd(turn=1, stop_reason="end_turn", cost_usd=0.0125))
+    built[0].emit(TurnEnd(turn=2, stop_reason="end_turn", cost_usd=0.0075))
+
+    assert sessions.events_path(tmp_path, sid).is_file()
+
+    info = sessions.get_session_info(tmp_path, sid)
+    assert info.turn_count == 2
+    assert info.cost_usd == pytest.approx(0.02)
+
+
+async def test_viewer_only_mode_writes_no_event_log(tmp_path):
+    """There is no session and no conversation, so there is nothing to persist
+    and nothing to create a session directory for."""
+    from annealage_mesh import sessions
+
+    app_module.create_app(tmp_path, token="tok")
+
+    assert not sessions.sessions_dir(tmp_path).exists()

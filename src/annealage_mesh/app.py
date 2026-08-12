@@ -15,7 +15,7 @@ import sys
 
 from microdot import Microdot, Request
 
-from . import __version__, net, paths, protocol
+from . import __version__, net, paths, protocol, sessions
 from .http.routes_viewer import register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import CalloutsChanged
@@ -126,7 +126,14 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
         for listen in presence_listener:
             listen(count)
 
-    event_log = EventLog()
+    # Given a path in agent mode, so the conversation survives the process. The
+    # 500-event ring alone covers a browser reconnecting; it is this file that
+    # lets `-c` resume a session and `-r` report what a session cost, both of
+    # which read it back off disk. Viewer-only mode has no session and no
+    # conversation, so it gets a ring and nothing on disk.
+    event_log = EventLog(
+        str(sessions.events_path(serve_dir, mesh_session_id))
+        if mesh_session_id is not None else None)
     registry = ViewerRegistry(event_log=event_log, on_presence=_presence)
     session_info = {
         "id": mesh_session_id if mesh_session_id is not None else "viewer-only",
@@ -145,9 +152,7 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     session = None
     if build_session is not None:
         session = build_session(_event_publisher(registry, event_log))
-        on_presence = getattr(session, "on_viewer_presence", None)
-        if on_presence is not None:
-            presence_listener.append(on_presence)
+        presence_listener.append(session.on_viewer_presence)
     app.mesh_session = session
     if session is not None:
         # The hello frame publishes whatever the session currently knows, so a

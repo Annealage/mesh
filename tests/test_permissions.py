@@ -211,7 +211,10 @@ async def test_no_viewer_connected_denies_without_ever_creating_a_request():
 
 
 async def test_last_viewer_disconnecting_denies_every_outstanding_request():
-    broker, events = _broker()
+    # A tiny grace rather than the real one: the denial is what this asserts,
+    # and waiting out eight real seconds to see it would make the suite slow
+    # without making the assertion stronger.
+    broker, events = _broker(no_viewer_grace=0.01)
     broker.viewer_connected()
     broker.viewer_connected()  # a second tab, so the count does not hit zero yet
     task, request = await _pending_request(broker, events, tool_name="Write")
@@ -415,7 +418,7 @@ async def test_a_timeout_announces_itself_as_a_timeout():
 
 
 async def test_the_last_viewer_leaving_announces_no_viewer():
-    broker, events = _broker()
+    broker, events = _broker(no_viewer_grace=0.01)
     broker.viewer_connected()
     task, _request = await _pending_request(broker, events)
 
@@ -492,3 +495,70 @@ async def test_a_failure_to_announce_does_not_break_the_decision(capsys):
     assert isinstance(result, PermissionResultAllow)
     assert broker.pending_requests() == []
     assert "broadcast exploded" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# A reload is a disconnect followed by a connect
+# ---------------------------------------------------------------------------
+
+
+async def test_a_reload_keeps_an_outstanding_request_waiting():
+    """The case the grace period exists for. With one browser open, which is the
+    ordinary case, denying on the transition to zero viewers meant reloading the
+    page cancelled whatever was being asked: the human came back to a pane with
+    no card, and the model to a refusal it had done nothing to earn.
+    """
+    broker, events = _broker(no_viewer_grace=0.2)
+    broker.viewer_connected()
+    task, request = await _pending_request(broker, events)
+
+    broker.viewer_disconnected()       # the page unloads
+    await asyncio.sleep(0.05)
+    assert not task.done(), "the request must survive the gap a reload leaves"
+
+    broker.viewer_connected()          # the page comes back
+    await asyncio.sleep(0.3)           # past what would have been the deadline
+    assert not task.done(), "a viewer came back, so nothing should have expired"
+    assert [r.request_id for r in broker.pending_requests()] == [request.request_id]
+
+    # And it is still answerable, which is the whole point.
+    await broker.decide(request.request_id, "allow")
+    assert isinstance(await task, PermissionResultAllow)
+    assert _resolutions(events)[0].outcome == "allow"
+
+
+async def test_a_viewer_that_never_returns_is_denied_after_the_grace_period():
+    broker, events = _broker(no_viewer_grace=0.05)
+    broker.viewer_connected()
+    task, _request = await _pending_request(broker, events)
+
+    broker.viewer_disconnected()
+    result = await task
+
+    assert isinstance(result, PermissionResultDeny)
+    assert "disconnected" in result.message
+    assert _resolutions(events)[0].outcome == "no_viewer"
+
+
+async def test_shutdown_during_the_grace_period_denies_at_once():
+    """Nothing is coming back, so there is nothing left to wait for."""
+    broker, events = _broker(no_viewer_grace=30.0)
+    broker.viewer_connected()
+    task, _request = await _pending_request(broker, events)
+
+    broker.viewer_disconnected()
+    broker.shutdown()
+    result = await task
+
+    assert isinstance(result, PermissionResultDeny)
+    assert _resolutions(events)[0].outcome == "shutdown"
+
+
+async def test_a_request_arriving_with_no_viewer_is_still_denied_immediately():
+    """The grace period covers a request that already exists when the viewer
+    goes; it does not make the broker hold a brand new one for a browser that is
+    not there, which would leave the model waiting on nobody."""
+    broker, _events = _broker(no_viewer_grace=30.0)
+    result = await broker.ask("Write", {}, None)
+    assert isinstance(result, PermissionResultDeny)
+    assert "no browser viewer is connected" in result.message
