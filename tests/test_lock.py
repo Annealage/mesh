@@ -48,6 +48,20 @@ def _lock_argv(serve_dir):
 # lock.py, direct
 # --------------------------------------------------------------------------
 
+
+@pytest.fixture(autouse=True)
+def sandbox_requirement_satisfied(monkeypatch):
+    """Tell the requirement check that this platform can sandbox.
+
+    This file is about the lock, not about what the host has installed, and
+    agent mode refuses to start without bubblewrap and socat. Without this the
+    one test that drives a real agent-mode start would be refused before it ever
+    reached the lock, on any machine lacking them, a stock CI runner included.
+    """
+    from annealage_mesh.session import sdk
+    monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
+
+
 def test_exclusive_creation_writes_pid_port_token(tmp_path):
     """A fresh ``acquire`` creates the file exactly once, with the caller's
     pid, port and token, mode 0600, and ``release`` removes it again."""

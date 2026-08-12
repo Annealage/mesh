@@ -17,6 +17,22 @@ import pytest
 
 from annealage_mesh import cli, sessions
 
+@pytest.fixture(autouse=True)
+def sandbox_requirement_satisfied(monkeypatch):
+    """Tell the requirement check that this platform can sandbox.
+
+    Autouse for this whole file, because every test here is about what the
+    session flags mean, not about what the host has installed. Agent mode
+    refuses to start when bubblewrap and socat are absent, which is correct and
+    is asserted directly further down; without this fixture that refusal would
+    pre-empt every flag test on any machine lacking them, which includes a
+    stock CI runner, and the file would pass or fail according to what happened
+    to be installed rather than according to the code under test.
+    """
+    from annealage_mesh.session import sdk
+    monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
+
+
 
 def _make_stub_run(calls):
     async def _stub_run(serve_dir, host, port, on_ready=None, token=None,
@@ -198,3 +214,45 @@ def test_no_agent_with_either_session_flag_exits_2(tmp_path, flags, capsys):
     err = capsys.readouterr().err
     assert "--no-agent" in err
     assert "runs none" in err
+
+
+# --------------------------------------------------------------------------
+# The sandbox requirement itself, which the fixture above suppresses for every
+# other test in this file.
+# --------------------------------------------------------------------------
+
+
+def test_agent_mode_refuses_to_start_without_the_sandbox_dependencies(
+        tmp_path, monkeypatch, capsys):
+    from annealage_mesh.session import sdk
+    monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
+
+    rc = cli.main([str(tmp_path), "--no-open"])
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    # Names what is missing and what to install, since a refusal that does not
+    # is a dead end for whoever hits it.
+    assert "bwrap" in err and "socat" in err
+    assert "apt install bubblewrap socat" in err
+    # And names the way to run anyway, because the viewer needs neither.
+    assert "--no-agent" in err
+    # Nothing was created for a run that never started.
+    assert not (tmp_path / ".mesh").exists()
+
+
+def test_viewer_only_mode_starts_without_the_sandbox_dependencies(tmp_path, monkeypatch):
+    """Viewer-only runs no agent, so it carries no sandbox requirement at all.
+
+    Asserted by getting past the check to the point where app.run is invoked,
+    which the stub below records instead of serving.
+    """
+    from annealage_mesh.session import sdk
+    monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
+    calls = _install_stub_run(monkeypatch)
+
+    rc = cli.main([str(tmp_path), "--no-agent", "--no-open"])
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert not (tmp_path / ".mesh" / "lock").exists()
