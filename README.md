@@ -16,6 +16,8 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 Annealage Mesh is a Python package needing Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code.
 
+Nothing else is required. The agent's shell can additionally run sandboxed, which on macOS is built into the OS and free, and on Linux uses `bubblewrap` and `socat` if they happen to be installed. Neither is a requirement: without them the shell simply asks your approval before it writes anything or reaches the network, which is the safe direction to fall back in. The startup banner says which of the two you are getting, every run, and so does `annealage-mesh doctor`.
+
 Be ready for the size. The SDK bundles the Claude Code CLI itself, so the first install pulls down roughly 90 MB rather than a few tens of kilobytes. That is the cost of the chat pane being part of the tool rather than something you wire up separately. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
 
 Run it straight from GitHub, nothing to install, via uv:

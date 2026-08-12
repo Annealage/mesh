@@ -43,6 +43,7 @@ import dataclasses
 import re
 import shutil
 import sys
+import platform
 from typing import Any, Optional, Tuple
 
 from claude_agent_sdk import (
@@ -111,6 +112,12 @@ SANDBOX_SETTINGS = {
 _SANDBOX_DISABLED_RE = re.compile(r"sandbox\s+disabled", re.IGNORECASE)
 _SANDBOX_MISSING_RE = re.compile(
     r"dependencies?\s+are\s+missing:\s*(?P<items>[^·\n]+)", re.IGNORECASE)
+
+# How many unparseable messages in a row are tolerated before the session gives
+# up. One is a hiccup worth skipping; a stream of them means this build and the
+# child no longer agree on the protocol, and continuing would spin forever
+# logging warnings while the human waited for a reply that will never come.
+_MAX_CONSECUTIVE_PARSE_FAILURES = 5
 
 # Kept so a stderr burst from a wedged child cannot grow without bound while
 # still leaving enough context to be worth reporting in an AgentError.
@@ -186,7 +193,7 @@ class SdkSession:
         # Predicted now so the banner, printed once at startup, is right on a
         # machine that plainly cannot sandbox. Corrected by the child if it
         # reports its own list.
-        self._sandbox_missing = (_missing_sandbox_dependencies()
+        self._sandbox_missing = (missing_sandbox_dependencies()
                                  if self._sandbox_requested else ())
         self._sandbox_child_reported = False
         self._viewers_seen = 0
@@ -243,10 +250,10 @@ class SdkSession:
             return
         self._turn += 1
         try:
-            await self._client.query({
+            await self._client.query(_one_message({
                 "type": "user",
                 "message": {"role": "user", "content": blocks},
-            })
+            }))
         except Exception as exc:
             self._fail(exc, viewer=viewer)
 
@@ -360,8 +367,23 @@ class SdkSession:
             # The child's own list replaces the PATH prediction, even when it is
             # empty: a disabled notice naming nothing still means disabled, and
             # an empty tuple would read as active, so a placeholder goes in.
+            first_report = not self._sandbox_child_reported
             self._sandbox_missing = reported or ("an unreported dependency",)
             self._sandbox_child_reported = True
+            if first_report:
+                # The startup banner has already printed by the time a child
+                # says this, and startup only checked that the binaries exist,
+                # so this is the one path by which a run that was promised a
+                # contained shell learns otherwise. It goes to the chat pane as
+                # an error without marking the session unavailable: the agent
+                # is working, it is the containment that is not.
+                self._emit(AgentError(
+                    stderr=line.strip(),
+                    remediation="the agent's shell is NOT sandboxed for this run, so "
+                                "bash will ask for approval instead of running "
+                                "contained; restart once %s is available"
+                                % ", ".join(self._sandbox_missing),
+                ))
 
     def _recent_stderr(self) -> str:
         return "\n".join(self._stderr_lines[-40:])
@@ -376,19 +398,39 @@ class SdkSession:
         ``AgentError`` and leaves the session unavailable rather than
         propagating into whatever task happened to spawn this one.
         """
-        try:
-            async for message in self._client.receive_messages():
-                try:
-                    self._handle(message)
-                except Exception as exc:
-                    # One malformed message must not end the conversation.
-                    sys.stderr.write("warning: could not handle %s: %r\n"
-                                     % (type(message).__name__, exc))
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:
-            if not self._closing:
+        parse_failures = 0
+        while True:
+            try:
+                async for message in self._client.receive_messages():
+                    parse_failures = 0
+                    try:
+                        self._handle(message)
+                    except Exception as exc:
+                        # One message this file cannot make sense of must not end
+                        # the conversation.
+                        sys.stderr.write("warning: could not handle %s: %r\n"
+                                         % (type(message).__name__, exc))
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                if self._closing:
+                    return
+                # A message the SDK's own parser rejects raises here rather than
+                # inside the guard above, because the parsing happens inside the
+                # generator this loop iterates, one level up from _handle. That
+                # kills the generator, so surviving it means starting a new one:
+                # the underlying channel is not the generator, it persists, so
+                # re-entering resumes consumption and loses only the message
+                # that could not be parsed.
+                if _is_parse_error(exc) and parse_failures < _MAX_CONSECUTIVE_PARSE_FAILURES:
+                    parse_failures += 1
+                    sys.stderr.write(
+                        "warning: skipping a message the SDK could not parse (%d of %d "
+                        "in a row allowed): %r\n"
+                        % (parse_failures, _MAX_CONSECUTIVE_PARSE_FAILURES, exc))
+                    continue
                 self._fail(exc)
+                return
 
     def _handle(self, message: Any) -> None:
         if isinstance(message, StreamEvent):
@@ -502,23 +544,38 @@ class SdkSession:
                              % (type(event).__name__, exc))
 
 
-# The two binaries the CLI's own disabled-sandbox message names on Linux.
-# Checked here only to predict the negative case; the child's report supersedes
-# this whenever it arrives.
-_SANDBOX_DEPENDENCIES = ("bwrap", "socat")
+# The two binaries the CLI's own disabled-sandbox message names, and the
+# packages they usually come from. Both are required, unconditionally: the CLI
+# puts a missing socat in its own errors list rather than its warnings, with no
+# branch on whether network access was configured, so a Linux host without it
+# gets no sandbox at all rather than a sandbox with no network.
+SANDBOX_DEPENDENCIES = ("bwrap", "socat")
+SANDBOX_PACKAGES = "bubblewrap socat"
 
 
-def _missing_sandbox_dependencies() -> Tuple[str, ...]:
-    """Which sandbox dependencies are absent from PATH, as a prediction.
+def sandbox_needs_external_dependencies() -> bool:
+    """Whether this platform's sandbox is built from separate binaries.
 
-    A prediction rather than an answer: the sandbox implementation the child
-    chooses is the child's business, and a platform that sandboxes some other
-    way would report nothing missing here and still be correct. What this
-    catches is the common case, a Linux host without one of the two binaries
-    the CLI asks for, where staying silent until the first bash command runs
-    would let the startup banner claim a containment the run does not have.
+    Only Linux, which includes WSL. macOS sandboxes with ``sandbox-exec``,
+    which ships with the OS, and Windows has a mechanism of its own; on neither
+    is there anything for a user to install, so neither has a requirement to
+    enforce.
     """
-    return tuple(name for name in _SANDBOX_DEPENDENCIES if shutil.which(name) is None)
+    return platform.system() == "Linux"
+
+
+def missing_sandbox_dependencies() -> Tuple[str, ...]:
+    """Which sandbox dependencies are absent from PATH.
+
+    Best effort rather than authoritative: this checks that a binary of the
+    right name is findable, and the CLI additionally checks that it is
+    executable, so a present but broken binary passes here and fails there. That
+    is why the child's own report still supersedes this whenever it arrives,
+    even though startup refuses on this check alone.
+    """
+    if not sandbox_needs_external_dependencies():
+        return ()
+    return tuple(name for name in SANDBOX_DEPENDENCIES if shutil.which(name) is None)
 
 
 def _parse_missing(items: str) -> Tuple[str, ...]:
@@ -534,6 +591,29 @@ def _parse_missing(items: str) -> Tuple[str, ...]:
         if words:
             found.append(words[0])
     return tuple(found)
+
+
+async def _one_message(message: dict):
+    """Yield one message, as the async iterable ``query()`` requires.
+
+    ``ClaudeSDKClient.query()`` accepts a string or an async iterable of dicts,
+    and tests only for the string case before doing ``async for`` on whatever
+    else it was given. A plain dict therefore raises ``TypeError: 'async for'
+    requires an object with __aiter__`` before anything reaches the transport,
+    which this file's own error handling would then report as the agent having
+    failed rather than as a turn never having been sent.
+    """
+    yield message
+
+
+def _is_parse_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is the SDK failing to parse one message.
+
+    Matched by class name rather than by importing ``MessageParseError``, which
+    lives under ``_internal``: a rename there should cost this a skipped message
+    and a warning, not an ImportError at startup.
+    """
+    return type(exc).__name__ in ("MessageParseError", "CLIJSONDecodeError")
 
 
 def _content_to_text(content: Any) -> str:

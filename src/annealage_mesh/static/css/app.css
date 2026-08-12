@@ -1,4 +1,4 @@
-:root { color-scheme: dark; --bar: 48px; }
+:root { color-scheme: dark; --bar: 48px; --side-w: 340px; --chat-w: 360px; }
 html, body { margin: 0; height: 100%; overflow: hidden; background: #14161a; font: 13px/1.4 system-ui, sans-serif; color: #d6d8dc; }
 * { -webkit-tap-highlight-color: transparent; }
 
@@ -54,7 +54,7 @@ body { display: flex; flex-direction: column; }
 #app { flex: 1; min-width: 0; }
 
 #side {
-  flex: 0 0 340px; min-width: 0;
+  flex: 0 0 var(--side-w); min-width: 0;
   background: rgba(20,23,28,.97); border-left: 1px solid #2c313a;
   display: flex; flex-direction: column;
 }
@@ -140,7 +140,7 @@ body { display: flex; flex-direction: column; }
    and below (layout.js's TABS entry governs display there, same as
    #side's). */
 #chat {
-  flex: 0 0 360px; min-width: 0;
+  flex: 0 0 var(--chat-w); min-width: 0;
   background: rgba(20,23,28,.97); border-left: 1px solid #2c313a;
   display: flex; flex-direction: column;
 }
@@ -224,8 +224,23 @@ pre.toolresult.error { color: #e8a0a0; }
 .chatbtns button#chatSend:hover { background: #4fd3e8; }
 .chatbtns button:disabled { opacity: .45; cursor: default; }
 
-#toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 8px; font-weight: 600; display: none; box-shadow: 0 6px 24px #0008; max-width: 86vw; text-align: center; }
+#toast { position: fixed; bottom: 16px; left: calc((100vw - var(--side-w) - var(--chat-w)) / 2); transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 8px; font-weight: 600; display: none; box-shadow: 0 6px 24px #0008; text-align: center; }
 #toast.ok { background: #1e3a24; color: #9fe0a8; border: 1px solid #2f5c39; }
 #toast.err { background: #3a1e1e; color: #e8a0a0; border: 1px solid #5c2f2f; }
 
-#err { position: fixed; bottom: 12px; left: 12px; z-index: 14; color: #e88; background: rgba(40,20,20,.92); padding: 8px 12px; border-radius: 6px; display: none; max-width: 70vw; }
+/* The two floating overlays sit above the canvas, and must stay clear of the
+   panels to its right: they are bottom-anchored and so is #side's footer, whose
+   Submit button a persistent banner would otherwise cover at ordinary desktop
+   widths, leaving the human unable to submit pins at exactly the times an error
+   banner is showing. Capping the width to the canvas column rather than moving
+   them inside #app keeps them visible in the narrow layout too, where #app is
+   hidden whenever another tab is selected. */
+#err, #toast {
+  max-width: calc(100vw - var(--side-w) - var(--chat-w) - 24px);
+}
+@media (max-width: 900px) {
+  /* One column, so nothing is to the right to stay clear of. */
+  #err, #toast { max-width: calc(100vw - 24px); }
+  #toast { left: 50%; }
+}
+#err { position: fixed; bottom: 12px; left: 12px; z-index: 14; color: #e88; background: rgba(40,20,20,.92); padding: 8px 12px; border-radius: 6px; display: none; }

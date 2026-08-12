@@ -96,6 +96,22 @@ def _print_session_list(serve_dir):
         sys.stdout.write(_format_session_line(info) + "\n")
 
 
+class _SdkRequirements:
+    """Lazy accessor for the sandbox requirement helpers in ``session.sdk``.
+
+    Importing that module pulls in the agent SDK, which a viewer-only run has no
+    reason to load, so it is imported on first attribute access rather than at
+    the top of this file.
+    """
+
+    def __getattr__(self, name):
+        from .session import sdk
+        return getattr(sdk, name)
+
+
+sdk_requirements = _SdkRequirements()
+
+
 def _resumable_sdk_id(serve_dir, mesh_sid):
     """The SDK conversation id recorded for ``mesh_sid``, or None.
 
@@ -207,6 +223,25 @@ def main(argv=None):
     held_lock = None
 
     if mode == "agent":
+        # Checked before a session is resolved, a lock taken or a port bound, so
+        # a host that cannot sandbox is told once and clearly, rather than
+        # starting and printing a posture line that says the agent's shell is
+        # unprotected and leaving the human to notice. Viewer-only mode runs no
+        # agent and so carries no such requirement, which is why the message
+        # points at it.
+        missing = sdk_requirements.missing_sandbox_dependencies()
+        if missing:
+            sys.stderr.write(
+                "error: agent mode runs the agent's shell sandboxed, and that needs "
+                "%s on this platform.\n"
+                "  missing: %s\n"
+                "  install: apt install %s   (or your distribution's equivalent)\n"
+                "  or run the viewer alone, which needs neither: "
+                "annealage-mesh --no-agent\n"
+                % (" and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
+                   ", ".join(missing), sdk_requirements.SANDBOX_PACKAGES))
+            return 2
+
         if args.continue_:
             mesh_sid = sessions.resolve_continue(serve_dir)
             if mesh_sid is None:

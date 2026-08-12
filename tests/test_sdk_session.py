@@ -1,0 +1,487 @@
+"""Tests for ``session/sdk.py``, driving the real ``ClaudeSDKClient`` through
+a fake ``Transport`` (plan section 2, fact 11: a six-method ABC, injectable
+as ``ClaudeSDKClient(options=..., transport=...)``).
+
+This is the only file in the suite that imports ``claude_agent_sdk``'s
+client directly rather than going through ``session/fake.py``, and it
+exists as a canary: if an SDK upgrade renames a message field, changes
+what a ``PermissionResult`` must look like, or reshapes the control
+protocol's wire dicts, a test here breaks before that reaches a running
+agent. What it pins matters more than how much of ``sdk.py`` it exercises.
+
+``FakeTransport`` never spawns a process and never opens a socket; that is
+true by construction, not by hoping, because it is a plain ``Transport``
+subclass backed by an ``asyncio.Queue`` and its ``connect()`` never calls
+anything outside this module. The ``_no_real_transport`` fixture below is a
+second, independent guarantee: it makes the SDK's own
+``SubprocessCLITransport`` raise if anything ever falls through to it, which
+would otherwise mean a real ``claude`` binary got spawned by a test.
+
+``EventRecorder`` gives each test an ``asyncio.Queue`` of the ``AgentEvent``
+objects ``SdkSession`` emits, alongside a plain list of everything seen so
+far, so a test awaits the next event deterministically instead of guessing
+how many ``asyncio.sleep(0)`` hops the fake protocol layers need.
+"""
+
+import asyncio
+import json
+
+import pytest
+from claude_agent_sdk import Transport
+
+from annealage_mesh.session import sdk as sdk_module
+from annealage_mesh.session.base import (
+    AGENT_READY,
+    AGENT_UNAVAILABLE,
+    AgentError,
+    TextDelta,
+    ToolResult,
+    ToolUse,
+    TurnEnd,
+)
+from annealage_mesh.session.sdk import SandboxStatus, SdkSession
+
+# The eight read-class tools plan section 3.9 lists, in the namespaced form
+# fact 1 requires (``mcp__<server>__<tool>``). Hardcoded here rather than
+# imported from ``sdk_module.READ_CLASS_MESH_TOOLS``: this test exists to
+# notice if that constant itself drifts from the plan, so it must not share
+# its source of truth with the code it is pinning.
+EXPECTED_READ_CLASS_TOOLS = [
+    "mcp__mesh__list_models",
+    "mcp__mesh__model_info",
+    "mcp__mesh__get_view",
+    "mcp__mesh__get_visibility",
+    "mcp__mesh__list_comments",
+    "mcp__mesh__list_callouts",
+    "mcp__mesh__capture_view",
+    "mcp__mesh__measure",
+]
+
+# The posture from the M5 brief's "decided and not open" section: bash runs
+# contained and unprompted, edit/write/network still reach the broker, and
+# git is excluded because it needs the real filesystem for the project's own
+# repository.
+EXPECTED_SANDBOX_SETTINGS = {
+    "enabled": True,
+    "autoAllowBashIfSandboxed": True,
+    "excludedCommands": ["git"],
+}
+
+
+@pytest.fixture(autouse=True)
+def _no_real_transport(monkeypatch):
+    """Fail loudly, rather than spawning a real ``claude`` subprocess, if
+    anything in this module's code path ever falls through to the SDK's own
+    ``SubprocessCLITransport`` instead of the fake one a test injected."""
+    from claude_agent_sdk._internal.transport import subprocess_cli
+
+    def _forbidden(*args, **kwargs):
+        raise AssertionError(
+            "a real SubprocessCLITransport was constructed; the fake "
+            "Transport passed to SdkSession was not used")
+
+    monkeypatch.setattr(subprocess_cli, "SubprocessCLITransport", _forbidden)
+
+
+class FakeTransport(Transport):
+    """A ``Transport`` backed by one ``asyncio.Queue``, with no process and
+    no socket.
+
+    ``write()`` records every outbound line, parsed from JSON, in
+    ``written``, in call order, so a test can assert exactly what the SDK
+    sent. It also answers the SDK's own ``initialize`` control request with
+    an empty success, because ``ClaudeSDKClient.connect()`` blocks on that
+    response before returning and no test here cares what the response
+    contains, only that the client is unblocked.
+
+    ``push()`` queues one raw protocol dict for the client to receive next;
+    it is how a test plays the part of the CLI child's stdout.
+    """
+
+    def __init__(self):
+        self.written = []
+        self.connected = False
+        self.closed = False
+        self._queue: asyncio.Queue = asyncio.Queue()
+
+    async def connect(self) -> None:
+        self.connected = True
+
+    def is_ready(self) -> bool:
+        return self.connected and not self.closed
+
+    async def write(self, data: str) -> None:
+        obj = json.loads(data)
+        self.written.append(obj)
+        if obj.get("type") == "control_request":
+            subtype = obj["request"].get("subtype")
+            if subtype == "initialize":
+                self._queue.put_nowait({
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": obj["request_id"],
+                        "response": {},
+                    },
+                })
+
+    async def read_messages(self):
+        while True:
+            item = await self._queue.get()
+            if item is None:
+                return
+            yield item
+
+    async def close(self) -> None:
+        self.closed = True
+        self._queue.put_nowait(None)
+
+    async def end_input(self) -> None:
+        pass
+
+    def push(self, message: dict) -> None:
+        self._queue.put_nowait(message)
+
+
+class _FailingConnectTransport(FakeTransport):
+    """A transport whose ``connect()`` fails, standing in for a ``claude``
+    child that could not be started."""
+
+    async def connect(self) -> None:
+        raise RuntimeError("boom: no such host")
+
+
+class EventRecorder:
+    """Collects every ``AgentEvent`` an ``SdkSession`` emits, and lets a
+    test await the next one deterministically instead of sleeping and
+    hoping the fake protocol layers have caught up."""
+
+    def __init__(self):
+        self._queue: asyncio.Queue = asyncio.Queue()
+        self.all = []
+
+    def __call__(self, event) -> None:
+        self.all.append(event)
+        self._queue.put_nowait(event)
+
+    async def next(self, timeout: float = 2.0):
+        return await asyncio.wait_for(self._queue.get(), timeout)
+
+
+async def _started_session(**kwargs):
+    """A connected ``SdkSession`` over a fresh ``FakeTransport``, with its
+    events going to a fresh ``EventRecorder``."""
+    transport = kwargs.pop("transport", None) or FakeTransport()
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd="/proj/root", session_id="mesh-sess-1",
+                         transport=transport, **kwargs)
+    await session.start()
+    assert session.agent_status() == AGENT_READY
+    return session, transport, recorder
+
+
+def test_fake_transport_is_a_real_transport():
+    """``FakeTransport`` satisfies the SDK's own ``Transport`` ABC by
+    construction: instantiating a subclass missing one of the six abstract
+    methods raises ``TypeError`` at construction time, so this line alone
+    proves all six are implemented, before any test ever touches the
+    network or a subprocess."""
+    transport = FakeTransport()
+    assert isinstance(transport, Transport)
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_options_wired_into_the_real_client():
+    """Every fact the M5 brief pins about the options ``SdkSession`` builds,
+    read back off the real ``ClaudeAgentOptions`` the real ``ClaudeSDKClient``
+    was constructed with, not off a private method's return value: this is
+    the whole point of driving the real client, since an SDK upgrade that
+    silently renamed a field would still let a direct call to
+    ``_build_options`` "pass" while the client itself was misconfigured.
+
+    The SDK warns that ``can_use_tool`` will never be consulted for the
+    eight tools this test also asserts are pre-allowed; that warning
+    states the intended design, not a defect, since pre-allowing them is
+    exactly what keeps read-class calls off the broker, and is silenced
+    here rather than left to clutter the run.
+    """
+    class _StubBroker:
+        async def ask(self, *args, **kwargs):
+            raise AssertionError("not exercised by this test")
+
+        def shutdown(self):
+            pass
+
+    stub_broker = _StubBroker()
+    session, transport, _recorder = await _started_session(
+        broker=stub_broker, resume="prior-sdk-session-id")
+    try:
+        options = session._client.options
+
+        # Fact 12: without this, only whole assistant messages arrive and
+        # the chat pane cannot stream tokens.
+        assert options.include_partial_messages is True
+
+        # Fact 1 and plan 3.9: the eight read-class tools, pre-allowed so
+        # they never reach the broker, in their namespaced form.
+        assert options.allowed_tools == EXPECTED_READ_CLASS_TOOLS
+
+        # Fact 13: the default loads no settings files at all, so a
+        # project CLAUDE.md would be silently ignored without this.
+        assert options.setting_sources == ["user", "project", "local"]
+
+        # Plan section 3.4: a resolved id, and continue_conversation is
+        # never set, because that option is scoped to the CLI's own notion
+        # of cwd rather than this project root.
+        assert options.resume == "prior-sdk-session-id"
+        assert options.continue_conversation is False
+
+        # The posture from the M5 brief's "decided and not open" section.
+        assert options.sandbox == EXPECTED_SANDBOX_SETTINGS
+
+        # can_use_tool is bound directly to the broker's own ask, never
+        # through a wrapper (session/permissions.py's module docstring: a
+        # wrapper that raises or returns the wrong type defeats fact 14).
+        assert options.can_use_tool == stub_broker.ask
+
+        # The stderr hook this file's sandbox-status parsing depends on.
+        assert options.stderr == session._note_stderr
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_stream_event_text_delta_becomes_one_text_delta_event():
+    """A ``StreamEvent`` carrying a ``content_block_delta``/``text_delta``
+    becomes exactly one ``TextDelta`` event with that text."""
+    session, transport, recorder = await _started_session()
+    try:
+        transport.push({
+            "type": "stream_event",
+            "uuid": "u1",
+            "session_id": "sdk-sess-1",
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "Hello there"},
+            },
+        })
+        event = await recorder.next()
+        assert isinstance(event, TextDelta)
+        assert event.text == "Hello there"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_use_and_its_result_become_tool_use_and_tool_result_events():
+    """An ``AssistantMessage`` carrying a ``tool_use`` block becomes a
+    ``ToolUse`` event, and the ``UserMessage`` echoing its ``tool_result``
+    becomes a ``ToolResult`` event correlated by the same
+    ``tool_use_id``.
+
+    These arrive on the pump independently of anything this session sent,
+    exactly as they would after a turn was already sent by some other
+    means, so this test pushes them straight in rather than going through
+    ``submit_turn`` (which has its own defect, pinned separately below).
+    """
+    session, transport, recorder = await _started_session()
+    try:
+        transport.push({
+            "type": "assistant",
+            "session_id": "sdk-sess-1",
+            "message": {
+                "model": "claude-x",
+                "content": [{
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "mcp__mesh__capture_view",
+                    "input": {"width": 100},
+                }],
+            },
+        })
+        tool_use = await recorder.next()
+        assert isinstance(tool_use, ToolUse)
+        assert tool_use.tool_use_id == "tu_1"
+        assert tool_use.name == "mcp__mesh__capture_view"
+        assert tool_use.input == {"width": 100}
+
+        transport.push({
+            "type": "user",
+            "message": {
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "tu_1",
+                    "content": "captured",
+                    "is_error": False,
+                }],
+            },
+        })
+        tool_result = await recorder.next()
+        assert isinstance(tool_result, ToolResult)
+        assert tool_result.tool_use_id == "tu_1"
+        assert tool_result.is_error is False
+        assert tool_result.text == "captured"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_turn_sends_the_turn_to_the_real_client():
+    """Pinning a defect, left failing on purpose: ``submit_turn`` never
+    successfully delivers a turn to a real ``ClaudeSDKClient``.
+
+    ``submit_turn`` calls ``self._client.query({"type": "user", ...})``,
+    a plain dict. ``ClaudeSDKClient.query()``'s ``prompt`` parameter is
+    typed ``str | AsyncIterable[dict]``: it checks
+    ``isinstance(prompt, str)`` and, when that is false, falls through to
+    ``async for msg in prompt:`` on the assumption that anything else
+    passed in is already an async iterable of messages. A plain dict has
+    no ``__aiter__``, so that line raises
+    ``TypeError: 'async for' requires an object with __aiter__ method,
+    got dict`` before a single byte reaches the transport.
+
+    ``submit_turn``'s own ``except Exception as exc: self._fail(exc, ...)``
+    then treats that TypeError as an agent failure: it marks the whole
+    session unavailable and emits an ``AgentError``, rather than the turn
+    reaching the model. Every call to ``submit_turn`` against the real SDK
+    hits this; ``session/fake.py``'s stand-in never calls
+    ``ClaudeSDKClient.query()`` at all, so nothing exercises this path
+    outside a test built on the real client, which is what this file is
+    for.
+
+    Once fixed (wrapping the message in a one-item async generator, or
+    passing the string form ``query()`` accepts directly), this assertion
+    should hold: the session stays ready and the wire carries the turn.
+    """
+    session, transport, recorder = await _started_session()
+    try:
+        await session.submit_turn([{"type": "text", "text": "please look"}])
+        assert session.agent_status() == AGENT_READY
+        sent = transport.written[-1]
+        assert sent["type"] == "user"
+        assert sent["message"]["content"] == [
+            {"type": "text", "text": "please look"}]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_result_message_becomes_turn_end_with_its_cost():
+    """A ``ResultMessage`` becomes a ``TurnEnd`` event carrying the stop
+    reason and the per-turn cost the plan says belongs in the UI.
+
+    Pushed straight in rather than following a real ``submit_turn`` call
+    (which has its own defect, pinned separately below): this test is
+    about what the pump does with a ``result`` message, not about how one
+    gets sent.
+    """
+    session, transport, recorder = await _started_session()
+    try:
+        session._turn = 1
+        transport.push({
+            "type": "result",
+            "subtype": "success",
+            "duration_ms": 1200,
+            "duration_api_ms": 900,
+            "is_error": False,
+            "num_turns": 1,
+            "session_id": "sdk-sess-1",
+            "stop_reason": "end_turn",
+            "total_cost_usd": 0.031,
+        })
+        end = await recorder.next()
+        assert isinstance(end, TurnEnd)
+        assert end.turn == 1
+        assert end.stop_reason == "end_turn"
+        assert end.cost_usd == 0.031
+    finally:
+        await session.close()
+
+
+def test_sandbox_status_missing_list_comes_from_the_childs_own_words(monkeypatch):
+    """The startup PATH guess is only a prediction, and the child's report
+    supersedes it the moment it arrives (fact 20). The PATH check is
+    monkeypatched to say nothing is missing, so this test cannot pass by
+    accident on a host that happens to lack ``bwrap``/``socat``: the only
+    way ``missing`` can end up naming ``socat`` below is that
+    ``_note_stderr`` actually parsed it out of the line the child wrote.
+    """
+    monkeypatch.setattr(sdk_module, "missing_sandbox_dependencies", lambda: ())
+    session = SdkSession(lambda event: None, cwd="/proj/root",
+                         session_id="mesh-sess-1", sandbox=True)
+
+    assert session.sandbox_status() == SandboxStatus(
+        requested=True, active=True, missing=())
+
+    session._note_stderr(
+        "Sandbox disabled: sandbox is enabled but dependencies are missing: "
+        "socat not installed. Commands will run WITHOUT sandboxing. "
+        "Network and filesystem restrictions will NOT be enforced.")
+
+    status = session.sandbox_status()
+    assert status.requested is True
+    assert status.active is False
+    assert status.missing == ("socat",)
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_becomes_agent_error_not_a_raised_exception():
+    """A child that cannot be started (a missing CLI, a bad transport, an
+    unauthenticated account) must not raise out of ``start()``: the HTTP
+    server has already started independently and must keep serving the
+    viewer regardless of what the agent does (plan section 3.4)."""
+    recorder = EventRecorder()
+    session = SdkSession(recorder, cwd="/proj/root", session_id="mesh-sess-1",
+                         transport=_FailingConnectTransport())
+
+    await session.start()  # must not raise
+
+    assert session.agent_status() == AGENT_UNAVAILABLE
+    event = await recorder.next()
+    assert isinstance(event, AgentError)
+    assert "boom: no such host" in event.stderr
+
+
+@pytest.mark.asyncio
+async def test_pump_survives_one_malformed_message():
+    """Pinning a defect, left failing on purpose (see the M5 review
+    report): a well-formed message sent right after a malformed one is
+    never delivered, and the session is marked unavailable instead.
+
+    ``sdk.py``'s own comment on the inner ``try``/``except`` inside
+    ``_pump`` says "One malformed message must not end the conversation."
+    That guard only wraps ``self._handle(message)``, which runs on an
+    already-parsed ``Message`` object. A raw dict whose ``type`` the SDK
+    recognises but which is missing a field that type requires (here, an
+    ``assistant`` message with no ``message`` key) fails inside
+    ``claude_agent_sdk``'s own ``parse_message``, called by
+    ``ClaudeSDKClient.receive_messages()`` itself, one level above
+    ``_handle`` and outside that inner guard. The exception surfaces at
+    ``_pump``'s ``async for message in self._client.receive_messages():``
+    line, which only the OUTER ``except Exception as exc: self._fail(exc)``
+    catches: that call marks the session unavailable and returns from
+    ``_pump`` for good, so nothing sent afterward, however well-formed,
+    is ever read again.
+
+    Once fixed, this assertion should hold: the malformed message logs a
+    warning and the following ``TextDelta`` still arrives.
+    """
+    session, transport, recorder = await _started_session()
+    try:
+        transport.push({"type": "assistant", "session_id": "sdk-sess-1"})
+        transport.push({
+            "type": "stream_event",
+            "uuid": "u2",
+            "session_id": "sdk-sess-1",
+            "event": {
+                "type": "content_block_delta",
+                "delta": {"type": "text_delta", "text": "still here"},
+            },
+        })
+        event = await recorder.next()
+        assert isinstance(event, TextDelta)
+        assert event.text == "still here"
+        assert session.agent_status() == AGENT_READY
+    finally:
+        await session.close()

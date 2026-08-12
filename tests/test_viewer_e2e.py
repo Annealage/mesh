@@ -34,6 +34,8 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright
 
 from annealage_mesh import app as mesh_app
+from annealage_mesh.session import base as session_base
+from annealage_mesh.session.fake import FakeSession
 
 
 def _find_chrome():
@@ -94,12 +96,13 @@ class _ServerThread:
     build has grown a ``token`` parameter yet.
     """
 
-    def __init__(self, serve_dir, token=None):
+    def __init__(self, serve_dir, token=None, build_session=None):
         self.serve_dir = serve_dir
         self.host = "127.0.0.1"
         self.port = _free_port()
         self.base_url = "http://%s:%d" % (self.host, self.port)
         self.token = token
+        self.build_session = build_session
         self._loop = None
         self._task = None
         self._thread = None
@@ -124,6 +127,8 @@ class _ServerThread:
             run_kwargs = {"on_ready": self._ready.set}
             if self.token is not None:
                 run_kwargs["token"] = self.token
+            if self.build_session is not None:
+                run_kwargs["build_session"] = self.build_session
             # on_ready is threading.Event.set: synchronous, non-blocking,
             # not awaitable, so run() proceeds immediately after calling it
             # rather than waiting on anything that touches this same loop.
@@ -248,6 +253,107 @@ def token_mesh_server(tmp_path_factory):
     server.start()
     try:
         yield server
+    finally:
+        server.stop()
+
+
+class _LifecycleFakeSession(FakeSession):
+    """`FakeSession` plus the async `start`/`close` lifecycle `app.run`
+    calls unconditionally on whatever `build_session` returns.
+
+    `FakeSession` implements the `AgentSession` Protocol from
+    `session/base.py`, which declares no `start` or `close` member; `app.run`
+    (not `create_app`, which these tests could use instead but do not, since
+    `run` is what every other server in this file goes through and the point
+    is to exercise the same startup and shutdown path a real `SdkSession`
+    gets) calls `await app.mesh_session.start()` right after building the app
+    and `await app.mesh_session.close()` from its shutdown `finally`, on any
+    session that is not `None`. A bare `FakeSession` wired through
+    `build_session` therefore fails `start()` with `AttributeError` before a
+    single request is served; these two no-ops are the minimum this file
+    needs to drive a fake session through that path at all.
+    """
+
+    async def start(self):
+        pass
+
+    async def close(self):
+        pass
+
+
+def _emit_on_loop(server, session, event):
+    """Push a scripted `AgentEvent` through `session.emit` on `server`'s own
+    event loop thread, then block until it has actually run.
+
+    `FakeSession.emit` calls straight through to the `on_event` callback
+    `app.py` built (`_event_publisher`), which ends by calling
+    `asyncio.ensure_future` to schedule the broadcast onto "the running
+    loop": that resolves implicitly to whichever loop is running on the
+    calling thread, so calling `emit` directly from this test's own thread
+    would either schedule onto the wrong loop or raise for having none at
+    all. `call_soon_threadsafe` is the one API safe to call from here; the
+    `threading.Event` is what turns its fire-and-forget scheduling back into
+    something this synchronous test can wait on and see an exception from.
+    """
+    done = threading.Event()
+    failure = []
+
+    def _run():
+        try:
+            session.emit(event)
+        except Exception as exc:  # pragma: no cover - surfaced via failure[0]
+            failure.append(exc)
+        finally:
+            done.set()
+
+    server._loop.call_soon_threadsafe(_run)
+    if not done.wait(timeout=5.0):
+        raise AssertionError("emit did not run on the server loop within 5s")
+    if failure:
+        raise failure[0]
+
+
+def _wait_until(predicate, timeout=5.0, message="condition not met"):
+    """Poll a plain Python predicate (never a page.* call; see
+    `_wait_for_request_growth`'s own comment for why a Playwright wait needs
+    `page.wait_for_timeout` instead) until it is true or `timeout` elapses.
+
+    Used only to observe state on the fake session's side (`submitted_turns`,
+    `permission_decisions`, `interrupted`), which this test's own thread
+    reads while the server's loop thread writes; a plain `list.append` and a
+    plain integer increment are each atomic under the GIL, so polling here
+    needs no lock of its own, only patience.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return
+        time.sleep(0.02)
+    raise AssertionError(message)
+
+
+@pytest.fixture
+def chat_server(tmp_path_factory):
+    """A fresh, single-model, token-gated server wired to a scripted
+    `FakeSession` (`session/fake.py`) through `create_app`'s `build_session`
+    factory, the injection point named in the M5 brief. No `claude_agent_sdk`
+    import happens anywhere in this fixture or in `fake.py`, no subprocess is
+    spawned, and no network beyond the loopback socket this same fixture
+    binds is reachable from it.
+    """
+    d = tmp_path_factory.mktemp("mesh_e2e_chat")
+    (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
+    sessions = []
+
+    def build_session(on_event):
+        session = _LifecycleFakeSession(on_event)
+        sessions.append(session)
+        return session
+
+    server = _ServerThread(d, token=secrets.token_urlsafe(16), build_session=build_session)
+    server.start()
+    try:
+        yield server, sessions[0]
     finally:
         server.stop()
 
@@ -832,3 +938,227 @@ def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_me
         page.close()
         if replacement is not None:
             replacement.stop()
+
+
+# 13. Chat pane: a typed turn reaches the AgentSession -----------------------
+
+def test_typed_turn_reaches_the_session(browser, chat_server):
+    """Typing a message and clicking Send must submit it to the
+    `AgentSession` exactly as composed. This is the only path from the
+    browser to `AgentSession.submit_turn`: the inbound `turn` frame plan
+    section 3.3 defines, dispatched by `http/ws.py`'s `_dispatch`. The
+    composer clearing is chat.js's own signal that the frame actually went
+    out, not merely that the click handler ran.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.fill("#chatInput", "why is this wall thin?")
+        page.click("#chatSend")
+
+        _wait_until(lambda: len(session.submitted_turns) == 1,
+                    message="the turn frame never reached AgentSession.submit_turn")
+        blocks, viewer = session.submitted_turns[0]
+        assert blocks == [{"type": "text", "text": "why is this wall thin?"}]
+        # Not asserted: that `viewer` carries the tab id the browser's own
+        # `hello` sent. `http/ws.py` calls `registry.add(ws)` with no
+        # `tab_id` argument, so `conn.tab_id`, and therefore this value, is
+        # `None` for every connection regardless of what the browser
+        # declared; see this file's report for the defect this leaves in
+        # both the `viewer` stamp on outbound turns and `ViewerPrimary`.
+        assert page.input_value("#chatInput") == ""
+    finally:
+        page.close()
+
+
+# 14. Chat pane: a streamed reply arrives incrementally ----------------------
+
+def test_streamed_reply_arrives_incrementally_not_all_at_once(browser, chat_server):
+    """Two `text_delta` events for one turn must each be individually
+    observable in the DOM, not only their final concatenation: that is what
+    separates real streaming (`include_partial_messages=True`, plan fact 12)
+    from a client that happened to coalesce two events before rendering
+    either. The assertion that the second delta's text is absent after the
+    first is what rules the latter out; asserting only the final text would
+    pass even if chat.js buffered every delta until `turn_end`.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.fill("#chatInput", "why is this wall thin?")
+        page.click("#chatSend")
+        _wait_until(lambda: len(session.submitted_turns) == 1)
+
+        text_sel = "div.turn[data-turn='1'] .msg.assistant .text"
+
+        _emit_on_loop(server, session, session_base.TextDelta(turn=1, text="The wall "))
+        page.wait_for_function(
+            "(sel) => !!document.querySelector(sel) && "
+            "document.querySelector(sel).textContent === 'The wall '",
+            arg=text_sel,
+        )
+        assert "measures 2mm" not in page.evaluate(
+            "(sel) => document.querySelector(sel).textContent", text_sel)
+
+        _emit_on_loop(server, session, session_base.TextDelta(turn=1, text="measures 2mm."))
+        page.wait_for_function(
+            "(sel) => !!document.querySelector(sel) && "
+            "document.querySelector(sel).textContent === 'The wall measures 2mm.'",
+            arg=text_sel,
+        )
+    finally:
+        page.close()
+
+
+# 15. Chat pane: a permission card appears and Allow reaches the session -----
+
+def test_permission_card_allow_reaches_the_session(browser, chat_server):
+    """A `permission_request` event must render as a card naming the tool,
+    and clicking Allow must both remove the card and deliver an `allow`
+    decision to `AgentSession.decide_permission` for that exact request id,
+    the inbound `permission` frame plan section 3.3 defines.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_1", tool="Bash", input={"command": "curl example.com"}))
+
+        card = "div.permcard[data-request-id='pr_1']"
+        page.wait_for_selector(card)
+        assert page.evaluate(
+            "(sel) => document.querySelector(sel).textContent", card + " .ptool") == "Bash"
+
+        page.click(card + " .pactions button:nth-of-type(1)")
+
+        _wait_until(lambda: len(session.permission_decisions) == 1,
+                    message="the allow decision never reached AgentSession.decide_permission")
+        assert session.permission_decisions[0] == ("pr_1", "allow", "")
+        assert page.locator(card).count() == 0, "the card must be removed once answered"
+    finally:
+        page.close()
+
+
+# 16. Chat pane: Deny carries the human's typed reason ------------------------
+
+def test_permission_card_deny_sends_the_typed_reason(browser, chat_server):
+    """A deny's `message` reaches the model verbatim (M5 brief fact 2), so
+    the pane's deny path has to carry whatever the human typed. The reason
+    textarea is filled with `press_sequentially`, one keydown/input pair per
+    character as a real keyboard produces, rather than `page.fill`'s single
+    input event, per this file's own harness note: a control whose state
+    depends on a rebuild triggered by an unrelated store change only shows
+    that bug under per-keystroke input, and the pending-permission list is
+    exactly such a rebuild-on-change control (`renderPending` in chat.js).
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(server, session, session_base.PermissionRequest(
+            request_id="pr_2", tool="Write", input={"file_path": "/etc/hosts"}))
+        card = "div.permcard[data-request-id='pr_2']"
+        page.wait_for_selector(card)
+
+        reason = "not this file, ask about the enclosure instead"
+        reason_box = page.locator(card + " textarea.preason")
+        reason_box.click()
+        reason_box.press_sequentially(reason, delay=20)
+        assert reason_box.input_value() == reason
+
+        page.click(card + " .pactions button:nth-of-type(3)")
+
+        _wait_until(lambda: len(session.permission_decisions) == 1,
+                    message="the deny decision never reached AgentSession.decide_permission")
+        assert session.permission_decisions[0] == ("pr_2", "deny", reason)
+        assert page.locator(card).count() == 0
+    finally:
+        page.close()
+
+
+# 17. Chat pane: Interrupt reaches the session --------------------------------
+
+def test_interrupt_button_ends_a_turn(browser, chat_server):
+    """The Interrupt button starts disabled (nothing to interrupt), becomes
+    enabled once a turn is outstanding, and clicking it must deliver the
+    inbound `interrupt` frame to `AgentSession.interrupt`, plan section
+    3.3's mechanism for the human to stop a turn already in flight.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        assert page.is_disabled("#chatInterrupt")
+
+        page.fill("#chatInput", "keep exploring the model for defects")
+        page.click("#chatSend")
+        page.wait_for_function("!document.getElementById('chatInterrupt').disabled")
+
+        page.click("#chatInterrupt")
+
+        _wait_until(lambda: session.interrupted == 1,
+                    message="the interrupt frame never reached AgentSession.interrupt")
+    finally:
+        page.close()
+
+
+# 18. Chat pane: model text is escaped, never executed -----------------------
+
+def test_model_text_is_escaped_and_never_executes(browser, chat_server):
+    """A reply carrying a `<script>` tag and an `<img onerror=...>` handler
+    must render as literal text and must not run: the locked decision in
+    plan sections 3.10 and 5 that model text is never inserted as HTML.
+    `<script>` inserted via `innerHTML` never executes in any browser
+    regardless of escaping, so it alone would not prove this; an `<img
+    src=x onerror=...>` inserted unescaped does fire its handler on the
+    broken load, which is what makes the assertion on `window.__xssFired`
+    a real test of execution rather than of parsing.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.evaluate("() => { window.__xssFired = false; }")
+
+        page.fill("#chatInput", "show me")
+        page.click("#chatSend")
+        _wait_until(lambda: len(session.submitted_turns) == 1)
+
+        payload = ('<script>window.__xssFired = true</script>'
+                   '<img src=x onerror="window.__xssFired = true">')
+        _emit_on_loop(server, session, session_base.TextDelta(turn=1, text=payload))
+
+        text_sel = "div.turn[data-turn='1'] .msg.assistant .text"
+        page.wait_for_function(
+            "(sel) => !!document.querySelector(sel) && "
+            "document.querySelector(sel).textContent.includes('<script>')",
+            arg=text_sel,
+        )
+        # An img's onerror, if it were going to fire, fires as soon as the
+        # broken load is detected; wait_for_timeout rather than a bare sleep
+        # pumps the page so that callback, if scheduled at all, has actually
+        # run by the time the assertion below reads it.
+        page.wait_for_timeout(200)
+
+        assert page.evaluate("() => window.__xssFired") is False
+        assert page.evaluate("() => document.querySelectorAll('#chatLog script').length") == 0
+        assert page.evaluate("() => document.querySelectorAll('#chatLog img').length") == 0
+        rendered = page.evaluate("(sel) => document.querySelector(sel).textContent", text_sel)
+        assert "<script>" in rendered
+        assert "onerror" in rendered
+    finally:
+        page.close()
