@@ -67,8 +67,6 @@ Two details make step 3 behave sensibly rather than fighting you. A part still b
 
 Mesh does not choose your CAD toolchain, and does not supply one. Whatever the agent can install or run in that folder is what you get; OpenSCAD, build123d, CadQuery and a hand-written mesh generator all work the same way from Mesh's point of view, because all it watches for is the STL. If you have a preference, say so in the first message, or put it in a `CLAUDE.md` in the folder, which the agent reads.
 
-What the agent cannot do yet is operate the viewer: it cannot frame a pin for you, hide a part, or see what is currently on screen. It works from the coordinates in your comments and from the files on disk.
-
 ## Placing pins
 
 1. Click **Navigate** in the top bar to switch it to **Add pin**.
@@ -108,9 +106,9 @@ The split is by consequence, not by tool:
 
 Three buttons:
 
-- **Allow** — this one call.
-- **Always allow** — this tool for the rest of the session, and remembered in `.mesh/permissions.toml` for future runs in this directory. Never offered for `Bash`, and refused for it even if something asks: one careless click should not become a standing grant of shell access.
-- **Deny** — with an optional reason, which the agent receives verbatim. "Not that file, change the enclosure instead" is more useful to it than a bare refusal.
+- **Allow**, this one call.
+- **Always allow**, this tool for the rest of the session, and remembered in `.mesh/permissions.toml` for future runs in this directory. Never offered for `Bash`, and refused for it even if something asks: one careless click should not become a standing grant of shell access.
+- **Deny**, with an optional reason, which the agent receives verbatim. "Not that file, change the enclosure instead" is more useful to it than a bare refusal.
 
 A card stays on screen, dimmed, while your decision is in flight, and disappears when the server confirms it. If you have the same card open on a phone and a laptop and answer on both, the second one is told its decision did not apply and what happened instead, rather than silently appearing to work.
 
