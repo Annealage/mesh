@@ -370,8 +370,6 @@ export function initChat({ send }) {
 
   bannerCloseBtn.addEventListener("click", () => store.clearChatBanner());
 
-  });
-
   function handleHello(session) {
     if (session) store.setChatAgentStatus(session.agent);
   }
