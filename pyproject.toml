@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "annealage-mesh"
 version = "0.1.0"
-description = "Located pin-comment review for 3D-print STL models: a local 3D viewer with an agent chat pane beside it, exchanging comments pinned to exact coordinates"
+description = "Build 3D-printable parts with an agent: a local 3D viewer beside a chat pane, where regenerated models appear live and feedback is pinned to exact coordinates"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "PolyForm-Noncommercial-1.0.0"

@@ -1,26 +1,38 @@
 # Annealage Mesh
 
-Reviewing a 3D-printed part with an AI agent means describing geometry in words. "No, the inside corner on the far wall near the fan, not that one." It is slow, and half the time the agent picks the wrong face anyway.
+Annealage Mesh turns a folder into a workshop for a 3D-printable part, with the model and the agent building it in the same window.
 
-Annealage Mesh gives you both a model and an agent in one window. Point it at a folder of STL files and it opens a 3D viewer with a chat pane beside it. You click the model to drop a comment pinned to those exact coordinates; the agent reads the coordinates, works in that folder, and pins its own callouts back onto the geometry where you can see them. Nobody has to describe anything.
+Describe the part. The agent writes the CAD source in that folder, runs it, and the STL it produces appears in the viewer beside the chat. Look at the result, click the face that is wrong, say why. It edits the source, regenerates, and the geometry updates in front of you. Nobody describes a location in words, and nobody reloads anything.
 
 ![The three-pane view: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](docs/mesh-three-pane.png)
 
-## What it does
+## The loop
 
-**Point instead of describing.** Click a face, type a comment. The pin carries the click location in model space, the surface normal and the part name, so a comment maps to a spot in the CAD script that generated it.
+**Point instead of describing.** Click a face and type. The comment carries the click point in model space, the surface normal and the part name, so it maps to a spot in the source that generated it rather than to a paragraph of "the inside corner near the fan, not that one".
 
-**The agent is in the window.** The chat pane is a full Claude Code session whose working directory is the folder being served, so it can read your CAD script, run the generator, measure the STL and edit the source, and you watch it happen next to the model it is talking about. It streams token by token and shows the cost of each turn.
+**The agent works in the folder.** The chat pane is a Claude Code session whose working directory is the directory being served, so it reads and writes the CAD source, runs the generator, measures the mesh, and inspects its own output. You watch that happen next to the thing it is talking about, streaming token by token, with the cost of each turn.
 
-**Callouts come back onto the geometry.** The agent writes a location plus a note and it appears as a cyan pin in your view, live. Review becomes a shared surface pointing at one model instead of two people describing it.
+**Regenerating a part updates the view.** A new STL appears, a rewritten one replaces its geometry, a deleted one goes. The camera stays where you put it, and a part half-written to disk is waited for rather than shown broken. This is what makes it an iteration loop rather than a viewer you keep refreshing.
 
-**You approve what matters.** A shell command confined to the project folder runs without asking. Editing a file, writing outside the folder, or reaching the network raises an approval card showing exactly what was requested, and you allow it, always-allow it, or deny it with a reason the agent receives.
+**Callouts come back onto the geometry.** The agent writes a location and a note; it appears as a cyan pin in your view. So it can ask "is this the wall you meant?" by pointing, and you can answer by pinning next to it.
+
+**You approve what matters.** A shell command confined to the project folder runs without asking, which is what makes regenerating a part fast enough to iterate on. Editing a file, writing outside the folder, or reaching the network raises a card showing exactly what was requested, to allow, always-allow, or deny with a reason the agent receives.
 
 ![An approval card for a Write, showing the full file path and content, with Allow, Always allow and Deny](docs/mesh-approval.png)
 
-**It works from a phone.** The panes become tabs, navigation is touch, and pins and approvals both work. Reviewing a print on the phone next to the printer while the agent iterates on the desktop is a real workflow, and `--host tailscale` is one flag.
+**Measure between any two pins.** Pick two pins, yours or the agent's, for ΔX/ΔY/ΔZ and the direct distance, drawn in the view. Useful for answering "how far is this boss from that wall" without going back to the source.
 
-**Measure between any two pins.** Pick two pins, yours or the agent's, for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
+**It works from a phone.** The panes become tabs, navigation is touch, and pins and approvals both work. Reviewing a print next to the printer while the agent iterates on the desktop is a real workflow, and `--host tailscale` is one flag.
+
+## What is not here yet
+
+Stated plainly, because the loop above is real and these are not:
+
+- The agent cannot drive the viewer itself. It cannot frame a pin, hide a part or capture what you are looking at; those tools are the next milestone.
+- No image upload and no sketching on the model. You point with pins, not by drawing.
+- No project scaffolding. Mesh serves a folder you already have; it does not yet set one up, choose a CAD toolchain, or write a starter script.
+
+So the CAD source is whatever you and the agent decide to use in that folder, with whatever generator it can run there. Mesh does not supply or prescribe one.
 
 ## Install
 
@@ -30,7 +42,7 @@ Be ready for the size: the SDK bundles the Claude Code CLI itself, so installing
 
 Run it without installing anything:
 
-    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/stls
+    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/part
 
 Or install it as a tool:
 
@@ -42,16 +54,16 @@ Or install it as a tool:
 
 ## Using it
 
-    annealage-mesh ./build
+    annealage-mesh ./part
 
-It serves the directory, prints the URL with a per-run token, and opens your browser. Every `.stl` in the tree appears in the viewer.
+It serves the directory, prints the URL with a per-run token, and opens your browser. Every `.stl` in the tree appears in the viewer, including ones that arrive later.
 
 - Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan.
 - Switch to **Add pin**, click the model, then type a comment against the pin in the panel.
-- **Submit** writes your pins to `mesh-comments.json` in the served directory.
+- **Submit** writes your pins to `mesh-comments.json`, which is what the agent reads.
 - Type in the chat pane to put the agent to work in that folder.
 
-Full walkthrough, including sessions, the approval model, remote access and every flag: **[docs/user-guide.md](docs/user-guide.md)**.
+Full walkthrough, including the modelling loop, sessions, the approval model, remote access and every flag: **[docs/user-guide.md](docs/user-guide.md)**.
 
 ## What it puts in your folder
 
@@ -59,11 +71,13 @@ Full walkthrough, including sessions, the approval model, remote access and ever
 - `mesh-callouts.json` — the agent's callouts. Anything here shows up as a cyan pin, live.
 - `.mesh/` — session transcripts, remembered approvals, and the lock that stops two servers fighting over one directory.
 
+Everything else in the folder is yours and the agent's: the CAD source, the STLs, whatever build script you use.
+
 ## Security
 
 Mesh hands an AI agent a shell in a directory you chose, and serves a page that can drive it, so it is worth being plain about the boundaries.
 
-**The agent's shell is confined.** Writes land inside the project folder; writes elsewhere and network access are refused by the sandbox or reach you as an approval card. The startup banner states which posture is actually in effect every run, rather than assuming the one it asked for. Note the honest limit: the sandbox restricts writes and network, **not reads**, so a confined shell can still read any file your user can.
+**The agent's shell is confined.** Writes land inside the project folder; writes elsewhere and network access are refused by the sandbox or reach you as an approval card. The model cannot opt out of that containment for a command by asking. The startup banner states which posture is actually in effect every run, rather than assuming the one it asked for. Note the honest limit: the sandbox restricts writes and network, **not reads**, so a confined shell can still read any file your user can.
 
 **The server is bound to loopback and tokened.** Non-loopback binds are supported, not hidden behind a scare-flag, and the banner tells you what the server is reachable on every run. On any non-loopback bind the token stops being defence in depth and becomes the control that matters.
 

@@ -1,11 +1,12 @@
 # Annealage Mesh user guide
 
-This is the full walkthrough. For what the tool is and how to install it, start with the [README](../README.md).
+This is the full walkthrough for using Mesh to build and review a 3D-printable part with an agent. For what the tool is and how to install it, start with the [README](../README.md).
 
 ## Contents
 
 - [First run](#first-run)
 - [The three panes](#the-three-panes)
+- [The modelling loop](#the-modelling-loop)
 - [Placing pins](#placing-pins)
 - [Working with the agent](#working-with-the-agent)
 - [Approving what the agent does](#approving-what-the-agent-does)
@@ -44,11 +45,29 @@ Your browser opens automatically. `--no-open` stops that.
 
 **The model**, on the left, is the 3D view. Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan. `Fit` reframes everything visible; `Z-up` switches which axis is up, for models exported from a Y-up tool.
 
-**Review**, in the middle, lists the parts, your pins, the agent's callouts, and the measure controls. Every `.stl` under the served directory appears under **Parts** with a colour and a visibility checkbox. Hiding a part also stops you pinning it, since you can only pin what you can see.
+**Review**, in the middle, lists the parts, your pins, the agent's callouts, and the measure controls. Every `.stl` under the served directory appears under **Parts** with a colour and a visibility checkbox, including ones generated after the page was opened. A part keeps its colour for the life of the page, so a newly generated part does not recolour the others. Hiding a part also stops you pinning it, since you can only pin what you can see.
 
 **Chat**, on the right, is the agent. It shows a status pill (Connecting, Ready, Unavailable), the transcript, tool cards you can expand, approval cards, and the composer.
 
 Agent health never affects the viewer. If the agent cannot start, or dies mid-session, the model, the pins and Submit keep working and the chat pane tells you what happened and what to do.
+
+## The modelling loop
+
+This is what the tool is for, so it is worth spelling out as a sequence.
+
+1. **You describe the part**, in the chat pane, in whatever terms you would use to a colleague. "A shroud for a 40 mm fan, 38 mm tall, with a 3 mm flange and four M3 holes on a 32 mm square."
+2. **The agent writes the source and runs it.** It has a shell in this folder, so it creates whatever script the toolchain you are using needs, runs it, and produces an STL. A command confined to this folder runs without asking, which is what keeps this step quick enough to repeat.
+3. **The part appears.** You do not reload and you do not restart anything. A new STL shows up in the viewer with its own colour and its own checkbox; a regenerated one replaces the geometry in place, with the camera left exactly where you put it.
+4. **You point at what is wrong.** Switch to Add pin, click the face, type the problem. Submit.
+5. **The agent reads the coordinates and revises.** It edits the source, regenerates, and step 3 happens again.
+
+Repeat until the part is right, then print it.
+
+Two details make step 3 behave sensibly rather than fighting you. A part still being written to disk is waited for rather than shown, so you never see a half-generated mesh or a load failure for a file that was about to be fine. And a part regenerated twenty times leaves one mesh in the scene, not twenty stacked copies.
+
+Mesh does not choose your CAD toolchain, and does not supply one. Whatever the agent can install or run in that folder is what you get; OpenSCAD, build123d, CadQuery and a hand-written mesh generator all work the same way from Mesh's point of view, because all it watches for is the STL. If you have a preference, say so in the first message, or put it in a `CLAUDE.md` in the folder, which the agent reads.
+
+What the agent cannot do yet is operate the viewer: it cannot frame a pin for you, hide a part, or see what is currently on screen. It works from the coordinates in your comments and from the files on disk.
 
 ## Placing pins
 
@@ -69,12 +88,13 @@ The chat pane is a Claude Code session whose working directory **is** the folder
 
 Useful things to ask, in rough order of how much they play to the tool's strengths:
 
+- "Write the OpenSCAD for a 40 mm fan shroud, 38 mm tall, and generate the STL."
 - "Read `mesh-comments.json` and address the pin on the fan shroud."
 - "The rim near pin 2 looks thin. Measure the wall there and tell me what it is."
 - "Regenerate the shroud with a 1.2 mm rim and tell me what changed."
 - "Put a callout on each face you think will need support."
 
-That last one is the loop worth understanding: when the agent writes `mesh-callouts.json`, those callouts appear in your view within a fraction of a second, pinned to the coordinates it chose. You can then pin a reply next to its callout and Submit, and it reads your coordinates back. Neither side ever describes a location in words.
+That last one is the other half of the pointing: when the agent writes `mesh-callouts.json`, those callouts appear in your view within a fraction of a second, pinned to the coordinates it chose. You can then pin a reply next to its callout and Submit, and it reads your coordinates back. Neither side ever describes a location in words.
 
 The composer sends on the button; **Interrupt** stops a turn already in flight. Each completed turn shows its stop reason and cost.
 
@@ -151,6 +171,7 @@ The same digest is checked before every tool call, so if that configuration chan
 | `mesh-comments.json` | Your pins, rewritten on each Submit. |
 | `mesh-comments.log` | Every Submit ever, appended, one JSON object per line. |
 | `mesh-callouts.json` | The agent's callouts. Edit it by hand and the viewer updates live. |
+| `*.stl` | Your parts. Added, regenerated or deleted, the viewer follows within a fraction of a second. |
 | `.mesh/sessions/` | One directory per session, holding its event log. |
 | `.mesh/permissions.toml` | Tools you chose "Always allow" for. Plain TOML, safe to edit or delete. |
 | `.mesh/lock` | Held while a server is running here. Stale locks are reclaimed automatically. |
@@ -187,7 +208,9 @@ Only `.stl` files are served, and only ones that are regular files inside the se
 
 **"It is serving:" and a URL.** A Mesh is already running for this directory. Open the URL it printed, or stop the other one.
 
-**A model does not appear.** It must be a regular `.stl` file inside the served tree. Symlinks are refused, and files under dot-directories are skipped.
+**A model does not appear.** It must be a regular `.stl` file inside the served tree. Symlinks are refused, and files under dot-directories are skipped. A part the agent has just generated should show up within about a second; if it does not, check the connection pill in the top bar, since the update is pushed over the WebSocket and a page showing "Reopen URL" is not receiving pushes at all.
+
+**A regenerated part still looks like the old one.** Same cause: the push needs a live connection. Reopen the URL printed in the terminal.
 
 **The page says it is reconnecting.** The server went away or the network dropped. It reconnects on its own and replays what it missed; callouts fall back to polling while the socket is down so the view stays current either way.
 
