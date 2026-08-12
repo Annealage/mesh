@@ -68,7 +68,7 @@ The agent's shell runs sandboxed, so a command that stays inside the project fol
 
 ![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](docs/mesh-approval.png)
 
-Two things worth knowing about the containment. It stops writes and network, not reads, so a sandboxed shell can still read anything your user can, `~/.ssh` included. And the model can't drop the sandbox for a command by asking, which it does try if you let it.
+Two things worth knowing about the containment. It stops writes and network, not reads, so a sandboxed shell can still read anything your user can. And the model can't drop the sandbox for a command by asking, which it does try if you let it.
 
 If the folder you point it at has its own `.claude/settings.json` or `.mcp.json` in it, mesh won't start the agent until you've said you trust that folder. Those files can declare hooks, hooks are shell commands, and one kind runs before you've typed anything at all, so an unpacked model archive off the internet isn't something to hand a shell to sight unseen. Read them, then `--trust-project-config` accepts them, recorded against the exact contents you read so any later edit asks again.
 
