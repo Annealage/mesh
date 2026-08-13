@@ -51,6 +51,8 @@ It starts a local server, prints the URL with a per-run token in it, and opens y
 - The agent works the viewer too, not just the folder. It can move the camera, hide and show parts, screenshot what's on screen and pin its own callouts, so "show me the underside of that boss" is something it does rather than tells you to do.
 - Hit Pause in the topbar and everything that changes the view gets refused until you hit it again, so you can line up a shot or type a comment without it moving underneath you. It can still look while paused.
 - Need a distance between two features? Pick any two placed pins (yours or the agent's) in the "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
+- Attach a picture to a message with the paperclip, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
+- Hit "Sketch" to draw straight on the 3D view, circle the wall that's wrong, and send that as the picture. Quicker than a pin when the shape of the problem is the point.
 
 It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan / zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
 
@@ -62,7 +64,7 @@ A few files turn up in the served folder:
 
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
 - `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (cyan, read-only). This is how an agent points back at the model.
-- `images/` - screenshots the agent saved, meant to be committed.
+- `images/` - pictures you attached, sketches you drew, and screenshots the agent saved. Meant to be committed.
 - `.mesh/` - session transcripts, any allow-always decisions you made, and a lock file so two servers can't fight over one folder.
 
 ## What it'll ask you about

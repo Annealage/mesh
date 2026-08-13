@@ -6,6 +6,25 @@ body { display: flex; flex-direction: column; }
 
 #app canvas { touch-action: none; display: block; }
 
+/* ---------- sketch overlay (sketch.js) ----------
+   Sits above the renderer's own canvas for as long as sketch mode is on: an
+   absolutely-positioned sibling appended after that canvas paints above it
+   with no z-index needed, which is what keeps every pointer event aimed at
+   it rather than reaching OrbitControls' listeners underneath. */
+#app canvas.sketch-overlay { position: absolute; inset: 0; cursor: crosshair; }
+.sketchbar {
+  position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 1;
+  display: flex; gap: 6px; padding: 6px; border-radius: 8px;
+  background: rgba(20,23,28,.92); border: 1px solid #3a3f47; backdrop-filter: blur(4px);
+}
+.sketchbar button {
+  border-radius: 6px; padding: 0 13px; min-height: 34px; border: 1px solid #3a3f47;
+  background: #2a2e35; color: #d6d8dc; font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
+}
+.sketchbar button:hover { background: #333941; }
+.sketchbar button.primary { background: #35c7e0; border-color: #35c7e0; color: #06222b; }
+.sketchbar button.primary:hover { background: #4fd3e8; }
+
 /* ---------- top bar ---------- */
 #topbar {
   flex: none; height: var(--bar);
@@ -53,7 +72,11 @@ body { display: flex; flex-direction: column; }
 
 /* ---------- main row: canvas plus side panel ---------- */
 #main { flex: 1; min-height: 0; display: flex; flex-direction: row; overflow: hidden; }
-#app { flex: 1; min-width: 0; }
+/* position: relative makes #app the positioning context for the sketch
+   overlay (sketch.js): an absolutely-positioned child with inset: 0 then
+   fills exactly the same content box three-scene.js's own ResizeObserver
+   sizes the renderer's canvas from. */
+#app { flex: 1; min-width: 0; position: relative; }
 
 #side {
   flex: 0 0 var(--side-w); min-width: 0;
@@ -216,13 +239,20 @@ pre.toolresult.error { color: #e8a0a0; }
   padding: 6px 7px; font: inherit; font-size: 12px;
 }
 
-#chatComposer { flex: none; border-top: 1px solid #2c313a; padding: 10px 14px; display: flex; gap: 8px; align-items: flex-end; }
+#chatComposer { flex: none; border-top: 1px solid #2c313a; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
+#chatComposerRow { display: flex; gap: 8px; align-items: flex-end; }
 #chatInput {
   flex: 1; resize: vertical; min-height: 38px; max-height: 160px;
   background: #1b1e24; color: #d6d8dc; border: 1px solid #2f343d; border-radius: 7px;
   padding: 9px 10px; font: inherit;
 }
 #chatInput:focus { outline: none; border-color: #35c7e0; }
+.attachbtn {
+  flex: none; border-radius: 7px; width: 38px; min-height: 38px; border: 1px solid #3a3f47;
+  background: #2a2e35; color: #d6d8dc; font-size: 15px; cursor: pointer; touch-action: manipulation;
+}
+.attachbtn:hover { background: #333941; }
+.attachbtn.on { background: #35c7e0; border-color: #35c7e0; color: #06222b; }
 .chatbtns { display: flex; flex-direction: column; gap: 6px; }
 .chatbtns button {
   border-radius: 7px; padding: 0 13px; min-height: 38px; border: 1px solid #3a3f47;
@@ -232,6 +262,54 @@ pre.toolresult.error { color: #e8a0a0; }
 .chatbtns button#chatSend { background: #35c7e0; border-color: #35c7e0; color: #06222b; }
 .chatbtns button#chatSend:hover { background: #4fd3e8; }
 .chatbtns button:disabled { opacity: .45; cursor: default; }
+
+/* The chip strip above the composer row, and the same chip shape reused in a
+   sent user bubble's thumbnail row (.msg.user .attachthumbs below): a chip is
+   36px so it reads as a thumbnail rather than an icon, with its three
+   mutually-exclusive states (uploading, done, error) toggled by a class
+   rather than three different elements, so a chip keeps one identity as an
+   upload moves from one state to the next. */
+.attachstrip { display: flex; flex-wrap: wrap; gap: 8px; }
+/* An author `display` outranks the UA sheet's [hidden] rule, so the strip's
+   own hidden attribute has to be honoured here or it would do nothing. */
+.attachstrip[hidden] { display: none; }
+.attachchip {
+  position: relative; width: 46px; height: 46px; border-radius: 7px;
+  border: 1px solid #3a3f47; background: #1b1e24; overflow: visible;
+  display: flex; align-items: center; justify-content: center;
+}
+.attachchip .attachthumb {
+  width: 100%; height: 100%; object-fit: cover; border-radius: 6px; display: block;
+}
+.attachchip .attachspinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid #3a3f47; border-top-color: #35c7e0;
+  animation: attach-spin .7s linear infinite;
+}
+@keyframes attach-spin { to { transform: rotate(360deg); } }
+.attachchip .attacherr {
+  font-size: 9.5px; line-height: 1.2; color: #e8a0a0; text-align: center; padding: 2px;
+  word-break: break-word;
+}
+.attachchip.error { border-color: #5c2f2f; background: #241717; }
+.attachchip .attachremove {
+  position: absolute; top: -7px; right: -7px; width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid #3a3f47; background: #2a2e35; color: #d6d8dc; font-size: 12px; line-height: 1;
+  cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center;
+}
+.attachchip .attachremove:hover { background: #333941; }
+.attachchip .attachremove[hidden] { display: none; }
+
+/* Drop target: the whole chat pane accepts a file drop, not just the
+   composer, since a pane-wide target is what makes "drop it in chat" easy to
+   aim for; the highlight only needs to be visible while it is armed. */
+#chat.dragover { outline: 2px dashed #35c7e0; outline-offset: -2px; background: rgba(53,199,224,.06); }
+
+/* A sent turn's attached images, alongside its text (see chat.js's
+   renderUserAttachments): same chip size as the composer strip, but without
+   the spinner/error states, since only a completed upload is ever sent. */
+.msg.user .attachthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.msg.user .attachthumbs img { width: 72px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid #4a3520; display: block; }
 
 #toast { position: fixed; bottom: 16px; left: calc((100vw - var(--side-w) - var(--chat-w)) / 2); transform: translateX(-50%); z-index: 20; padding: 10px 18px; border-radius: 8px; font-weight: 600; display: none; box-shadow: 0 6px 24px #0008; text-align: center; }
 #toast.ok { background: #1e3a24; color: #9fe0a8; border: 1px solid #2f5c39; }

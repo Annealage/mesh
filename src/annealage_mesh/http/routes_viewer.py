@@ -50,7 +50,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .. import paths
-from . import Response, file_response, not_modified
+from . import CHUNK_SIZE, Response, file_response, not_modified
 
 # Mode for a submission file this process creates. An existing file's own
 # mode is preserved instead; see _write_comments.
@@ -372,7 +372,26 @@ def register_routes(app, serve_dir):
 
     @app.post("/submit")
     async def submit(req):
-        raw = req.body or b""
+        # The body is never buffered (app.py sets max_body_length to 0), so
+        # it is read off req.stream here rather than through req.body. The
+        # length check comes first and unconditionally: reading the stream
+        # with no declared length would, on a real connection, read
+        # forever, since req.stream is then the raw client reader and
+        # nothing ever makes such a read return.
+        content_length = req.content_length
+        if content_length <= 0:
+            return {"ok": False, "error": "Content-Length is required and "
+                    "must be greater than zero"}, 411
+        chunks = []
+        total = 0
+        while total < content_length:
+            chunk = await req.stream.read(min(CHUNK_SIZE, content_length - total))
+            if not chunk:
+                return {"ok": False, "error": "body ended after %d of %d bytes"
+                        % (total, content_length)}, 400
+            chunks.append(chunk)
+            total += len(chunk)
+        raw = b"".join(chunks)
         try:
             data = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:

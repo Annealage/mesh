@@ -35,12 +35,12 @@ from .. import protocol
 from ..session.base import PauseChanged, UnknownRequest
 from ..viewers import ViewerRegistry
 
-# Inbound frame ceiling. Set explicitly because microdot's default,
+# Inbound frame ceiling, and a line that must stay. Microdot's default,
 # ``max_message_length = -1``, means "fall back to Request.max_body_length",
-# which app.py raises to 8 MiB for pin submissions: without this line, an
-# unrelated route's upload allowance silently becomes the per-frame buffer
-# ceiling on every socket, and a frame is buffered whole before it is
-# validated.
+# and app.py sets that to 0 so every request body is streamed rather than
+# buffered. An inherited ceiling of zero refuses every frame, so without this
+# assignment a viewer's opening ``hello`` is rejected and the socket closes
+# with nothing a test client can read off the wire.
 #
 # 4 MiB rather than something tighter because of one frame kind: the ``result``
 # answering a ``capture_view`` call carries a screenshot of the 3D canvas as a

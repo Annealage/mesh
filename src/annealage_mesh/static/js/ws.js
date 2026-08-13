@@ -110,6 +110,18 @@ function extractToken() {
 
 const TOKEN = extractToken();
 
+/**
+ * The per-run token, for the one other module allowed to authenticate with
+ * it: `uploads.js`, whose `POST /upload` needs the same token `/ws` uses.
+ * Reading it here rather than a second `extractToken()` call is what keeps
+ * this module the token's only holder (see the header comment): the
+ * fragment is already stripped from `location.hash` by the time any other
+ * module's top-level code runs, since this module evaluates first.
+ */
+export function authToken() {
+  return TOKEN;
+}
+
 function makeTabId() {
   if (window.crypto && typeof window.crypto.randomUUID === "function") {
     return window.crypto.randomUUID();

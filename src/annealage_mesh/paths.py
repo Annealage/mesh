@@ -20,9 +20,11 @@ Files this module only locates, so writer and resolver agree where they live:
 
 import os
 import re
+import secrets
 import stat
 import sys
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -57,12 +59,14 @@ CONTENT_TYPES = {
 # labelled as active content on this server's own origin, from where a
 # script could read /manifest, every indexed model, and POST /submit. Any
 # extension not listed here is served as application/octet-stream rather
-# than falling back to a guess; the actual image types a reviewer's photos
-# and screenshots use are the ones listed.
+# than falling back to a guess; PNG, JPEG and WEBP are the three formats
+# sniff_image ever names, and are the only ones a reviewer's own photos,
+# screenshots and uploads use.
 ASSET_CONTENT_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
 }
 
 # The manifest scan indexes files with these extensions, at any depth under
@@ -162,6 +166,71 @@ _IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,95}\.(png|jpg|jpeg|we
 # Mode for an image this package creates. Matches the record files rather than
 # mkstemp's 0600, because these are meant to be committed and looked at.
 _IMAGE_FILE_MODE = 0o644
+
+# Cap on the declared size of an image this package accepts into images/,
+# whether uploaded through the chat route or read back off disk for an
+# inline turn block. Equal to review_tools.MAX_SNAPSHOT_BYTES, since both
+# bound one image landing in images/ as git-tracked evidence, and no larger
+# than app.MAX_REQUEST_BODY, which bounds a whole request body for every
+# route in the process. The two constants are equal today, which is why an
+# oversized upload's Content-Length is answered by microdot's own 413
+# before a route ever consults this one.
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+# Cap on one image copied *into a turn* as an inline base64 block, which is a
+# different and much tighter question than what may be stored under images/.
+# Two ceilings bind it, both outside this process: the Messages API refuses an
+# inline image whose base64 payload runs past roughly 5 MB, and the agent SDK's
+# subprocess transport refuses to read a line longer than its own buffer, which
+# session/sdk.py sizes from this constant. Base64 inflates by four thirds, so
+# 3.5 MiB decoded leaves room under both for the JSON around it.
+#
+# A file above this is still stored, still served by /asset and still named to
+# the model in the turn's text; only the inline copy is withheld, because a
+# photograph a human deliberately attached is evidence worth keeping at full
+# resolution, and the model can read it by path with its own tools. Downscaling
+# instead would mean an image library, and two runtime dependencies is a
+# property of this package worth more than the convenience.
+MAX_INLINE_IMAGE_BYTES = 3584 * 1024
+
+# Magic-byte prefixes sniff_image matches at the start of a file's bytes,
+# never against a client-supplied Content-Type or filename: an image's
+# format is a property of its bytes, and a served origin that trusted a
+# label disagreeing with them could be made to serve a script as a picture.
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+# The shortest head sniff_image will match against, and equally the most it
+# ever looks at, so a caller streaming a body knows exactly how few bytes it
+# must buffer before a verdict is available. WEBP's own signature spans the
+# RIFF chunk header (bytes 0-3) and the four-byte format code at bytes 8-11,
+# so nothing shorter can ever distinguish WEBP from some other RIFF-contained
+# format; PNG and JPEG have shorter signatures of their own, but the same
+# floor applies to all three, so one rule governs every format this function
+# recognises.
+SNIFF_MIN_BYTES = 12
+
+
+def sniff_image(head):
+    """Return ``(media_type, suffix)`` for the image ``head`` begins, else None.
+
+    ``head`` is the first bytes of a file's content. Fewer than
+    ``SNIFF_MIN_BYTES`` of them is treated as unrecognised rather than
+    matched against a shorter prefix, so a read that stopped early is
+    refused the same way a genuinely different format is, never mistaken
+    for one of the three this function knows by having matched only part
+    of its signature. Bytes past that floor are never examined, so a caller
+    has read enough as soon as it has that many.
+    """
+    if len(head) < SNIFF_MIN_BYTES:
+        return None
+    if head.startswith(_PNG_MAGIC):
+        return "image/png", ".png"
+    if head.startswith(_JPEG_MAGIC):
+        return "image/jpeg", ".jpg"
+    if head[0:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp", ".webp"
+    return None
 
 
 def resolve_serve_dir(path):
@@ -970,6 +1039,43 @@ def create_image_file(serve_dir, name):
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(target, flags, _IMAGE_FILE_MODE)
     return fd, target
+
+
+# How many names create_unique_image_file tries before raising FileExistsError.
+# Each attempt draws a fresh random suffix, so two attempts collide only by
+# chance; twenty is far more headroom than that chance ever needs while still
+# bounding the loop.
+UNIQUE_IMAGE_NAME_ATTEMPTS = 20
+
+
+def create_unique_image_file(serve_dir, slug, suffix):
+    """Create a fresh, server-named file under ``serve_dir``/images/ for writing.
+
+    Returns whatever ``create_image_file`` returns for the name this chooses:
+    ``(fd, target)``, or None when the ``images`` entry is not something safe
+    to write into, in which case no attempt at a second name is made, since a
+    symlinked ``images/`` is not fixed by trying another name. Raises
+    ``FileExistsError`` if every attempt lands on a name already taken, which
+    takes the same slug, the same second and the same random suffix landing
+    together, on every one of ``UNIQUE_IMAGE_NAME_ATTEMPTS`` tries.
+
+    The name is ``<slug>-<%Y%m%d-%H%M%S>-<8 hex chars><suffix>``, built here
+    and nowhere else. ``slug`` and ``suffix`` are the only inputs the name is
+    built from, and neither is a client-supplied filename: a caller that wants
+    a client's own upload named this way passes the slug its own query
+    parameter validated and the suffix ``sniff_image`` returned for the
+    bytes actually received, not anything the client typed as a name.
+    """
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    name = None
+    for _attempt in range(UNIQUE_IMAGE_NAME_ATTEMPTS):
+        name = "%s-%s-%s%s" % (slug, stamp, secrets.token_hex(4), suffix)
+        try:
+            created = create_image_file(serve_dir, name)
+        except FileExistsError:
+            continue
+        return created
+    raise FileExistsError(name)
 
 
 def safe_join(base, rel):

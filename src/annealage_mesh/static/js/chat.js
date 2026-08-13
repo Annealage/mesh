@@ -23,10 +23,44 @@
  * an existing element in place rather than replacing it, which is what
  * keeps a `<details>` tool card's open/closed state and the composer's
  * focus and caret position untouched by an unrelated event arriving.
+ *
+ * Attachment chips follow the same reconciliation pattern, keyed by the
+ * store's own attachment id rather than by `path`, because a chip exists (in
+ * its "uploading" state) before an upload has produced a path at all. Every
+ * chip is drawn from `state.chat.attachments`, whatever state the entry is
+ * in, so this module keeps no second record of what is attached and cannot
+ * disagree with the one the cap and Send both read. `uploadImage` is the one
+ * function behind all three ways an image enters the composer: the file
+ * picker, a paste onto the textarea, and a drop onto the chat pane. A sent
+ * turn's own thumbnails are a second, simpler case: built once from
+ * `record.user`'s `image_path` blocks and never reconciled again, since a
+ * turn's composer blocks do not change after the turn is sent.
  */
 
 import { store } from "./store.js";
+import { uploadImage } from "./uploads.js";
 import { toast } from "./ui.js";
+
+// The three image types the upload route accepts (paths.py's
+// `_IMAGE_NAME_RE`/`sniff_image`) and the same byte cap it enforces
+// (`paths.MAX_IMAGE_BYTES`). Checking both here means a wrong-typed file or
+// an oversized drop is refused before a single byte leaves the page, rather
+// than after the whole body has streamed to the server only to be refused
+// there. A file this accepts may still be too large to send to the model
+// inline, which the server decides and reports per attachment; it is stored
+// and named either way, so that is not a reason to refuse it here.
+const ACCEPTED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp"];
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+function localAttachmentRefusal(file) {
+  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    return file.name + ": only PNG, JPEG or WEBP images can be attached";
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    return file.name + " is larger than the 8 MB upload limit";
+  }
+  return null;
+}
 
 // What a card shows while its decision is in flight, keyed by the decision
 // this view sent.
@@ -144,16 +178,44 @@ function formatToolInput(input) {
     .join("\n");
 }
 
-// The composer only ever builds {type: "text", text} blocks (protocol.py's
-// _BLOCK_SPECS also allows image_path, but there is no upload control in
-// this pane), so this only needs to join the text blocks a `turn` record's
-// `user` field carries.
+// Joins the text blocks of a turn's composer blocks for the bubble's text;
+// the same blocks' `image_path` entries are rendered separately, as
+// thumbnails, by renderUserAttachments below.
 function blocksToText(blocks) {
   if (!blocks) return "";
   return blocks
     .filter((b) => b.type === "text")
     .map((b) => b.text)
     .join("\n\n");
+}
+
+// An `image_path` block's `path` is "images/<name>" (protocol.py's block
+// shape, one directory component); the image itself is served one
+// component further in, at "/asset/<name>".
+function assetUrlForImagePath(path) {
+  const name = path.startsWith("images/") ? path.slice("images/".length) : path;
+  return "/asset/" + name;
+}
+
+// Builds a sent turn's own thumbnail row from its composer blocks, once:
+// `container` starts empty and this only ever appends, since `record.user`
+// is set once (ensureTurn) and never changes afterwards. This is why a sent
+// turn's images come from the local record rather than from the agent's
+// echo of the turn: the SDK's message parser drops an image block out of
+// that echo with no error, so the echo cannot be relied on to show what was
+// actually sent, while the composer's own blocks already are that answer.
+// Every element is built with createElement and given its `src` directly;
+// this pane never assigns HTML from a value that did not originate here.
+function renderUserAttachments(container, blocks) {
+  if (container.childElementCount || !blocks) return;
+  blocks
+    .filter((b) => b.type === "image_path")
+    .forEach((b) => {
+      const img = document.createElement("img");
+      img.src = assetUrlForImagePath(b.path);
+      img.alt = "";
+      container.appendChild(img);
+    });
 }
 
 const AGENT_LABEL = { connecting: "Connecting…", ready: "Ready", unavailable: "Unavailable" };
@@ -174,11 +236,135 @@ export function initChat({ send }) {
   const chatInputEl = document.getElementById("chatInput");
   const chatSendBtn = document.getElementById("chatSend");
   const chatInterruptBtn = document.getElementById("chatInterrupt");
+  const chatAttachBtn = document.getElementById("chatAttachBtn");
+  const chatFileInput = document.getElementById("chatFileInput");
+  const chatAttachStripEl = document.getElementById("chatAttachStrip");
+  const chatPaneEl = document.getElementById("chat");
 
   // turn number -> {row, textEl, toolsEl, metaEl, userEl, tools: Map<tool_use_id, {card, resultEl}>}
   const turnEls = new Map();
   // request_id -> element
   const pendingEls = new Map();
+  // "att:<id>" for each entry in state.chat.attachments, whatever state it is
+  // in. Keyed by the store's id rather than by `path`, since a chip is drawn
+  // for an upload still in flight and that has no path yet.
+  const attachEls = new Map();
+
+  function buildAttachChip() {
+    const chip = document.createElement("div");
+    chip.className = "attachchip";
+    const spinner = document.createElement("div");
+    spinner.className = "attachspinner";
+    const thumb = document.createElement("img");
+    thumb.className = "attachthumb";
+    thumb.hidden = true;
+    thumb.alt = "";
+    const errText = document.createElement("span");
+    errText.className = "attacherr";
+    errText.hidden = true;
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "attachremove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", "Remove attachment");
+    chip.appendChild(spinner);
+    chip.appendChild(thumb);
+    chip.appendChild(errText);
+    chip.appendChild(removeBtn);
+    return { chip, spinner, thumb, errText, removeBtn };
+  }
+
+  // `att` is one entry of state.chat.attachments; the chip element is reused
+  // across its states, keyed by `attachEls` above.
+  function updateAttachChip(rec, att) {
+    const uploading = att.state === "uploading";
+    const errored = att.state === "error";
+    const done = att.state === "done";
+    rec.chip.classList.toggle("error", errored);
+    rec.spinner.hidden = !uploading;
+    rec.thumb.hidden = !done;
+    if (done) rec.thumb.src = att.url;
+    rec.errText.hidden = !errored;
+    if (errored) rec.errText.textContent = att.message;
+    // Not removable while still in flight: dropping the slot now would leave
+    // the upload with nowhere to land and no failure yet to dismiss.
+    rec.removeBtn.hidden = uploading;
+    // Triggers the store's own "chat" subscriber (render(), below), which
+    // redraws this strip with the entry gone.
+    rec.removeBtn.onclick = () => store.dropChatAttachment(att.id);
+  }
+
+  function renderAttachStrip(chat) {
+    const keys = chat.attachments.map((a) => "att:" + a.id);
+    chatAttachStripEl.hidden = keys.length === 0;
+    chat.attachments.forEach((att) => {
+      const key = "att:" + att.id;
+      let rec = attachEls.get(key);
+      if (!rec) {
+        rec = buildAttachChip();
+        attachEls.set(key, rec);
+        chatAttachStripEl.appendChild(rec.chip);
+      }
+      updateAttachChip(rec, att);
+    });
+    for (const [key, rec] of attachEls) {
+      if (!keys.includes(key)) {
+        rec.chip.remove();
+        attachEls.delete(key);
+      }
+    }
+  }
+
+  // The one function all three ways of attaching an image call: the file
+  // picker, a paste onto the textarea, and a drop onto this pane. Each file
+  // gets its own chip immediately, in the "uploading" state, so a slow
+  // upload never leaves the human wondering whether the drop or paste was
+  // even noticed.
+  function handleFile(file) {
+    const refusal = localAttachmentRefusal(file);
+    if (refusal) {
+      toast(refusal, false);
+      return;
+    }
+    // Not awaited: several files dropped at once each get their chip and their
+    // request straight away, and each lands in the slot it reserved here.
+    uploadImage(file, "upload");
+  }
+
+  chatAttachBtn.addEventListener("click", () => chatFileInput.click());
+  chatFileInput.addEventListener("change", () => {
+    Array.from(chatFileInput.files || []).forEach(handleFile);
+    // Cleared so picking the same file again still fires "change".
+    chatFileInput.value = "";
+  });
+
+  chatInputEl.addEventListener("paste", (e) => {
+    const files = Array.from((e.clipboardData && e.clipboardData.files) || []).filter((f) =>
+      f.type.startsWith("image/"),
+    );
+    if (!files.length) return; // an ordinary text paste: leave it to the browser
+    e.preventDefault();
+    files.forEach(handleFile);
+  });
+
+  // dragover must be prevented for `drop` to fire at all (the platform
+  // default is to refuse the pane as a drop target); drop must be prevented
+  // separately, or a browser that reaches this handler navigates the whole
+  // tab to the dropped file once the handler returns.
+  chatPaneEl.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    chatPaneEl.classList.add("dragover");
+  });
+  chatPaneEl.addEventListener("dragleave", (e) => {
+    if (!e.relatedTarget || !chatPaneEl.contains(e.relatedTarget)) {
+      chatPaneEl.classList.remove("dragover");
+    }
+  });
+  chatPaneEl.addEventListener("drop", (e) => {
+    e.preventDefault();
+    chatPaneEl.classList.remove("dragover");
+    Array.from((e.dataTransfer && e.dataTransfer.files) || []).forEach(handleFile);
+  });
 
   let stickToBottom = true;
   chatLogEl.addEventListener("scroll", () => {
@@ -224,7 +410,10 @@ export function initChat({ send }) {
     userEl.hidden = true;
     const userText = document.createElement("div");
     userText.className = "text";
+    const userAttachmentsEl = document.createElement("div");
+    userAttachmentsEl.className = "attachthumbs";
     userEl.appendChild(userText);
+    userEl.appendChild(userAttachmentsEl);
 
     const assistantEl = document.createElement("div");
     assistantEl.className = "msg assistant";
@@ -241,13 +430,14 @@ export function initChat({ send }) {
     row.appendChild(userEl);
     row.appendChild(assistantEl);
 
-    return { row, userEl, userText, textEl, toolsEl, metaEl, tools: new Map() };
+    return { row, userEl, userText, userAttachmentsEl, textEl, toolsEl, metaEl, tools: new Map() };
   }
 
   function updateTurnRow(rec, t) {
     if (t.user) {
       rec.userEl.hidden = false;
       rec.userText.textContent = blocksToText(t.user);
+      renderUserAttachments(rec.userAttachmentsEl, t.user);
     }
     rec.textEl.innerHTML = renderModelText(t.text);
 
@@ -409,7 +599,23 @@ export function initChat({ send }) {
     agentStatusEl.textContent = AGENT_LABEL[chat.agentStatus] || chat.agentStatus;
     agentStatusEl.title = AGENT_TITLE[chat.agentStatus] || "";
     agentStatusEl.dataset.state = chat.agentStatus;
-    chatSendBtn.disabled = chat.agentStatus === "unavailable";
+  }
+
+  // The one writer of the Send button's state, because there are two
+  // independent reasons to refuse a send and a function per reason would leave
+  // whichever ran last deciding for both.
+  //
+  // An upload still in flight is a refusal rather than a partial send: posting
+  // the turn without it would silently omit the image the human is waiting on
+  // and then carry it on whatever they typed next, which reads as the picture
+  // having been ignored.
+  function renderSendButton(chat) {
+    const unavailable = chat.agentStatus === "unavailable";
+    const uploading = chat.attachments.some((a) => a.state === "uploading");
+    chatSendBtn.disabled = unavailable || uploading;
+    chatSendBtn.title = uploading
+      ? "Waiting for an attachment to finish uploading"
+      : (unavailable ? AGENT_TITLE.unavailable : "");
   }
 
   function renderBanner(chat) {
@@ -434,6 +640,8 @@ export function initChat({ send }) {
     renderAgentStatus(chat);
     renderBanner(chat);
     renderInterrupt(chat);
+    renderAttachStrip(chat);
+    renderSendButton(chat);
   }
 
   store.subscribe("chat", render);
@@ -441,11 +649,21 @@ export function initChat({ send }) {
 
   function doSend() {
     const text = chatInputEl.value.trim();
-    if (!text) return;
-    const blocks = [{ type: "text", text }];
+    const attachments = store.getState().chat.attachments;
+    // Anything still uploading holds the send: the button is already disabled
+    // for it, and this covers the Enter key, which is not the button.
+    if (attachments.some((a) => a.state === "uploading")) return;
+    const ready = attachments.filter((a) => a.state === "done");
+    if (!text && !ready.length) return; // an attachment with no text is allowed; neither is not
+    const blocks = ready.map((a) => ({ type: "image_path", path: a.path }));
+    // Only when there is something in it. An empty text block is refused by
+    // the API outright, failing the whole turn including the image, and an
+    // attachment with no typed message is a case this composer allows.
+    if (text) blocks.push({ type: "text", text });
     store.queueChatUserTurn(blocks);
     send({ v: 1, type: "turn", blocks });
     chatInputEl.value = "";
+    store.clearChatAttachments();
   }
 
   chatSendBtn.addEventListener("click", doSend);

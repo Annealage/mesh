@@ -19,6 +19,7 @@ import time
 from microdot import Microdot, Request
 
 from . import __version__, net, paths, protocol, sessions, stl
+from .http.routes_chat import register_chat_routes
 from .http.routes_viewer import register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import CalloutsChanged, ModelsChanged
@@ -41,21 +42,28 @@ SHUTDOWN_DRAIN_TIMEOUT = 2.0
 # microdot's request body limits are class attributes on ``Request`` and
 # therefore process-global: raising them (done in configure_request_limits,
 # called from create_app) affects every route this process ever serves, not
-# only /submit, and every other microdot app or test sharing this
-# interpreter. 8 MiB comfortably covers a full-page pin review (microdot's
-# 16 KiB default caps a submission at roughly 68 pins of the {id, part,
-# label, point, normal, faceIndex, comment} shape the viewer sends): a
-# 400-pin submission measures about 84 KB, so 8 MiB is far more headroom
-# than the real payload needs. The actual exposure of that headroom is per
-# in-flight request, not aggregate: microdot buffers a request's whole body
-# before its handler runs and imposes no cap on concurrent connections and
-# no read timeout, so N slow or stalled clients each declaring a large
-# Content-Length can together hold N times this many bytes for as long as
-# they keep their sockets open. That aggregate exposure is unbounded; capping
-# it needs a connection limit or a read timeout, and this module has
-# neither. Both attributes move together:
-# max_body_length gates whether microdot buffers the body into req.body at
-# all, and /submit reads req.body directly rather than streaming req.stream.
+# only /submit and /upload, and every other microdot app or test sharing
+# this interpreter. 8 MiB comfortably covers a full-page pin review
+# (microdot's 16 KiB default caps a submission at roughly 68 pins of the
+# {id, part, label, point, normal, faceIndex, comment} shape the viewer
+# sends): a 400-pin submission measures about 84 KB, so 8 MiB is far more
+# headroom than the real payload needs, and it matches paths.MAX_IMAGE_BYTES,
+# the separate cap /upload enforces on itself. The actual exposure of that
+# headroom is per in-flight request, not aggregate: microdot imposes no cap
+# on concurrent connections and no read timeout, so N slow or stalled
+# clients each declaring a large Content-Length can together hold open N
+# times this many bytes' worth of allowance for as long as they keep their
+# sockets open. That aggregate exposure is unbounded; capping it needs a
+# connection limit or a read timeout, and this module has neither.
+#
+# configure_request_limits sets max_body_length to 0, microdot's documented
+# "always access the body as a stream" value: no route is ever handed a
+# buffered req.body. Every route that reads a body (/submit, /upload)
+# checks Content-Length itself first, refusing a missing or zero value,
+# then reads exactly that many bytes off req.stream in bounded chunks. A
+# route that read the stream without that check would, on a real
+# connection with no declared length, read forever: req.stream is then the
+# raw client reader, and nothing ever makes such a read return.
 MAX_REQUEST_BODY = 8 * 1024 * 1024
 
 
@@ -75,7 +83,7 @@ def configure_request_limits():
     side effect of merely importing this module.
     """
     Request.max_content_length = MAX_REQUEST_BODY
-    Request.max_body_length = MAX_REQUEST_BODY
+    Request.max_body_length = 0
 
 
 def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_PORT,
@@ -119,6 +127,8 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
             return refusal()
 
     register_routes(app, serve_dir)
+    register_chat_routes(app, serve_dir, token=token,
+                         allowed_origins=allowed_origins)
 
     # Set after the session exists, since the broker it belongs to is built by
     # the session factory below; a list with one slot rather than a nonlocal so

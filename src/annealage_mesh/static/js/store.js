@@ -73,7 +73,8 @@
  *                 pre-handshake 403 was confirmed, most likely a stale
  *                 token from a server restart, and the fallback poll runs
  *                 under this state too.
- *   chat          {turns, pendingUser, pending, agentStatus, banner}
+ *   chat          {turns, pendingUser, pending, agentStatus, banner,
+ *                  attachments, uploading}
  *                 the whole chat pane's state.
  *                 `turns` is one record per SDK turn number, `{turn, user,
  *                 text, tools, stopReason, costUsd, complete}`, built up
@@ -97,6 +98,26 @@
  *                 `{kind, text}`, or null once dismissed. A `session_reset`
  *                 also clears `turns` (`resetChatTurns`), because the new
  *                 session's turn numbers start over from 1.
+ *                 `attachments` is one entry per image attached to the
+ *                 message being composed, in the order they were attached,
+ *                 whatever state each is in: `[{id, kind, state, path, url,
+ *                 bytes, mediaType, message}, ...]` where `state` is
+ *                 'uploading' | 'done' | 'error'. The slot is appended before
+ *                 the upload starts and filled in when it lands, so the order
+ *                 is the human's, not the order the network happened to
+ *                 answer in, and both the chips and the `image_path` blocks a
+ *                 turn carries follow it. `id` is the identity, assigned here
+ *                 and monotonic: `path` cannot be, since an entry has no path
+ *                 until its upload has already succeeded. `path` is the
+ *                 "images/<name>" string a turn frame carries and `url` is
+ *                 "/asset/<name>", what the chip's thumbnail and the
+ *                 sent-message thumbnail both fetch; both are null until
+ *                 `state` is 'done', as `message` is until it is 'error'.
+ *                 An upload in flight is therefore visible as a state on the
+ *                 entry itself rather than as a separate count, which is what
+ *                 keeps the cap, the strip and Send reading one record of one
+ *                 fact. `js/uploads.js` is the only module that writes any of
+ *                 it, since it is the only module that performs an upload.
  */
 
 let state = Object.freeze({
@@ -121,8 +142,21 @@ let state = Object.freeze({
     pending: Object.freeze([]),
     agentStatus: "connecting",
     banner: null,
+    attachments: Object.freeze([]),
   }),
 });
+
+// How many images one message may carry. Enforced in exactly one place,
+// `reserveChatAttachment` below, and against uploads in flight as well as
+// finished ones, since both hold a slot: every caller (the composer's own
+// paste, drop and picker paths, and the sketch overlay's composite) is refused
+// the same way, before its request is sent, once a message already has four.
+export const MAX_CHAT_ATTACHMENTS = 4;
+
+// Identity for an attachment slot, assigned in attach order and never reused
+// within a page's lifetime. Not the server's path: a slot exists, and is
+// already drawn as a chip, before any path is known.
+let nextAttachmentId = 1;
 
 // Assigns pin ids. Kept outside `state` because it is a generator, not a
 // fact about the current app; a pin's id, once assigned, is the fact.
@@ -493,6 +527,72 @@ function resetChatTurns() {
   }, ["chat"]);
 }
 
+// Appends an entry for an upload about to start, in the 'uploading' state,
+// and returns its id, or returns null and changes nothing when the message
+// already carries MAX_CHAT_ATTACHMENTS. Reserving the slot before the request
+// rather than on its response is what keeps the strip and the sent blocks in
+// the order the human attached things, and what lets the cap refuse a file
+// before a byte leaves the page or a file is written into the project.
+function reserveChatAttachment(kind) {
+  let id = null;
+  commit(() => {
+    const chat = state.chat;
+    if (chat.attachments.length >= MAX_CHAT_ATTACHMENTS) return;
+    id = nextAttachmentId++;
+    const entry = Object.freeze({
+      id,
+      kind,
+      state: "uploading",
+      path: null,
+      url: null,
+      bytes: null,
+      mediaType: null,
+      message: null,
+    });
+    state = {
+      ...state,
+      chat: Object.freeze({ ...chat, attachments: Object.freeze([...chat.attachments, entry]) }),
+    };
+  }, ["chat"]);
+  return id;
+}
+
+// Fills a reserved entry in place, so it keeps the position it was attached
+// at. An id no longer present (the human removed the chip, or sent the
+// message, while the upload was still in flight) matches nothing and changes
+// nothing, rather than reappearing: the bytes are on the server either way,
+// but a turn references only what is still in this list when it is sent.
+function updateChatAttachment(id, fields) {
+  commit(() => {
+    const chat = state.chat;
+    const attachments = Object.freeze(chat.attachments.map(
+      (a) => (a.id === id ? Object.freeze({ ...a, ...fields }) : a)));
+    state = { ...state, chat: Object.freeze({ ...chat, attachments }) };
+  }, ["chat"]);
+}
+
+function completeChatAttachment(id, { path, url, bytes, mediaType }) {
+  updateChatAttachment(id, { state: "done", path, url, bytes, mediaType });
+}
+
+function failChatAttachment(id, message) {
+  updateChatAttachment(id, { state: "error", message });
+}
+
+function dropChatAttachment(id) {
+  commit(() => {
+    const chat = state.chat;
+    const attachments = Object.freeze(chat.attachments.filter((a) => a.id !== id));
+    state = { ...state, chat: Object.freeze({ ...chat, attachments }) };
+  }, ["chat"]);
+}
+
+function clearChatAttachments() {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, attachments: Object.freeze([]) }) };
+  }, ["chat"]);
+}
+
 export const store = {
   getState,
   subscribe,
@@ -526,4 +626,9 @@ export const store = {
   setChatBanner,
   clearChatBanner,
   resetChatTurns,
+  reserveChatAttachment,
+  completeChatAttachment,
+  failChatAttachment,
+  dropChatAttachment,
+  clearChatAttachments,
 };

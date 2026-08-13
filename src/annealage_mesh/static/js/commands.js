@@ -57,12 +57,12 @@ const CAPTURE_ENCODINGS = [
 // explanation of why. Two thirds of the ceiling leaves room for the JSON the
 // data URL is wrapped in and for a multi-byte character count that is not the
 // same as a byte count.
-const MAX_CAPTURE_CHARS = 2 * 1024 * 1024;
+export const MAX_CAPTURE_CHARS = 2 * 1024 * 1024;
 
 // The largest capture this viewer will render, whatever is asked for. 1568 is
 // the longest edge the API keeps for an image anyway, so anything above it
 // costs encoding time and frame size for pixels the model never sees.
-const MAX_CAPTURE_WIDTH = 1568;
+export const MAX_CAPTURE_WIDTH = 1568;
 
 function round(v, d = 3) {
   const f = Math.pow(10, d);

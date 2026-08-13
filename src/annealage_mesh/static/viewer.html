@@ -78,10 +78,16 @@
     <div id="chatLog"></div>
     <div id="chatPending"></div>
     <div id="chatComposer">
-      <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
-      <div class="chatbtns">
-        <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
-        <button id="chatSend" type="button" class="primary">Send</button>
+      <div id="chatAttachStrip" class="attachstrip" hidden></div>
+      <div id="chatComposerRow">
+        <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+        <button id="chatAttachBtn" type="button" class="attachbtn" title="Attach an image (or paste or drop one into the message box)">📎</button>
+        <button id="chatSketchBtn" type="button" class="attachbtn" title="Draw on the model to point at exactly where you mean">✏️</button>
+        <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
+        <div class="chatbtns">
+          <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
+          <button id="chatSend" type="button" class="primary">Send</button>
+        </div>
       </div>
     </div>
   </aside>

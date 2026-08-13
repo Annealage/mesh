@@ -1704,6 +1704,504 @@ def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
         page.close()
 
 
+# 22. Chat pane: image attachments --------------------------------------------
+
+# A real, decodable 1x1 PNG, not just bytes matching paths.sniff_image's
+# magic-number check: the sent-turn thumbnail test loads this through a real
+# `<img>` and reads it back over `/asset/<name>`, so a file that decoded to
+# nothing would leave that assertion unable to tell a broken image apart
+# from a wrong `src`.
+_TINY_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY"
+    "42YAAAAASUVORK5CYII=")
+
+
+def _drop_files_onto(page, selector, files):
+    """Dispatch a real `dragover` then `drop` `DragEvent` carrying `files` at
+    the element `selector` matches, the same sequence a browser fires for an
+    OS file drag: chat.js's own `dragover` handler must run first (it is what
+    arms the pane as a drop target at all) or `drop` never fires.
+
+    Playwright has no file-drop API of its own (`page.set_input_files` only
+    reaches an `<input type=file>`), so the `File` objects and the
+    `DataTransfer` carrying them are built inside the page, from
+    `files` = `[(name, mime_type, base64_bytes), ...]`.
+    """
+    page.evaluate(
+        """([sel, files]) => {
+            const dt = new DataTransfer();
+            for (const [name, mimeType, b64] of files) {
+                const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+                dt.items.add(new File([bytes], name, {type: mimeType}));
+            }
+            const el = document.querySelector(sel);
+            const opts = {dataTransfer: dt, bubbles: true, cancelable: true};
+            el.dispatchEvent(new DragEvent('dragover', opts));
+            el.dispatchEvent(new DragEvent('drop', opts));
+        }""",
+        [selector, files],
+    )
+
+
+def test_a_picker_upload_becomes_a_chip_then_an_image_path_block(browser, chat_server):
+    """The first of the composer's three ways to attach an image: the file
+    picker. The chip must reach its "done" (thumbnail shown) state before Send
+    is clicked, proving the upload actually finished rather than merely having
+    been started, and the blocks reach the session image first, text last.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.set_input_files("#chatFileInput", {
+            "name": "photo.png", "mimeType": "image/png", "buffer": _TINY_PNG_BYTES,
+        })
+        page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
+        assert page.locator("#chatAttachStrip .attachchip.error").count() == 0
+
+        page.fill("#chatInput", "what do you make of this?")
+        page.click("#chatSend")
+
+        _wait_until(lambda: len(session.submitted_turns) == 1,
+                    message="the turn frame never reached AgentSession.submit_turn")
+        blocks, _viewer = session.submitted_turns[0]
+        assert len(blocks) == 2
+        assert blocks[0]["type"] == "image_path"
+        assert blocks[0]["path"].startswith("images/upload-") and blocks[0]["path"].endswith(".png")
+        assert blocks[1] == {"type": "text", "text": "what do you make of this?"}
+        assert (server.serve_dir / blocks[0]["path"]).is_file()
+
+        # Sent, so the strip is cleared for whatever the human attaches next.
+        assert page.locator("#chatAttachStrip .attachchip").count() == 0
+    finally:
+        page.close()
+
+
+def test_a_dropped_file_becomes_a_chip_then_an_image_path_block(browser, chat_server):
+    """The second of the composer's three ways to attach an image: a drop
+    onto the whole chat pane, not only the composer row. Sent with no typed
+    text, which is allowed, and the turn then carries the image block alone:
+    an empty text block is refused by the API outright and would fail the whole
+    turn, image included, so a composer that always appended one would break
+    exactly the case it was meant to support.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _drop_files_onto(page, "#chat", [
+            ("dropped.png", "image/png", base64.b64encode(_TINY_PNG_BYTES).decode()),
+        ])
+        page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
+
+        page.click("#chatSend")
+
+        _wait_until(lambda: len(session.submitted_turns) == 1,
+                    message="the turn frame never reached AgentSession.submit_turn")
+        blocks, _viewer = session.submitted_turns[0]
+        assert len(blocks) == 1, blocks
+        assert blocks[0]["type"] == "image_path"
+        assert blocks[0]["path"].startswith("images/upload-")
+        assert (server.serve_dir / blocks[0]["path"]).is_file()
+    finally:
+        page.close()
+
+
+def test_an_oversized_or_wrong_typed_drop_is_refused_without_a_request(browser, chat_server):
+    """`paths.py`'s own type and size limits, refused from the `File`
+    object's own `type`/`size` before a single byte leaves the page: a large
+    or wrong-typed file must fail at once, not
+    after the whole body has streamed to the server only to be refused
+    there. No request to `/upload` is the proof; a toast alone would also be
+    produced by a refusal the server sent back.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    upload_requests = []
+    # Matched on the path with any query string stripped, and anchored to the
+    # end, so this does not also catch the unrelated static asset
+    # `/static/js/uploads.js`, whose URL contains the same substring.
+    page.on("request", lambda r: upload_requests.append(r)
+            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.set_input_files("#chatFileInput", {
+            "name": "notes.txt", "mimeType": "text/plain", "buffer": b"not an image"})
+        page.wait_for_function(
+            "() => document.getElementById('toast').style.display === 'block'")
+        assert "PNG, JPEG or WEBP" in page.evaluate(
+            "() => document.getElementById('toast').textContent")
+        assert page.locator("#chatAttachStrip .attachchip").count() == 0
+
+        oversized = b"\x89PNG\r\n\x1a\n" + os.urandom(8 * 1024 * 1024)
+        page.set_input_files("#chatFileInput", {
+            "name": "big.png", "mimeType": "image/png", "buffer": oversized})
+        page.wait_for_function(
+            "() => document.getElementById('toast').textContent.includes('8 MB')")
+        assert page.locator("#chatAttachStrip .attachchip").count() == 0
+
+        assert upload_requests == []
+        assert len(session.submitted_turns) == 0
+    finally:
+        page.close()
+
+
+def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_server):
+    """Fact 7's consequence: the bubble's thumbnail is
+    built from the composer's own record (chat.js's `renderUserAttachments`),
+    never from the agent's echo of the turn, so its `src` is a plain
+    `/asset/<name>` string this test can also fetch directly, confirming the
+    route serves exactly the bytes the picker uploaded rather than merely
+    that some `<img>` tag exists.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        page.set_input_files("#chatFileInput", {
+            "name": "photo.png", "mimeType": "image/png", "buffer": _TINY_PNG_BYTES,
+        })
+        page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
+        page.click("#chatSend")
+        _wait_until(lambda: len(session.submitted_turns) == 1)
+
+        # A turn row only exists once some event has touched its turn number
+        # (store.js's `ensureTurn`); TurnEnd is the event a real reply ends
+        # with.
+        _emit_on_loop(server, session, session_base.TurnEnd(
+            turn=1, stop_reason="end_turn", cost_usd=0.0))
+
+        thumb = page.wait_for_selector("div.turn[data-turn='1'] .msg.user .attachthumbs img")
+        src = thumb.get_attribute("src")
+        assert src.startswith("/asset/")
+        served = page.request.get(server.base_url + src)
+        assert served.status == 200
+        assert served.body() == _TINY_PNG_BYTES
+    finally:
+        page.close()
+
+
+# 23. Chat pane: sketch overlay ------------------------------------------------
+
+def test_drawing_a_sketch_stroke_never_moves_the_camera(browser, chat_server):
+    """Sketch mode's whole reason to exist: the overlay canvas sits above the
+    renderer's own canvas so that OrbitControls' listeners, bound to that
+    canvas, never see a pointer event while a stroke is being drawn. A drag
+    that reached OrbitControls would rotate the camera mid-stroke, leaving the
+    points drawn before and after the move pointing at different geometry.
+    """
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        before_pos = page.evaluate("() => window.mesh.camera.position.toArray()")
+        before_target = page.evaluate("() => window.mesh.controls.target.toArray()")
+
+        page.click("#chatSketchBtn")
+        box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
+
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx - 50, cy - 30)
+        page.mouse.down()
+        page.mouse.move(cx, cy, steps=6)
+        page.mouse.move(cx + 50, cy + 30, steps=6)
+        page.mouse.up()
+
+        after_pos = page.evaluate("() => window.mesh.camera.position.toArray()")
+        after_target = page.evaluate("() => window.mesh.controls.target.toArray()")
+        # abs=1e-6 rather than exact equality: OrbitControls recomputes its
+        # position from spherical coordinates on every animation frame even
+        # when idle, which reintroduces float rounding far below this
+        # tolerance; a real rotate from the drag this test performs moves
+        # the camera by whole units.
+        assert after_pos == pytest.approx(before_pos, abs=1e-6), \
+            "the camera moved while a stroke was being drawn"
+        assert after_target == pytest.approx(before_target, abs=1e-6), \
+            "the camera's target moved while a stroke was being drawn"
+    finally:
+        page.close()
+
+
+# The stroke colour js/sketch.js draws with, as the bytes a decoded PNG
+# reports. Sampled with a tolerance because the composite's own scaling and
+# PNG's per-scanline filtering both leave a drawn line's edge pixels blended
+# with what was under them, so an exact match would only ever find the middle
+# of a thick stroke.
+_STROKE_RGB = (0x35, 0xC7, 0xE0)
+_STROKE_TOLERANCE = 24
+
+
+def _composite_pixel_facts(page, asset_url):
+    """Decode ``asset_url`` in the page and count what is in it.
+
+    The browser's own PNG decoder is used rather than one written here: the
+    bytes under test are the bytes the server serves, this is the decoder that
+    will render them, and a hand-rolled inflate-and-defilter in a test file
+    would be a second implementation to get wrong.
+    """
+    return page.evaluate(
+        """async ([url, rgb, tol]) => {
+            const res = await fetch(url);
+            const bitmap = await createImageBitmap(await res.blob());
+            const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(bitmap, 0, 0);
+            const { data } = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+            const colors = new Set();
+            let strokePixels = 0;
+            for (let i = 0; i < data.length; i += 4) {
+                colors.add((data[i] << 16) | (data[i + 1] << 8) | data[i + 2]);
+                if (Math.abs(data[i] - rgb[0]) <= tol
+                    && Math.abs(data[i + 1] - rgb[1]) <= tol
+                    && Math.abs(data[i + 2] - rgb[2]) <= tol) strokePixels += 1;
+            }
+            return { width: bitmap.width, height: bitmap.height,
+                     strokePixels, distinctColors: colors.size };
+        }""",
+        [asset_url, list(_STROKE_RGB), _STROKE_TOLERANCE],
+    )
+
+
+def test_attaching_a_sketch_delivers_a_composited_image_path_block(browser, chat_server):
+    """Attach's compositing contract: the uploaded file is the real render
+    with the stroke drawn on top, not a blank canvas, and it reaches the
+    model exactly the way any other composer attachment does, by handing the
+    finished blob to the same `uploadImage` path
+    the picker and drop handlers use.
+
+    Both halves are checked on the served pixels rather than on the file's
+    size, by handing the bytes back to the browser's own PNG decoder: a count
+    of stroke-coloured pixels proves the stroke is in the image, and a count of
+    distinct colours proves the render is, since a stroke drawn on an otherwise
+    flat background cannot produce many while a shaded part trivially does. A
+    size comparison would pass for the wrong reason, because a composite that
+    lost its strokes lands within a few bytes of one that never had any.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        page.click("#chatSketchBtn")
+        box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx - 50, cy - 30)
+        page.mouse.down()
+        page.mouse.move(cx, cy, steps=6)
+        page.mouse.move(cx + 50, cy + 30, steps=6)
+        page.mouse.up()
+
+        page.click("#sketchAttachBtn")
+        page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
+        page.wait_for_selector("#app canvas.sketch-overlay", state="detached")
+
+        sketch_files = []
+        deadline = time.time() + 5.0
+        while time.time() < deadline and not sketch_files:
+            sketch_files = list((server.serve_dir / "images").glob("sketch-*.png"))
+            if not sketch_files:
+                time.sleep(0.05)
+        assert sketch_files, "no sketch-*.png landed under images/"
+        sketch_bytes = sketch_files[0].read_bytes()
+        assert sketch_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+
+        pixels = _composite_pixel_facts(page, "/asset/" + sketch_files[0].name)
+        assert pixels["strokePixels"] > 100, (
+            "the composite carries %d pixels of the stroke colour, so the stroke "
+            "did not reach it" % pixels["strokePixels"])
+        assert pixels["distinctColors"] > 16, (
+            "the composite has only %d distinct colours, so it is a stroke on a "
+            "flat background rather than a stroke on the render"
+            % pixels["distinctColors"])
+
+        page.fill("#chatInput", "look at this stroke")
+        page.click("#chatSend")
+        _wait_until(lambda: len(session.submitted_turns) == 1,
+                    message="the turn frame never reached AgentSession.submit_turn")
+        blocks, _viewer = session.submitted_turns[0]
+        assert blocks[0]["type"] == "image_path"
+        assert blocks[0]["path"].startswith("images/sketch-") and blocks[0]["path"].endswith(".png")
+        assert blocks[1] == {"type": "text", "text": "look at this stroke"}
+        assert (server.serve_dir / blocks[0]["path"]).is_file()
+    finally:
+        page.close()
+
+
+def test_a_sketch_is_refused_when_the_view_moved_under_it(browser, chat_server):
+    """The correspondence the whole feature rests on: a stroke means "this spot
+    on the model", which is only true of the view it was drawn against.
+
+    The agent's camera tools are pre-allowed, so it can reframe the view with
+    no approval card while a human is mid-sketch, and only Pause stops it. If
+    Attach composited regardless, the upload would show the new view wearing
+    the old view's marks and the turn would tell the model that is where the
+    human pointed. Nothing is uploaded and the strokes are kept, so the human
+    can put the view back rather than starting over.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    upload_requests = []
+    page.on("request", lambda r: upload_requests.append(r)
+            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        page.click("#chatSketchBtn")
+        box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx - 40, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 40, cy, steps=5)
+        page.mouse.up()
+
+        # The agent's own tool, through the real bus, which is how this happens
+        # in practice rather than a camera nudged from the test.
+        moved = _call_tool(server, "set_view", {"position": [80, 80, 80]})
+        assert "is_error" not in moved, _tool_text(moved)
+
+        page.click("#sketchAttachBtn")
+        page.wait_for_function(
+            "() => document.getElementById('toast').style.display === 'block'")
+        assert "view moved" in page.evaluate(
+            "() => document.getElementById('toast').textContent")
+
+        assert upload_requests == []
+        assert not list((server.serve_dir / "images").glob("sketch-*.png"))
+        # Still in sketch mode, still holding the strokes.
+        assert page.locator("#app canvas.sketch-overlay").count() == 1
+        assert len(session.submitted_turns) == 0
+    finally:
+        page.close()
+
+
+def test_send_waits_for_an_upload_still_in_flight(browser, chat_server):
+    """Send is refused, visibly, while a chip is still uploading.
+
+    A send allowed through would post a turn with no image in it and then carry
+    that image on whatever was typed next, so the human's picture would arrive
+    alongside a different question and read as having been ignored.
+    """
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        # The slot is reserved directly rather than by holding a real upload
+        # open: a Playwright route handler blocking to delay the response also
+        # blocks the thread these assertions run on, so the request would have
+        # long since completed by the time they ran. What is under test is the
+        # guard's reading of the state, and this is that state, put there by the
+        # same mutator uploads.js calls.
+        page.evaluate("() => window.mesh.store.reserveChatAttachment('upload')")
+        page.wait_for_selector("#chatAttachStrip .attachchip .attachspinner:not([hidden])")
+
+        page.fill("#chatInput", "what about this?")
+        assert page.locator("#chatSend").is_disabled()
+        assert "uploading" in page.locator("#chatSend").get_attribute("title")
+        page.keyboard.press("Enter")
+        assert len(session.submitted_turns) == 0, \
+            "Enter sent the turn while an attachment was still uploading"
+
+        # The chip lands, and only then is the turn allowed to carry it.
+        page.evaluate("""() => {
+            const id = window.mesh.store.getState().chat.attachments[0].id;
+            window.mesh.store.completeChatAttachment(id, {
+              path: 'images/upload-x.png', url: '/asset/upload-x.png',
+              bytes: 12, mediaType: 'image/png' });
+        }""")
+        page.wait_for_function("() => !document.getElementById('chatSend').disabled")
+
+        page.click("#chatSend")
+        _wait_until(lambda: len(session.submitted_turns) == 1,
+                    message="the turn frame never reached AgentSession.submit_turn")
+        blocks, _viewer = session.submitted_turns[0]
+        assert [b["type"] for b in blocks] == ["image_path", "text"]
+    finally:
+        page.close()
+
+
+def test_escape_leaves_sketch_mode_with_nothing_uploaded(browser, chat_server):
+    """Escape is a plain cancel, not a discard-and-report: nothing is
+    uploaded, nothing is attached, and the request never leaves the page,
+    the same "refused before a byte leaves" property the picker's own type
+    and size guard has."""
+    server, session = chat_server
+    page = browser.new_page()
+    upload_requests = []
+    page.on("request", lambda r: upload_requests.append(r)
+            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        page.click("#chatSketchBtn")
+        box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx - 30, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 30, cy, steps=4)
+        page.mouse.up()
+
+        page.keyboard.press("Escape")
+        page.wait_for_selector("#app canvas.sketch-overlay", state="detached")
+
+        assert upload_requests == []
+        assert page.locator("#chatAttachStrip .attachchip").count() == 0
+        assert len(session.submitted_turns) == 0
+    finally:
+        page.close()
+
+
+def test_leaving_sketch_mode_restores_orbit_controls(browser, chat_server):
+    """The overlay must be actually removed, not merely hidden or left
+    capturing pointer events underneath its own `display: none`: a real drag
+    on the canvas after Cancel has to reach OrbitControls and move the
+    camera, proving nothing sketch-related is still intercepting it."""
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+        page.click("#chatSketchBtn")
+        page.wait_for_selector("#app canvas.sketch-overlay")
+        page.click("#sketchCancelBtn")
+        page.wait_for_selector("#app canvas.sketch-overlay", state="detached")
+        assert page.locator(".sketchbar").count() == 0
+
+        before = page.evaluate("() => window.mesh.camera.position.toArray()")
+        box = page.locator("#app canvas").first.bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx - 60, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 60, cy + 30, steps=6)
+        page.mouse.up()
+
+        page.wait_for_function(
+            "(before) => JSON.stringify(window.mesh.camera.position.toArray()) !== JSON.stringify(before)",
+            arg=before)
+    finally:
+        page.close()
+
+
 def test_the_pause_control_is_not_offered_when_there_is_no_agent(browser, token_mesh_server):
     """Viewer-only mode runs no tools, so there is nothing to pause and the
     server refuses the frame. A control that produced a refusal toast on every

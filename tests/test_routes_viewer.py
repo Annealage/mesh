@@ -22,7 +22,7 @@ from microdot.test_client import TestClient
 
 from annealage_mesh import paths
 from annealage_mesh.app import DEFAULT_PORT, MAX_REQUEST_BODY, create_app
-from conftest import TEST_HOST, make_test_client
+from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from annealage_mesh.http import routes_viewer
 
 pytestmark = pytest.mark.asyncio
@@ -1197,3 +1197,94 @@ async def test_submit_writes_comments_json_not_mode_0600(client, served_dir):
     mode = (served_dir / "mesh-comments.json").stat().st_mode & 0o777
     assert mode != 0o600
     assert mode == routes_viewer._RECORD_FILE_MODE
+
+async def test_submit_refuses_a_request_that_declares_no_length(client):
+    """A body read from the stream needs a length to read up to, and reading
+    without one would wait on a socket that never ends.
+
+    The declared length is what /submit reads against now that the body is not
+    buffered, so a request that omits it, or declares zero, has to be refused
+    before the first read rather than parked. microdot's own TestClient always
+    sets the header, so this drives the request through Request.create by hand,
+    which is also the only way an absent header reaches the route at all.
+    """
+    app = client.app
+    for header in (b"", b"Content-Length: 0\r\n"):
+        head = (b"POST /submit HTTP/1.1\r\n"
+                b"Host: " + TEST_AUTHORITY.encode() + b"\r\n" + header + b"\r\n")
+        reader = _NeverReads(head)
+        req = await Request.create(app, reader, _NullWriter(), ("127.0.0.1", 1234))
+        res = await app.dispatch_request(req)
+        assert res.status_code == 411, header
+        assert reader.reads == 0, "the route read the body without a length to bound it"
+
+
+async def test_submit_refuses_a_body_shorter_than_it_declared(client, served_dir):
+    """A body that stops early must be refused rather than parsed as far as it
+    got: a truncated JSON array is not a smaller submission, and writing one
+    would replace a good record with a partial one."""
+    body = b'[{"id": 1}]'
+    head = (b"POST /submit HTTP/1.1\r\n"
+            b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
+            b"Content-Length: 4000\r\n\r\n" + body)
+    reader = _NeverReads(head)
+    req = await Request.create(client.app, reader, _NullWriter(), ("127.0.0.1", 1234))
+    res = await client.app.dispatch_request(req)
+    assert res.status_code == 400
+    # A raw Response, not the TestClient's parsed TestResponse, so the body is
+    # decoded here.
+    body = res.body.decode() if isinstance(res.body, bytes) else res.body
+    assert json.loads(body)["ok"] is False
+    assert not (served_dir / "mesh-comments.json").exists()
+
+
+class _NeverReads:
+    """Serves a request head, then reports the body as ended.
+
+    ``reads`` counts the reads a route made past the head, so a test can assert
+    that a refusal happened before any of them.
+    """
+
+    def __init__(self, head):
+        self._buffer = head
+        self.reads = 0
+
+    async def readline(self):
+        index = self._buffer.find(b"\r\n")
+        if index == -1:
+            line, self._buffer = self._buffer, b""
+            return line
+        line, self._buffer = self._buffer[:index + 2], self._buffer[index + 2:]
+        return line
+
+    async def read(self, n=-1):
+        if self._buffer:
+            chunk = self._buffer if n in (-1, None) else self._buffer[:n]
+            self._buffer = self._buffer[len(chunk):]
+            return chunk
+        self.reads += 1
+        return b""
+
+    async def readexactly(self, n):
+        chunk = self._buffer[:n]
+        self._buffer = self._buffer[n:]
+        if len(chunk) < n:
+            raise EOFError
+        return chunk
+
+
+class _NullWriter:
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        pass
+
+    def close(self):
+        pass
+
+    async def wait_closed(self):
+        pass
+
+    def get_extra_info(self, name, default=None):
+        return default

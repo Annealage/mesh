@@ -27,6 +27,19 @@ export function isNarrow() {
   return matchMedia(NARROW_QUERY).matches;
 }
 
+/**
+ * Brings tab `id`'s pane forward. A no-op at wide viewports, where the tab
+ * bar has no say over which panes are visible. This is the one entry point
+ * a module outside this file should use to change which tab is showing: it
+ * goes through the same `store.setActiveTab` the tab bar's own buttons use,
+ * so the tab bar's `.on` state and the pane's `display` stay in sync with
+ * whatever caused the switch, rather than a caller reaching past this
+ * module into the DOM or the store directly.
+ */
+export function activateTab(id) {
+  store.setActiveTab(id);
+}
+
 export function initLayout() {
   const mq = matchMedia(NARROW_QUERY);
   const tabbar = document.getElementById("tabbar");

@@ -9,6 +9,7 @@ This is the full walkthrough for using Mesh to build and review a 3D-printable p
 - [The modelling loop](#the-modelling-loop)
 - [Placing pins](#placing-pins)
 - [Working with the agent](#working-with-the-agent)
+- [Attaching pictures, and sketching on the view](#attaching-pictures-and-sketching-on-the-view)
 - [What the agent can do to the viewer](#what-the-agent-can-do-to-the-viewer)
 - [Pausing the agent's view control](#pausing-the-agents-view-control)
 - [Approving what the agent does](#approving-what-the-agent-does)
@@ -97,6 +98,26 @@ Useful things to ask, in rough order of how much they play to the tool's strengt
 That last one is the other half of the pointing: when the agent writes a callout, it appears in your view within a fraction of a second, pinned to the coordinates it chose. You can then pin a reply next to its callout and Submit, and it reads your coordinates back. Neither side ever describes a location in words.
 
 The composer sends on the button; **Interrupt** stops a turn already in flight. Each completed turn shows its stop reason and cost.
+
+## Attaching pictures, and sketching on the view
+
+Sometimes the thing you want to point at is easier shown than described, and it is not always on the model: a photo of the printed part warping, a screenshot of a slicer warning, a reference drawing.
+
+Three ways to attach an image, all doing the same thing:
+
+- The paperclip in the composer opens a file picker.
+- Paste an image into the message box. A screenshot straight off the clipboard works.
+- Drag an image file anywhere onto the chat pane and drop it.
+
+PNG, JPEG and WEBP, up to 8 MB. Each one uploads as soon as you attach it and appears as a thumbnail chip above the message box, and the × on a chip drops it. Up to four per message. Send stays disabled until every attachment has finished uploading, so a picture always arrives with the question you asked about it rather than trailing onto the next one.
+
+Attached files are written into `images/` in the served folder under a name Mesh chooses, and they stay there after the message is sent. They are meant to be committed, the same as the agent's own screenshots.
+
+**Sketch** is the same idea aimed at the model itself. Hit it and the 3D view freezes under a drawing layer: circle the wall that is too thin, cross out the boss you want gone, arrow at the face that should be flat. Undo removes the last stroke, Clear starts over, Escape leaves without attaching. **Attach** flattens your strokes onto the view exactly as you see it and attaches that as a picture, so the agent sees the part and your marks in one image.
+
+Two things worth knowing about sketching. The camera is held still while you draw, because a stroke only means anything against the view it was drawn on. For the same reason, if the view does move between your first stroke and Attach, either because you resized the window or because the agent moved the camera, Attach refuses and says so rather than sending marks that point at the wrong geometry; your strokes are kept, so you can put the view back and attach then. Hit `Pause` first if you want to be certain the agent leaves the view alone while you work.
+
+A sketch is a picture, not coordinates. If you need the agent to have exact model coordinates, place a pin.
 
 ## What the agent can do to the viewer
 
@@ -195,7 +216,7 @@ The same digest is checked before every tool call, so if that configuration chan
 | `mesh-comments.json` | Your pins, rewritten on each Submit. |
 | `mesh-comments.log` | Every Submit ever, appended, one JSON object per line. |
 | `mesh-callouts.json` | The agent's callouts, written by its own tool or by hand. Either way the viewer updates live. |
-| `images/` | Screenshots the agent saved with its snapshot tool. Served back at `/asset/<name>`, and meant to be committed. |
+| `images/` | Pictures you attached, sketches you drew, and screenshots the agent saved. Served back at `/asset/<name>`, and meant to be committed. |
 | `*.stl` | Your parts. Added, regenerated or deleted, the viewer follows within a fraction of a second. |
 | `.mesh/sessions/` | One directory per session, holding its event log. |
 | `.mesh/permissions.toml` | Tools you chose "Always allow" for. Plain TOML, safe to edit or delete. |

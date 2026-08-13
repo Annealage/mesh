@@ -14,6 +14,7 @@ import { initLayout } from "./layout.js";
 import { initWs } from "./ws.js";
 import { initChat } from "./chat.js";
 import { initCommands } from "./commands.js";
+import { initSketch } from "./sketch.js";
 
 const appEl = document.getElementById("app");
 
@@ -51,6 +52,8 @@ const send = (frame) => wsApi && wsApi.send(frame);
 
 const chatApi = initChat({ send });
 const commandsApi = initCommands({ scene3d, send });
+initSketch({ container: appEl, captureView: scene3d.captureView,
+             cameraState: scene3d.cameraState });
 
 // The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
 // the socket is not live; ws.js owns that decision, pins.js only owns the
