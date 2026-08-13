@@ -65,10 +65,16 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
 
   // ---- mode: gates picking so a touch-swipe to orbit doesn't drop a stray pin ----
   const modeBtn = document.getElementById("modeBtn");
+  // The glyph and the word are separate elements because the word is dropped by
+  // CSS at phone width, where the topbar has no room for it; writing the whole
+  // label with textContent would delete the span that rule targets.
+  const modeGlyph = document.getElementById("modeGlyph");
+  const modeLabel = document.getElementById("modeLabel");
   function applyMode(mode) {
     const on = mode === "annotate";
     modeBtn.classList.toggle("on", on);
-    modeBtn.textContent = on ? "● Add pin" : "○ Navigate";
+    modeGlyph.textContent = on ? "●" : "○";
+    modeLabel.textContent = on ? " Add pin" : " Navigate";
     renderer.domElement.style.cursor = on ? "crosshair" : "grab";
   }
   applyMode(store.getState().mode);

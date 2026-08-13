@@ -53,6 +53,13 @@ body { display: flex; flex-direction: column; }
 #topbar #pauseBtn.on { background: #e0c07f; border-color: #e0c07f; color: #14161a; }
 #topbar #upBtn { font-size: 11px; }
 @media (max-width: 560px) { #topbar .title { display: none; } #topbar button { padding: 0 10px; } #topbar .conn { padding: 3px 7px; } }
+/* The topbar carries one button per capability and a phone is a required
+   workflow, so below the width at which the title is already dropped, a button
+   whose glyph carries the meaning alone sheds its word. The full wording stays
+   in the title attribute, which is where a pointer device reads it anyway.
+   `tests/test_viewer_e2e.py` measures the row at 390px, and it is the row that
+   has to fit rather than any one control. */
+@media (max-width: 560px) { #topbar .btnlabel { display: none; } }
 
 /* ---------- narrow-viewport tab bar ----------
    Replaces the Panel button and the drawer at 900px and below: arbitrating
