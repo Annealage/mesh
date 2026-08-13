@@ -54,19 +54,18 @@ def test_every_recorded_file_matches_its_byte_count_and_sha256_on_disk():
         on_disk_bytes = local.stat().st_size
         assert on_disk_bytes == entry["bytes"], (
             "%s is %d bytes on disk, VERSIONS.json records %d"
-            % (entry["local"], on_disk_bytes, entry["bytes"]))
+            % (entry["local"], on_disk_bytes, entry["bytes"])
+        )
         on_disk_sha = _sha256(local)
         assert on_disk_sha == entry["sha256"], (
             "%s sha256 on disk (%s) does not match VERSIONS.json (%s)"
-            % (entry["local"], on_disk_sha, entry["sha256"]))
+            % (entry["local"], on_disk_sha, entry["sha256"])
+        )
 
 
 def test_file_set_matches_versions_json_in_both_directions():
     recorded = {entry["local"] for entry in _all_file_entries()}
-    on_disk = {
-        p.name for p in VENDOR_DIR.iterdir()
-        if p.is_file() and p.name != "VERSIONS.json"
-    }
+    on_disk = {p.name for p in VENDOR_DIR.iterdir() if p.is_file() and p.name != "VERSIONS.json"}
     # Every file VERSIONS.json describes is actually present (nothing
     # deleted without updating the record)...
     assert recorded <= on_disk, "recorded but absent from disk: %s" % (recorded - on_disk)

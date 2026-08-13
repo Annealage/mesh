@@ -17,6 +17,7 @@ import pytest
 
 from annealage_mesh import cli, sessions
 
+
 @pytest.fixture(autouse=True)
 def sandbox_requirement_satisfied(monkeypatch):
     """Tell the requirement check that this platform can sandbox.
@@ -30,17 +31,26 @@ def sandbox_requirement_satisfied(monkeypatch):
     to be installed rather than according to the code under test.
     """
     from annealage_mesh.session import sdk
+
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
 
-
 def _make_stub_run(calls):
-    async def _stub_run(serve_dir, host, port, on_ready=None, token=None,
-                         extra_origins=(), build_session=None,
-                         mesh_session_id=None):
+    async def _stub_run(
+        serve_dir,
+        host,
+        port,
+        on_ready=None,
+        token=None,
+        extra_origins=(),
+        build_session=None,
+        mesh_session_id=None,
+        settings=None,
+    ):
         calls.append({"mesh_session_id": mesh_session_id, "port": port})
         if on_ready is not None:
             await on_ready()
+
     return _stub_run
 
 
@@ -81,6 +91,7 @@ def _argv(serve_dir, *flags):
 # -c / --continue
 # --------------------------------------------------------------------------
 
+
 def test_continue_with_no_prior_session_exits_1_naming_the_directory(tmp_path, capsys):
     rc = cli.main(_argv(tmp_path, "-c"))
 
@@ -112,6 +123,7 @@ def test_continue_picks_the_most_recently_started_of_several(tmp_path, monkeypat
 # --------------------------------------------------------------------------
 # -r / --resume SID
 # --------------------------------------------------------------------------
+
 
 def test_resume_unknown_id_exits_1_naming_id_and_directory(tmp_path, capsys):
     rc = cli.main(_argv(tmp_path, "-r", "no-such-session"))
@@ -151,9 +163,15 @@ def test_resume_unknown_id_never_reaches_app_run(tmp_path, monkeypatch):
 # bare -r: list and exit, never resume, never start anything
 # --------------------------------------------------------------------------
 
+
 def test_bare_resume_lists_sessions_and_exits_0(tmp_path, monkeypatch, capsys):
-    _write_session(tmp_path, "sid-a", "2026-08-01T00:00:00Z",
-                    first_user_text="please check this bracket", turn_events=(0.5, 1.25))
+    _write_session(
+        tmp_path,
+        "sid-a",
+        "2026-08-01T00:00:00Z",
+        first_user_text="please check this bracket",
+        turn_events=(0.5, 1.25),
+    )
     _write_session(tmp_path, "sid-b", "2026-08-02T00:00:00Z")
     calls = _install_stub_run(monkeypatch)
 
@@ -187,6 +205,7 @@ def test_bare_resume_with_no_sessions_says_so_and_exits_0(tmp_path, capsys):
 # mutual exclusion
 # --------------------------------------------------------------------------
 
+
 def test_continue_and_resume_together_is_rejected_by_the_parser(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(_argv(tmp_path, "-c", "-r", "some-sid"))
@@ -200,20 +219,28 @@ def test_continue_and_resume_together_is_rejected_by_the_parser(tmp_path, capsys
 # --no-agent conflicts with either flag
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("flags", [
-    ("--no-agent", "-c"),
-    ("--no-agent", "-r", "some-sid"),
-    ("--no-agent", "-r"),  # bare -r must also be caught, not fall through
-                           # to the list-and-exit-0 branch that handles it
-                           # when --no-agent is absent.
-], ids=["continue", "resume-sid", "resume-bare"])
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ("--no-agent", "-c"),
+        ("--no-agent", "-r", "some-sid"),
+        ("--no-agent", "-r"),  # bare -r must also be caught, not fall through
+        # to the list-and-exit-0 branch that handles it
+        # when --no-agent is absent.
+    ],
+    ids=["continue", "resume-sid", "resume-bare"],
+)
 def test_no_agent_with_either_session_flag_exits_2(tmp_path, flags, capsys):
     rc = cli.main(_argv(tmp_path, *flags))
 
     assert rc == 2
     err = capsys.readouterr().err
+    # Names the flag that was rejected and the mode that rejected it, since
+    # "invalid combination" would leave the reader to work out which of the
+    # two flags they typed was the problem.
     assert "--no-agent" in err
-    assert "runs none" in err
+    assert "has none" in err
 
 
 # --------------------------------------------------------------------------
@@ -223,8 +250,10 @@ def test_no_agent_with_either_session_flag_exits_2(tmp_path, flags, capsys):
 
 
 def test_agent_mode_refuses_to_start_without_the_sandbox_dependencies(
-        tmp_path, monkeypatch, capsys):
+    tmp_path, monkeypatch, capsys
+):
     from annealage_mesh.session import sdk
+
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
 
     rc = cli.main([str(tmp_path), "--no-open"])
@@ -235,8 +264,9 @@ def test_agent_mode_refuses_to_start_without_the_sandbox_dependencies(
     # is a dead end for whoever hits it.
     assert "bwrap" in err and "socat" in err
     assert "apt install bubblewrap socat" in err
-    # And names the way to run anyway, because the viewer needs neither.
-    assert "--no-agent" in err
+    # And names the way to get a viewer without installing anything, so the
+    # refusal is not a dead end for someone who only wants to look at a model.
+    assert "annealage-mesh view" in err
     # Nothing was created for a run that never started.
     assert not (tmp_path / ".mesh").exists()
 
@@ -248,6 +278,7 @@ def test_viewer_only_mode_starts_without_the_sandbox_dependencies(tmp_path, monk
     which the stub below records instead of serving.
     """
     from annealage_mesh.session import sdk
+
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
     calls = _install_stub_run(monkeypatch)
 

@@ -25,13 +25,9 @@ def _stl_bytes(triangles=2, z=0.0):
     """A structurally complete binary STL with ``triangles`` records."""
     out = [b"\0" * 80, struct.pack("<I", triangles)]
     for i in range(triangles):
-        out.append(struct.pack(
-            "<12fH",
-            0.0, 0.0, 1.0,
-            0.0, 0.0, z,
-            1.0 + i, 0.0, z,
-            0.0, 1.0, z,
-            0))
+        out.append(
+            struct.pack("<12fH", 0.0, 0.0, 1.0, 0.0, 0.0, z, 1.0 + i, 0.0, z, 0.0, 1.0, z, 0)
+        )
     return b"".join(out)
 
 
@@ -86,5 +82,6 @@ def test_a_same_size_same_mtime_rewrite_is_still_detected(tmp_path):
 
     after = _models_signature(tmp_path, previous=before)
     assert before["part.stl"][:2] == after["part.stl"][:2], (
-        "size and mtime must be identical for this to be testing anything")
+        "size and mtime must be identical for this to be testing anything"
+    )
     assert before != after, "the digest is what has to notice this"

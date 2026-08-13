@@ -112,17 +112,17 @@ def make_client(served_dir):
     body, not from fixture setup, so a signature mismatch is reported as
     that test failing, not as an error attributed to fixture teardown."""
 
-    def _make(*, token=TOKEN, host=LOOPBACK_HOST, port=PORT,
-              extra_origins=(EXTRA_ORIGIN,)):
+    def _make(*, token=TOKEN, host=LOOPBACK_HOST, port=PORT, extra_origins=(EXTRA_ORIGIN,)):
         from annealage_mesh.app import create_app
-        app = create_app(served_dir, token=token, host=host, port=port,
-                          extra_origins=extra_origins)
+
+        app = create_app(served_dir, token=token, host=host, port=port, extra_origins=extra_origins)
         # The client's own Host header names the bind this app was built for,
         # the way a browser talking to it would. TestClient otherwise sends
         # "example.com:1234", which the Host check refuses on every route, so
         # without this every acceptance test below would be asserting on a
         # rebinding refusal rather than on the check it means to exercise.
         return TestClient(app, host="%s:%d" % (host, port))
+
     return _make
 
 
@@ -314,11 +314,14 @@ async def test_missing_origin_header_is_accepted(make_client):
     _assert_accepted(res)
 
 
-@pytest.mark.parametrize("origin", [
-    "http://127.0.0.1:%d" % PORT,
-    "http://localhost:%d" % PORT,
-    "http://[::1]:%d" % PORT,
-])
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://127.0.0.1:%d" % PORT,
+        "http://localhost:%d" % PORT,
+        "http://[::1]:%d" % PORT,
+    ],
+)
 async def test_loopback_origin_forms_accepted_for_loopback_bind(make_client, origin):
     client = make_client(host=LOOPBACK_HOST)
     res = await client.get(_ws_query(), headers=_ws_headers(origin=origin))
@@ -362,22 +365,22 @@ async def test_origin_that_is_a_prefix_of_an_allowed_one_refused(make_client):
 async def test_origin_with_allowed_one_as_a_substring_refused(make_client):
     client = make_client()
     res = await client.get(
-        _ws_query(),
-        headers=_ws_headers(origin="http://evil.example/http://127.0.0.1:%d" % PORT))
+        _ws_query(), headers=_ws_headers(origin="http://evil.example/http://127.0.0.1:%d" % PORT)
+    )
     _assert_refused(res)
 
 
 async def test_origin_scheme_mismatch_refused(make_client):
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(origin="https://127.0.0.1:%d" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(origin="https://127.0.0.1:%d" % PORT))
     _assert_refused(res)
 
 
 async def test_origin_port_mismatch_refused(make_client):
     client = make_client()
     res = await client.get(
-        _ws_query(), headers=_ws_headers(origin="http://127.0.0.1:%d" % (PORT + 1)))
+        _ws_query(), headers=_ws_headers(origin="http://127.0.0.1:%d" % (PORT + 1))
+    )
     _assert_refused(res)
 
 
@@ -388,15 +391,13 @@ async def test_origin_case_difference_refused(make_client):
     # default, since accepting one requires deciding which components may
     # vary in case and why, which nothing in the brief asks for.
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(origin="HTTP://127.0.0.1:%d" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(origin="HTTP://127.0.0.1:%d" % PORT))
     _assert_refused(res)
 
 
 async def test_origin_ipv6_wrong_port_refused(make_client):
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(origin="http://[::1]:%d" % (PORT + 1)))
+    res = await client.get(_ws_query(), headers=_ws_headers(origin="http://[::1]:%d" % (PORT + 1)))
     _assert_refused(res)
 
 
@@ -409,7 +410,8 @@ async def test_lan_bind_does_not_accept_loopback_origin(make_client):
     # http://127.0.0.1:<port>.
     client = make_client(host=LAN_HOST)
     res = await client.get(
-        _ws_query(), headers=_ws_headers(origin=LOOPBACK_ORIGIN, host="%s:%d" % (LAN_HOST, PORT)))
+        _ws_query(), headers=_ws_headers(origin=LOOPBACK_ORIGIN, host="%s:%d" % (LAN_HOST, PORT))
+    )
     _assert_refused(res)
 
 
@@ -426,8 +428,7 @@ async def test_lan_bind_does_not_accept_loopback_origin(make_client):
 
 async def test_host_mismatch_refused_on_ws(make_client):
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="evil.example:%d" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="evil.example:%d" % PORT))
     _assert_refused(res)
 
 
@@ -443,8 +444,7 @@ async def test_host_mismatch_refused_on_an_ordinary_route(make_client):
 
 async def test_correct_host_accepted_on_ws(make_client):
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="%s:%d" % (LOOPBACK_HOST, PORT)))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="%s:%d" % (LOOPBACK_HOST, PORT)))
     _assert_accepted(res)
 
 
@@ -456,8 +456,7 @@ async def test_correct_host_accepted_on_an_ordinary_route(make_client):
 
 async def test_host_localhost_accepted_for_loopback_bind(make_client):
     client = make_client(host=LOOPBACK_HOST)
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="localhost:%d" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="localhost:%d" % PORT))
     _assert_accepted(res)
 
 
@@ -468,14 +467,16 @@ async def test_host_localhost_refused_for_nonloopback_bind(make_client):
     # can never legitimately describe this server.
     client = make_client(host=LAN_HOST)
     res = await client.get(
-        _ws_query(), headers=_ws_headers(origin=LAN_ORIGIN, host="localhost:%d" % PORT))
+        _ws_query(), headers=_ws_headers(origin=LAN_ORIGIN, host="localhost:%d" % PORT)
+    )
     _assert_refused(res)
 
 
 async def test_host_right_address_wrong_port_refused(make_client):
     client = make_client()
     res = await client.get(
-        _ws_query(), headers=_ws_headers(host="%s:%d" % (LOOPBACK_HOST, PORT + 1)))
+        _ws_query(), headers=_ws_headers(host="%s:%d" % (LOOPBACK_HOST, PORT + 1))
+    )
     _assert_refused(res)
 
 
@@ -488,8 +489,8 @@ async def test_host_with_embedded_userinfo_refused(make_client):
     # is not, and getting a same-looking-but-wrong answer as a result.
     client = make_client()
     res = await client.get(
-        _ws_query(),
-        headers=_ws_headers(host="attacker@%s:%d" % (LOOPBACK_HOST, PORT)))
+        _ws_query(), headers=_ws_headers(host="attacker@%s:%d" % (LOOPBACK_HOST, PORT))
+    )
     _assert_refused(res)
 
 
@@ -500,15 +501,13 @@ async def test_host_with_trailing_dot_refused(make_client):
     # trailing dot means accepting the first of a family of syntactic
     # variants of the same string with no defined stopping point.
     client = make_client()
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="%s.:%d" % (LOOPBACK_HOST, PORT)))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="%s.:%d" % (LOOPBACK_HOST, PORT)))
     _assert_refused(res)
 
 
 async def test_host_ipv6_loopback_form_accepted_for_loopback_bind(make_client):
     client = make_client(host=LOOPBACK_HOST)
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="[::1]:%d" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="[::1]:%d" % PORT))
     _assert_accepted(res)
 
 
@@ -520,8 +519,7 @@ async def test_host_ipv6_bracket_confusion_refused(make_client):
     # tricked into extracting "::1" from a header that does not actually
     # name that address.
     client = make_client(host=LOOPBACK_HOST)
-    res = await client.get(
-        _ws_query(), headers=_ws_headers(host="[::1:%d]" % PORT))
+    res = await client.get(_ws_query(), headers=_ws_headers(host="[::1:%d]" % PORT))
     _assert_refused(res)
 
 
@@ -575,7 +573,7 @@ def _decode_close_frame(frame_bytes):
     is) into (opcode, close_code, reason)."""
     opcode = frame_bytes[0] & 0x0F
     length = frame_bytes[1] & 0x7F
-    body = frame_bytes[2:2 + length]
+    body = frame_bytes[2 : 2 + length]
     close_code = struct.unpack("!H", body[:2])[0]
     reason = body[2:]
     return opcode, close_code, reason
@@ -583,20 +581,21 @@ def _decode_close_frame(frame_bytes):
 
 async def test_protocol_version_mismatch_closes_with_4400(make_client):
     client = make_client()
-    request_bytes = client._render_request(
-        "GET", _ws_query(), dict(_ws_headers()), b"")
+    request_bytes = client._render_request("GET", _ws_query(), dict(_ws_headers()), b"")
     bad_frame = WebSocket._encode_websocket_frame(
-        WebSocket.TEXT,
-        json.dumps({"v": protocol.PROTOCOL_VERSION + 1, "type": "hello"}))
+        WebSocket.TEXT, json.dumps({"v": protocol.PROTOCOL_VERSION + 1, "type": "hello"})
+    )
     sock = _RawSock(request_bytes + bytes(bad_frame))
     req = await Request.create(client.app, sock, sock, ("127.0.0.1", 1234), scheme=None)
     res = await client.app.dispatch_request(req)
     assert res is Response.already_handled, (
         "route did not follow the websocket_upgrade + already_handled "
-        "convention; no upgrade completed for this request")
+        "convention; no upgrade completed for this request"
+    )
     assert sock.written, (
         "server sent nothing after an inbound frame with the wrong "
-        "protocol version; expected exactly one CLOSE frame")
+        "protocol version; expected exactly one CLOSE frame"
+    )
     opcode, close_code, reason = _decode_close_frame(sock.written[-1])
     assert opcode == WebSocket.CLOSE
     assert close_code == protocol.CLOSE_VERSION_MISMATCH
@@ -638,22 +637,27 @@ async def test_access_log_never_contains_token_on_callouts(make_client, capsys):
 async def test_access_log_never_contains_token_on_submit(make_client, capsys):
     client = make_client()
     err = await _run_and_capture_stderr(
-        client, capsys, "post", "/submit?t=" + TOKEN,
-        body={"comments": []}, headers={"Content-Type": "application/json"})
+        client,
+        capsys,
+        "post",
+        "/submit?t=" + TOKEN,
+        body={"comments": []},
+        headers={"Content-Type": "application/json"},
+    )
     assert TOKEN not in err
 
 
 async def test_access_log_never_contains_token_on_ws_when_refused(make_client, capsys):
     client = make_client()
     err = await _run_and_capture_stderr(
-        client, capsys, "get", "/ws?t=" + TOKEN + "x", headers=_ws_headers())
+        client, capsys, "get", "/ws?t=" + TOKEN + "x", headers=_ws_headers()
+    )
     assert TOKEN not in err
 
 
 async def test_access_log_never_contains_token_on_ws_when_accepted(make_client, capsys):
     client = make_client()
-    err = await _run_and_capture_stderr(
-        client, capsys, "get", _ws_query(), headers=_ws_headers())
+    err = await _run_and_capture_stderr(client, capsys, "get", _ws_query(), headers=_ws_headers())
     assert TOKEN not in err
 
 
@@ -666,11 +670,14 @@ async def test_access_log_never_contains_token_on_ws_when_accepted(make_client, 
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("query", [
-    "/ws?t=%s&t=wrong" % TOKEN,
-    "/ws?t=wrong&t=%s" % TOKEN,
-    "/ws?t=%s&t=%s" % (TOKEN, TOKEN),
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        "/ws?t=%s&t=wrong" % TOKEN,
+        "/ws?t=wrong&t=%s" % TOKEN,
+        "/ws?t=%s&t=%s" % (TOKEN, TOKEN),
+    ],
+)
 async def test_a_repeated_token_parameter_is_refused_whichever_order(make_client, query):
     # Refused even when both values are the real token, and even when the real
     # one comes first: the point is not which value wins but that nothing in

@@ -354,9 +354,7 @@ class AgentSession(Protocol):
         (it is not required to)."""
         ...
 
-    async def decide_permission(
-        self, request_id: str, decision: str, message: str = ""
-    ) -> None:
+    async def decide_permission(self, request_id: str, decision: str, message: str = "") -> None:
         """Handle an inbound ``permission`` frame."""
         ...
 

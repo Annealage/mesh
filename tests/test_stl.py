@@ -261,8 +261,16 @@ def test_binary_stl_with_positive_octant_float_data_reports_the_byte_counts(tmp_
     triangles = []
     for i in range(300):
         v0 = (10 + (i % 50) * 0.1, 10 + ((i * 7) % 50) * 0.1, 10 + ((i * 13) % 50) * 0.1)
-        v1 = (10 + ((i * 3 + 1) % 50) * 0.1, 10 + ((i * 11 + 2) % 50) * 0.1, 10 + ((i * 17 + 3) % 50) * 0.1)
-        v2 = (10 + ((i * 5 + 4) % 50) * 0.1, 10 + ((i * 19 + 5) % 50) * 0.1, 10 + ((i * 23 + 6) % 50) * 0.1)
+        v1 = (
+            10 + ((i * 3 + 1) % 50) * 0.1,
+            10 + ((i * 11 + 2) % 50) * 0.1,
+            10 + ((i * 17 + 3) % 50) * 0.1,
+        )
+        v2 = (
+            10 + ((i * 5 + 4) % 50) * 0.1,
+            10 + ((i * 19 + 5) % 50) * 0.1,
+            10 + ((i * 23 + 6) % 50) * 0.1,
+        )
         triangles.append([0.0, 0.0, 1.0] + list(v0) + list(v1) + list(v2))
     data = header_bytes + struct.pack("<I", declared)
     for triangle in triangles:
@@ -318,9 +326,6 @@ def test_utf16_text_document_is_not_misread_as_a_truncated_binary_stl(tmp_path):
     message = str(excinfo.value)
     assert "contains control bytes" in message
     assert "declares" not in message
-
-
-
 
 
 def test_binary_stl_with_zero_triangles(tmp_path):
@@ -643,9 +648,9 @@ def test_ascii_stl_trailing_information_separator_is_not_hidden_by_strip(tmp_pat
 @pytest.mark.parametrize(
     ("name", "encoding"),
     [
-        ("Wspornik ł", "utf-8"),        # U+0142 encodes as C5 82
-        ("一号支架", "utf-8"),   # U+4E00 encodes as E4 B8 80
-        ("Brackets", "latin-1"),       # a single byte 0x92, as cp1252 text carries
+        ("Wspornik ł", "utf-8"),  # U+0142 encodes as C5 82
+        ("一号支架", "utf-8"),  # U+4E00 encodes as E4 B8 80
+        ("Brackets", "latin-1"),  # a single byte 0x92, as cp1252 text carries
     ],
 )
 def test_ascii_stl_solid_name_using_the_c1_byte_range_still_parses(tmp_path, name, encoding):
@@ -875,8 +880,7 @@ def test_binary_stl_with_undercounted_declared_count_raises_error(tmp_path):
     header = b"h" * HEADER_SIZE
     # Real geometry, not a run of zeros: an all-zero record describes a zero
     # normal and three coincident vertices, which is not evidence of a model.
-    record = struct.pack(
-        "<12fH", *([0.0, 0.0, 1.0] + [4.5, 6.25, 1.5] * 3), 0)
+    record = struct.pack("<12fH", *([0.0, 0.0, 1.0] + [4.5, 6.25, 1.5] * 3), 0)
     data = header + struct.pack("<I", 1) + record * 11
     stl_file.write_bytes(data)
 
@@ -908,9 +912,7 @@ def test_non_stl_binary_blob_with_elf_magic_prefix_is_rejected(tmp_path):
     # control bytes.
     pattern = bytes(b for b in range(256) if b != 0x0A)
     body = (pattern * (size // len(pattern) + 1))[:size]
-    elf_like = (
-        b"\x7fELF\x02\x01\x01\x00" + body[8:80]
-        + struct.pack("<I", 0xFFFFFFFF) + body[84:])
+    elf_like = b"\x7fELF\x02\x01\x01\x00" + body[8:80] + struct.pack("<I", 0xFFFFFFFF) + body[84:]
     elf_blob = tmp_path / "elf.stl"
     elf_blob.write_bytes(elf_like)
     with pytest.raises(StlError):
@@ -1049,8 +1051,7 @@ def test_ascii_parse_leaves_no_unclosed_resource_warning(tmp_path):
     stl_file.write_bytes(_make_ascii_stl("test", facets))
 
     result = subprocess.run(
-        [sys.executable, "-W", "error::ResourceWarning",
-         "-m", "annealage_mesh.stl", str(stl_file)],
+        [sys.executable, "-W", "error::ResourceWarning", "-m", "annealage_mesh.stl", str(stl_file)],
         capture_output=True,
         text=True,
     )
@@ -1260,8 +1261,7 @@ def test_truncated_binary_with_non_round_coordinates_still_reports_the_counts(tm
     """Coordinates that are not round numbers produce almost no control bytes, so the counts must be established from the record's structure rather than from any ratio of non-printable bytes."""
     stl_file = tmp_path / "test.stl"
 
-    record = struct.pack(
-        "<12fH", *([0.0, 0.0, 1.0] + [10.1, 3.7, 8.15] * 3), 0)
+    record = struct.pack("<12fH", *([0.0, 0.0, 1.0] + [10.1, 3.7, 8.15] * 3), 0)
     data = b"m" + b"\x00" * (HEADER_SIZE - 1) + struct.pack("<I", 1000) + record * 3
     stl_file.write_bytes(data)
 

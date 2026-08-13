@@ -28,6 +28,22 @@ def make_test_client(app):
 
 
 @pytest.fixture(autouse=True)
+def not_inside_an_agent(monkeypatch):
+    """Clear ``CLAUDECODE`` for every test in the suite.
+
+    Its presence makes a bare ``annealage-mesh`` invocation viewer-only, so a
+    skill running this tool inside Claude Code cannot start an agent within an
+    agent. Claude Code sets it in every shell it starts, which is frequently
+    where this suite runs, so a test that inherited it would take a different
+    branch there than on a CI runner: a CLI test that assumes agent mode would
+    skip the lock it expects to be refused by and go on to serve a real port
+    forever. What the variable does is asserted deliberately in
+    ``tests/test_cli.py``, which sets it itself.
+    """
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def isolated_user_config(tmp_path_factory, monkeypatch):
     """Point the user configuration directory at a scratch path for every test.
 

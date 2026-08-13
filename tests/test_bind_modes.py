@@ -55,6 +55,7 @@ pytestmark = pytest.mark.asyncio
 @pytest.fixture
 def net():
     import annealage_mesh.net as net_module
+
     return net_module
 
 
@@ -80,6 +81,7 @@ def _dispatch(table, absent_ok=False):
         if isinstance(result, Exception):
             raise result
         return result
+
     return run
 
 
@@ -145,9 +147,11 @@ async def test_unresolvable_host_raises_bind_error(net):
 
 
 async def test_tailscale_binary_reports_address(net):
-    run = _dispatch({
-        ("tailscale", "ip", "-4"): _Completed(stdout="100.101.102.103\n"),
-    })
+    run = _dispatch(
+        {
+            ("tailscale", "ip", "-4"): _Completed(stdout="100.101.102.103\n"),
+        }
+    )
     bind = net.resolve_bind("tailscale", run=run, which=_which_only("tailscale"))
     assert bind.address == "100.101.102.103"
     assert bind.mode == "tailscale"
@@ -173,29 +177,35 @@ _IP_PLAINTEXT_TAILSCALE0 = """\
 
 
 async def test_tailscale_binary_absent_falls_back_to_ip_json(net):
-    run = _dispatch({
-        ("ip", "-json", "addr", "show"): _Completed(stdout=_IP_JSON_TAILSCALE0),
-    })
+    run = _dispatch(
+        {
+            ("ip", "-json", "addr", "show"): _Completed(stdout=_IP_JSON_TAILSCALE0),
+        }
+    )
     bind = net.resolve_bind("tailscale", run=run, which=_which_only())
     assert bind.address == "100.64.5.6"
     assert bind.mode == "tailscale"
 
 
 async def test_ip_json_unavailable_falls_back_to_ip_dash_4(net):
-    run = _dispatch({
-        ("ip", "-json", "addr", "show"): FileNotFoundError("no -json support"),
-        ("ip", "-4", "addr", "show"): _Completed(stdout=_IP_PLAINTEXT_TAILSCALE0),
-    })
+    run = _dispatch(
+        {
+            ("ip", "-json", "addr", "show"): FileNotFoundError("no -json support"),
+            ("ip", "-4", "addr", "show"): _Completed(stdout=_IP_PLAINTEXT_TAILSCALE0),
+        }
+    )
     bind = net.resolve_bind("tailscale", run=run, which=_which_only())
     assert bind.address == "100.64.7.8"
     assert bind.mode == "tailscale"
 
 
 async def test_tailscale_totally_unresolvable_raises_named_error(net):
-    run = _dispatch({
-        ("ip", "-json", "addr", "show"): FileNotFoundError("no ip"),
-        ("ip", "-4", "addr", "show"): FileNotFoundError("no ip"),
-    })
+    run = _dispatch(
+        {
+            ("ip", "-json", "addr", "show"): FileNotFoundError("no ip"),
+            ("ip", "-4", "addr", "show"): FileNotFoundError("no ip"),
+        }
+    )
     with pytest.raises(net.BindError) as excinfo:
         net.resolve_bind("tailscale", run=run, which=_which_only())
     # Naming what was tried is the point: a bare "could not bind" leaves the
@@ -214,10 +224,12 @@ async def test_tailscale_resolution_failure_never_returns_a_wider_bind(net):
     # any code path that tried to compute a fallback address using a
     # command not stubbed above would fail this test via that guard
     # rather than by quietly returning something wider.
-    run = _dispatch({
-        ("ip", "-json", "addr", "show"): FileNotFoundError("no ip"),
-        ("ip", "-4", "addr", "show"): FileNotFoundError("no ip"),
-    })
+    run = _dispatch(
+        {
+            ("ip", "-json", "addr", "show"): FileNotFoundError("no ip"),
+            ("ip", "-4", "addr", "show"): FileNotFoundError("no ip"),
+        }
+    )
     with pytest.raises(net.BindError):
         net.resolve_bind("tailscale", run=run, which=_which_only())
 
@@ -227,9 +239,11 @@ async def test_tailscale_address_outside_cgnat_range_rejected(net):
     # range); an interface-scan false positive (a VPN or container bridge
     # that also happens to be named or numbered plausibly) must not be
     # accepted just because it was found while looking for tailscale0.
-    run = _dispatch({
-        ("tailscale", "ip", "-4"): _Completed(stdout="10.0.0.5\n"),
-    })
+    run = _dispatch(
+        {
+            ("tailscale", "ip", "-4"): _Completed(stdout="10.0.0.5\n"),
+        }
+    )
     with pytest.raises(net.BindError):
         net.resolve_bind("tailscale", run=run, which=_which_only("tailscale"))
 
@@ -296,8 +310,7 @@ async def test_allowed_origins_for_explicit_bind_is_just_that_address(net):
 
 async def test_allowed_origins_includes_extra_origins_verbatim(net):
     bind = net.resolve_bind("127.0.0.1")
-    origins = net.allowed_origins(
-        bind, 8765, extra_origins=("https://tail-abc.ts.net",))
+    origins = net.allowed_origins(bind, 8765, extra_origins=("https://tail-abc.ts.net",))
     assert "https://tail-abc.ts.net" in origins
 
 
@@ -334,9 +347,11 @@ async def test_banner_no_tls_warning_absent_for_loopback_bind(net):
 
 
 async def test_banner_mentions_tailscale_serve_for_tailscale_bind(net):
-    run = _dispatch({
-        ("tailscale", "ip", "-4"): _Completed(stdout="100.101.102.103\n"),
-    })
+    run = _dispatch(
+        {
+            ("tailscale", "ip", "-4"): _Completed(stdout="100.101.102.103\n"),
+        }
+    )
     bind = net.resolve_bind("tailscale", run=run, which=_which_only("tailscale"))
     banner = net.format_banner(bind, 8765, "the-token").lower()
     assert "tailscale serve" in banner
@@ -368,4 +383,5 @@ def _with_reachable(bind, reachable):
     the earlier ``resolve_bind`` call returned.
     """
     import dataclasses
+
     return dataclasses.replace(bind, reachable=reachable)

@@ -63,7 +63,7 @@ def test_recover_seq_skips_a_malformed_trailing_line(tmp_path):
     log.append(_evt("b"))
     log.close()
     with open(path, "a", encoding="utf-8") as f:
-        f.write('{"seq": 3, "event": {"kind": "text_delta"' )  # torn, no closing brace
+        f.write('{"seq": 3, "event": {"kind": "text_delta"')  # torn, no closing brace
 
     restarted = EventLog(str(path))
     assert restarted.current_seq == 2

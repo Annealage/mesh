@@ -113,8 +113,7 @@ def _literal_or_resolved_address(host_arg):
     try:
         infos = socket.getaddrinfo(host_arg, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise BindError(
-            "--host %s does not resolve to an address (%s)" % (host_arg, exc))
+        raise BindError("--host %s does not resolve to an address (%s)" % (host_arg, exc)) from exc
     if not infos:
         raise BindError("--host %s resolved to no addresses" % host_arg)
     return infos[0][4][0]
@@ -157,22 +156,22 @@ def _resolve_tailscale(*, run, which):
         attempts.append(note)
 
     if address is None:
-        raise BindError(
-            "could not resolve a tailscale address; tried: %s" % "; ".join(attempts))
+        raise BindError("could not resolve a tailscale address; tried: %s" % "; ".join(attempts))
     # Checked after resolution, not inside each source, so one rule covers
     # all three and no source can be added later that skips it.
     if ipaddress.ip_address(address) not in TAILNET_RANGE:
         raise BindError(
             "tailscale resolution produced %s, which is outside the tailnet range "
-            "%s; refusing to bind an address that is not on the tailnet"
-            % (address, TAILNET_RANGE))
+            "%s; refusing to bind an address that is not on the tailnet" % (address, TAILNET_RANGE)
+        )
     return ResolvedBind(address, TAILSCALE_ALIAS, False, [("tailscale0", address)])
 
 
 def _try_tailscale_cli(run):
     try:
-        result = run([TAILSCALE_ALIAS, "ip", "-4"], capture_output=True, text=True,
-                     timeout=5, check=False)
+        result = run(
+            [TAILSCALE_ALIAS, "ip", "-4"], capture_output=True, text=True, timeout=5, check=False
+        )
     except Exception as exc:
         return None, "tailscale ip -4 failed (%s)" % exc
     if getattr(result, "returncode", 1) != 0:
@@ -186,8 +185,9 @@ def _try_tailscale_cli(run):
 
 def _try_ip_json(run):
     try:
-        result = run(["ip", "-json", "addr", "show"], capture_output=True, text=True,
-                     timeout=5, check=False)
+        result = run(
+            ["ip", "-json", "addr", "show"], capture_output=True, text=True, timeout=5, check=False
+        )
         entries = json.loads(result.stdout or "[]")
     except Exception as exc:
         return None, "ip -json addr show failed (%s)" % exc
@@ -204,8 +204,9 @@ def _try_ip_json(run):
 
 def _try_ip_plaintext(run):
     try:
-        result = run(["ip", "-4", "addr", "show"], capture_output=True, text=True,
-                     timeout=5, check=False)
+        result = run(
+            ["ip", "-4", "addr", "show"], capture_output=True, text=True, timeout=5, check=False
+        )
     except Exception as exc:
         return None, "ip -4 addr show failed (%s)" % exc
     for _name, candidate in _parse_ip_plaintext(result.stdout or ""):
@@ -252,8 +253,9 @@ def _reachable_addresses(*, run):
     startup failure.
     """
     try:
-        result = run(["ip", "-json", "addr", "show"], capture_output=True, text=True,
-                     timeout=5, check=False)
+        result = run(
+            ["ip", "-json", "addr", "show"], capture_output=True, text=True, timeout=5, check=False
+        )
         entries = json.loads(result.stdout or "[]")
         found = []
         for entry in entries:
@@ -393,8 +395,9 @@ def format_banner(bind, port, token):
     private, so the tests assert on the text.
     """
     lines = []
-    lines.append("Annealage Mesh is serving %s on %s:%d"
-                 % (_describe_mode(bind), bind.address, port))
+    lines.append(
+        "Annealage Mesh is serving %s on %s:%d" % (_describe_mode(bind), bind.address, port)
+    )
     lines.append("  open: %s" % viewer_url(bind, port, token))
 
     if bind.is_loopback:
@@ -407,20 +410,27 @@ def format_banner(bind, port, token):
             lines.append("    %s  %s:%d" % (name, address, port))
 
     if bind.mode == TAILSCALE_ALIAS:
-        lines.append("  the tailnet carries this over WireGuard, so the link and the "
-                     "token in it are encrypted in transit")
-        lines.append("  stronger still, costing no extra setup here: bind loopback "
-                     "instead and run  tailscale serve https / http://127.0.0.1:%d"
-                     % port)
+        lines.append(
+            "  the tailnet carries this over WireGuard, so the link and the "
+            "token in it are encrypted in transit"
+        )
+        lines.append(
+            "  stronger still, costing no extra setup here: bind loopback "
+            "instead and run  tailscale serve https / http://127.0.0.1:%d" % port
+        )
     else:
         # Spelled out rather than hinted at: on a plain LAN bind the token,
         # the model bytes and the whole conversation cross the network in
         # cleartext, and anyone on that network can read them.
-        lines.append("  WARNING: no TLS on this bind. The token in the URL, the model "
-                     "files and the conversation all cross the network in cleartext "
-                     "and can be read by anyone on it.")
-        lines.append("  for remote review, prefer  --host tailscale  or  tailscale "
-                     "serve https / http://127.0.0.1:%d" % port)
+        lines.append(
+            "  WARNING: no TLS on this bind. The token in the URL, the model "
+            "files and the conversation all cross the network in cleartext "
+            "and can be read by anyone on it."
+        )
+        lines.append(
+            "  for remote review, prefer  --host tailscale  or  tailscale "
+            "serve https / http://127.0.0.1:%d" % port
+        )
     return "\n".join(lines)
 
 

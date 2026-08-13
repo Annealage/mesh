@@ -118,6 +118,13 @@
  *                 keeps the cap, the strip and Send reading one record of one
  *                 fact. `js/uploads.js` is the only module that writes any of
  *                 it, since it is the only module that performs an upload.
+ *
+ *   toolCardsCollapsed
+ *                 whether a tool card is created closed. A saved preference
+ *                 read once at page load from `GET /settings`, held here
+ *                 rather than in `chat.js` because `js/settings.js` writes it
+ *                 and `chat.js` reads it, and a value two modules touch has
+ *                 exactly one writer by living in this file.
  */
 
 let state = Object.freeze({
@@ -136,6 +143,7 @@ let state = Object.freeze({
   panelOpen: false,
   paused: false,
   connection: "connecting",
+  toolCardsCollapsed: true,
   chat: Object.freeze({
     turns: Object.freeze([]),
     pendingUser: Object.freeze([]),
@@ -248,6 +256,12 @@ function setUpAxis(axis) {
   commit(() => {
     state = { ...state, upAxis: axis };
   }, ["upAxis"]);
+}
+
+function setToolCardsCollapsed(collapsed) {
+  commit(() => {
+    state = { ...state, toolCardsCollapsed: !!collapsed };
+  }, ["toolCardsCollapsed"]);
 }
 
 function addPin(data) {
@@ -600,6 +614,7 @@ export const store = {
   setVisibility,
   setMode,
   setUpAxis,
+  setToolCardsCollapsed,
   addPin,
   removePin,
   setPinComment,

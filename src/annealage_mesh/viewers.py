@@ -120,9 +120,14 @@ class ViewerRegistry:
     protocol here later would need both methods revisited first.
     """
 
-    def __init__(self, *, queue_maxsize: int = QUEUE_MAXSIZE,
-                 flush_interval: float = FLUSH_INTERVAL,
-                 event_log=None, on_presence=None):
+    def __init__(
+        self,
+        *,
+        queue_maxsize: int = QUEUE_MAXSIZE,
+        flush_interval: float = FLUSH_INTERVAL,
+        event_log=None,
+        on_presence=None,
+    ):
         self._queue_maxsize = queue_maxsize
         self._flush_interval = flush_interval
         # The shared EventLog, so a self-originated event (currently only
@@ -183,8 +188,9 @@ class ViewerRegistry:
         if conn.writer_task is not None and not conn.writer_task.done():
             conn.writer_task.cancel()
 
-    async def close_all(self, code: int = protocol.CLOSE_GOING_AWAY,
-                        reason: str = "server going away") -> None:
+    async def close_all(
+        self, code: int = protocol.CLOSE_GOING_AWAY, reason: str = "server going away"
+    ) -> None:
         """Close every connection with a coded close, for shutdown.
 
         Each connection's writer task is stopped before its close frame is
@@ -205,7 +211,8 @@ class ViewerRegistry:
                 await protocol.close_with_code(conn.ws, code, reason)
             except Exception as exc:
                 sys.stderr.write(
-                    "warning: could not close viewer %s cleanly: %r\n" % (conn.id, exc))
+                    "warning: could not close viewer %s cleanly: %r\n" % (conn.id, exc)
+                )
 
     def _notify_presence(self) -> None:
         """Report the live connection count, swallowing a listener's failure.
@@ -373,13 +380,15 @@ class ViewerRegistry:
         if entry is None:
             sys.stderr.write(
                 "warning: late reply for unknown call id %r from viewer %s; dropping\n"
-                % (call_id, conn.id))
+                % (call_id, conn.id)
+            )
             return
         future, target = entry
         if target is not conn:
             sys.stderr.write(
                 "warning: reply for call id %r arrived from viewer %s, not the "
-                "viewer it was sent to; dropping\n" % (call_id, conn.id))
+                "viewer it was sent to; dropping\n" % (call_id, conn.id)
+            )
             return
         if future.done():
             return
@@ -552,8 +561,7 @@ class ViewerRegistry:
         exc = task.exception()
         if exc is None:
             return
-        sys.stderr.write(
-            "error: viewer %s writer task failed: %r; removing\n" % (conn.id, exc))
+        sys.stderr.write("error: viewer %s writer task failed: %r; removing\n" % (conn.id, exc))
         asyncio.ensure_future(self.remove(conn))
 
     async def _run_writer(self, conn: _Connection) -> None:
@@ -602,11 +610,14 @@ class ViewerRegistry:
                     continue
 
                 if _is_text_delta(frame):
-                    if pending is not None and pending["event"].get("turn") == frame["event"].get("turn"):
+                    if pending is not None and pending["event"].get("turn") == frame["event"].get(
+                        "turn"
+                    ):
                         pending = dict(pending)
                         pending["event"] = dict(pending["event"])
-                        pending["event"]["text"] = (
-                            pending["event"].get("text", "") + frame["event"].get("text", ""))
+                        pending["event"]["text"] = pending["event"].get("text", "") + frame[
+                            "event"
+                        ].get("text", "")
                         # The merged text already includes everything up to
                         # frame's own contribution, so the merged frame must
                         # carry frame's seq, not the seq the run started
@@ -679,8 +690,7 @@ class ViewerBus:
     harm and is better informed when the pause lifts.
     """
 
-    def __init__(self, registry: ViewerRegistry, *, url: str,
-                 timeout: float = CALL_TIMEOUT):
+    def __init__(self, registry: ViewerRegistry, *, url: str, timeout: float = CALL_TIMEOUT):
         self._registry = registry
         self._url = url
         self._timeout = timeout
@@ -703,8 +713,9 @@ class ViewerBus:
         self._paused = paused
         return True
 
-    async def call(self, method: str, params: Optional[dict] = None, *,
-                   timeout: Optional[float] = None) -> Any:
+    async def call(
+        self, method: str, params: Optional[dict] = None, *, timeout: Optional[float] = None
+    ) -> Any:
         """Ask the primary viewer to run ``method`` and return its reply.
 
         Raises what ``ViewerRegistry.call`` raises, untranslated:
@@ -715,6 +726,8 @@ class ViewerBus:
         have to flatten them to say anything at all.
         """
         return await self._registry.call(
-            method, params or {},
+            method,
+            params or {},
             timeout=self._timeout if timeout is None else timeout,
-            url=self._url)
+            url=self._url,
+        )

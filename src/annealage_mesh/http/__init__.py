@@ -1,4 +1,8 @@
-"""Microdot route modules for Annealage Mesh, and the shared file-response helper.
+"""Microdot route modules for Annealage Mesh, and the helpers they share.
+
+Two things live here because more than one route module needs them: reading a
+JSON request body off the unbuffered stream, and returning file bytes without
+blocking the event loop.
 
 ``microdot.Response.send_file`` and its own file-object and sync-generator
 body handling both read the file synchronously on the event loop (see
@@ -11,21 +15,77 @@ through ``file_response`` below instead of ``send_file``.
 """
 
 import asyncio
+import errno
+import fcntl
+import json
 import os
 import stat
-import fcntl
-import errno
 import sys
 
-from .. import paths
-
 from microdot import Response
+
+from .. import paths
 
 # Read chunk size for file responses. Large enough that a multi-megabyte
 # STL needs only a few dozen executor round trips rather than thousands, and
 # small enough that no single in-flight response holds more than a quarter
 # megabyte of file content in memory at once.
 CHUNK_SIZE = 256 * 1024
+
+
+# Ceiling on a JSON request body. Every JSON route in this package carries
+# either a settings change, an export request or a page's worth of pin
+# comments, none of which is large; the cap exists so a body with a declared
+# length is refused before it is read rather than after, since a request that
+# holds the token can otherwise make this process buffer whatever it declares.
+MAX_JSON_BODY = 256 * 1024
+
+
+async def read_json_body(req, *, max_bytes=MAX_JSON_BODY, allow_empty=False):
+    """Read and parse one JSON request body. Returns ``(data, None)`` or
+    ``(None, (payload, status))`` for the caller to return unchanged.
+
+    The body is read off ``req.stream`` rather than ``req.body`` because
+    ``app.py`` sets ``Request.max_body_length`` to 0, so microdot buffers
+    nothing and ``req.body`` is always empty. The declared length is checked
+    first and unconditionally: on a real connection ``req.stream`` is the raw
+    client reader, and reading it with no declared length never returns.
+
+    ``allow_empty`` accepts a request with no body at all and yields ``{}``,
+    for a route whose every field has a default.
+    """
+    content_length = req.content_length
+    if content_length <= 0:
+        if allow_empty and content_length == 0:
+            return {}, None
+        return None, (
+            {"ok": False, "error": "Content-Length is required and must be greater than zero"},
+            411,
+        )
+    if content_length > max_bytes:
+        return None, (
+            {
+                "ok": False,
+                "error": "body is %d bytes, over the %d byte "
+                "limit for a JSON request" % (content_length, max_bytes),
+            },
+            413,
+        )
+    chunks = []
+    total = 0
+    while total < content_length:
+        chunk = await req.stream.read(min(CHUNK_SIZE, content_length - total))
+        if not chunk:
+            return None, (
+                {"ok": False, "error": "body ended after %d of %d bytes" % (total, content_length)},
+                400,
+            )
+        chunks.append(chunk)
+        total += len(chunk)
+    try:
+        return json.loads(b"".join(chunks).decode("utf-8")), None
+    except (ValueError, UnicodeDecodeError) as exc:
+        return None, ({"ok": False, "error": "invalid JSON: %s" % exc}, 400)
 
 
 async def _iter_file_chunks(fh, total, chunk_size=CHUNK_SIZE):
@@ -52,8 +112,9 @@ async def _iter_file_chunks(fh, total, chunk_size=CHUNK_SIZE):
         await loop.run_in_executor(None, fh.close)
 
 
-async def file_response(path, content_type, method="GET", expect_identity=None,
-                        revalidatable=False):
+async def file_response(
+    path, content_type, method="GET", expect_identity=None, revalidatable=False
+):
     """Build a Response that streams ``path``'s bytes without blocking the loop.
 
     The file is opened, and its size taken from that open descriptor via
@@ -98,8 +159,7 @@ async def file_response(path, content_type, method="GET", expect_identity=None,
             headers.update(_revalidation_headers(st))
         return Response(body=b"", headers=headers)
     try:
-        fh = await loop.run_in_executor(
-            None, _open_regular_file, path, expect_identity)
+        fh = await loop.run_in_executor(None, _open_regular_file, path, expect_identity)
     except OSError as exc:
         # The body carries neither the resolved path nor a distinction
         # between "does not exist" and "exists but could not be opened"

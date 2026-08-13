@@ -83,8 +83,8 @@ class ProtocolVersionMismatch(Exception):
     def __init__(self, received: Any):
         self.received = received
         super().__init__(
-            "protocol version mismatch: expected %r, got %r"
-            % (PROTOCOL_VERSION, received))
+            "protocol version mismatch: expected %r, got %r" % (PROTOCOL_VERSION, received)
+        )
 
 
 async def close_with_code(ws, code: int, reason: str = "") -> None:
@@ -168,8 +168,13 @@ def build_event(seq: int, event_wire: dict) -> dict:
 
 def build_call(call_id: str, method: str, params: dict) -> dict:
     """A server-initiated request into the primary viewer's page."""
-    return {"v": PROTOCOL_VERSION, "type": "call", "id": call_id, "method": method,
-            "params": params}
+    return {
+        "v": PROTOCOL_VERSION,
+        "type": "call",
+        "id": call_id,
+        "method": method,
+        "params": params,
+    }
 
 
 def build_ping(t) -> dict:
@@ -248,14 +253,14 @@ _PERMISSION_DECISIONS = {"allow", "allow_always", "deny"}
 def _check_permission(frame: dict) -> Optional[str]:
     decision = frame.get("decision")
     if decision not in _PERMISSION_DECISIONS:
-        return "permission.decision must be one of %s" % ", ".join(
-            sorted(_PERMISSION_DECISIONS))
+        return "permission.decision must be one of %s" % ", ".join(sorted(_PERMISSION_DECISIONS))
     return None
 
 
 def _check_error(frame: dict) -> Optional[str]:
-    return _object_error(frame.get("error"), {"code", "message"}, {"code", "message"},
-                          "error.error")
+    return _object_error(
+        frame.get("error"), {"code", "message"}, {"code", "message"}, "error.error"
+    )
 
 
 def _check_pause(frame: dict) -> Optional[str]:
@@ -271,8 +276,8 @@ def _check_pause(frame: dict) -> Optional[str]:
 
 def _check_state(frame: dict) -> Optional[str]:
     return _object_error(
-        frame.get("state"), {"camera", "visibility", "selection", "mode"}, set(),
-        "state.state")
+        frame.get("state"), {"camera", "visibility", "selection", "mode"}, set(), "state.state"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -292,8 +297,8 @@ _INBOUND_SPECS = {
     "hello": _Spec({"token", "last_seq", "viewer"}, {"token"}, _check_hello),
     "turn": _Spec({"blocks"}, {"blocks"}, _check_turn),
     "permission": _Spec(
-        {"request_id", "decision", "message"}, {"request_id", "decision"},
-        _check_permission),
+        {"request_id", "decision", "message"}, {"request_id", "decision"}, _check_permission
+    ),
     "result": _Spec({"id", "result"}, {"id", "result"}),
     "error": _Spec({"id", "error"}, {"id", "error"}, _check_error),
     "interrupt": _Spec(set(), set()),
@@ -328,8 +333,7 @@ def validate_inbound(raw: Any) -> Tuple[bool, Union[dict, str]]:
     spec = _INBOUND_SPECS.get(frame_type)
     if spec is None:
         return False, "unknown frame type: %r" % (frame_type,)
-    error = _object_error(
-        raw, spec.allowed | {"v", "type"}, spec.required | {"v", "type"}, "frame")
+    error = _object_error(raw, spec.allowed | {"v", "type"}, spec.required | {"v", "type"}, "frame")
     if error:
         return False, error
     if spec.check is not None:

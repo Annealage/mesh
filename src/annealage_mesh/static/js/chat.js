@@ -40,6 +40,7 @@
 import { store } from "./store.js";
 import { uploadImage } from "./uploads.js";
 import { toast } from "./ui.js";
+import { authToken } from "./ws.js";
 
 // The three image types the upload route accepts (paths.py's
 // `_IMAGE_NAME_RE`/`sniff_image`) and the same byte cap it enforces
@@ -240,6 +241,11 @@ export function initChat({ send }) {
   const chatFileInput = document.getElementById("chatFileInput");
   const chatAttachStripEl = document.getElementById("chatAttachStrip");
   const chatPaneEl = document.getElementById("chat");
+  const chatExportBtn = document.getElementById("chatExport");
+
+  // The session this pane belongs to, learned from the hello frame. Null until
+  // then, and null for a viewer-only run, which has no conversation to write.
+  let sessionId = null;
 
   // turn number -> {row, textEl, toolsEl, metaEl, userEl, tools: Map<tool_use_id, {card, resultEl}>}
   const turnEls = new Map();
@@ -376,6 +382,9 @@ export function initChat({ send }) {
     const card = document.createElement("details");
     card.className = "toolcard";
     card.dataset.toolId = tool.tool_use_id;
+    // A saved preference, read from the store rather than decided here, so the
+    // settings window and this builder cannot disagree about the default.
+    card.open = store.getState().toolCardsCollapsed === false;
     const summary = document.createElement("summary");
     const inputEl = document.createElement("pre");
     inputEl.className = "toolinput";
@@ -680,8 +689,63 @@ export function initChat({ send }) {
 
   bannerCloseBtn.addEventListener("click", () => store.clearChatBanner());
 
+  function renderExportButton() {
+    if (!chatExportBtn) return;
+    const exportable = !!sessionId && sessionId !== "viewer-only";
+    chatExportBtn.disabled = !exportable || exporting;
+    chatExportBtn.title = exportable
+      ? "Write this conversation into review/ as a file you can commit or share"
+      : "There is no conversation to export in this run";
+  }
+
+  let exporting = false;
+
+  async function exportTranscript() {
+    if (exporting || !sessionId) return;
+    exporting = true;
+    renderExportButton();
+    try {
+      const res = await fetch(
+        "/session/" + encodeURIComponent(sessionId) + "/export?t=" +
+        encodeURIComponent(authToken()),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ format: "markdown", include: "full" }),
+        });
+      let payload = null;
+      try {
+        payload = await res.json();
+      } catch (err) {
+        payload = null;
+      }
+      if (!res.ok || !payload || payload.ok !== true) {
+        store.setChatBanner("error",
+          "The transcript could not be written: " +
+          ((payload && payload.error) || "the server refused the request"));
+        return;
+      }
+      // The path is reported rather than a bare "done", because the file is the
+      // point and it is written into the human's own project.
+      store.setChatBanner("info", "Transcript written to " + payload.path);
+    } finally {
+      exporting = false;
+      renderExportButton();
+    }
+  }
+
+  if (chatExportBtn) {
+    chatExportBtn.addEventListener("click", () => { exportTranscript(); });
+    renderExportButton();
+  }
+
   function handleHello(session) {
     if (session) store.setChatAgentStatus(session.agent);
+    // Held for the Export button, which needs the id of the session it is
+    // writing out. Viewer-only runs report "viewer-only" here and have no
+    // conversation to export, which the button reflects by staying disabled.
+    sessionId = session && session.id ? session.id : null;
+    renderExportButton();
   }
 
   function handleEvent(event) {

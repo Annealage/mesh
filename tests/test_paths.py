@@ -19,8 +19,8 @@ import pytest
 
 from annealage_mesh import paths
 
-
 # --- scan_models: recursion, exclusions, determinism ----------------------
+
 
 def test_scan_models_finds_a_model_nested_several_directories_deep(tmp_path):
     deep = tmp_path / "models" / "a" / "sub"
@@ -152,6 +152,7 @@ def test_scan_models_ordering_is_deterministic_across_repeated_scans(tmp_path):
 
 # --- _compute_labels: the three brief examples plus a property-style check ---
 
+
 def test_compute_labels_two_directories_sharing_a_basename():
     models = [{"rel": "a/widget.stl"}, {"rel": "b/widget.stl"}]
     labels = paths._compute_labels(models)
@@ -219,7 +220,7 @@ def test_compute_labels_set_uniqueness_holds_over_a_generated_adversarial_tree(s
 
     assert set(labels) == set(rels)
     assert len(set(labels.values())) == len(labels)
-    for rel, label in labels.items():
+    for label in labels.values():
         assert label  # never empty
 
 
@@ -242,6 +243,7 @@ def test_compute_labels_fallback_collision_with_an_already_chosen_label():
 
 
 # --- ModelIndex: ambiguous basenames are excluded from the alias lookup ----
+
 
 def test_model_index_ambiguous_basename_is_absent_from_by_file_and_identity(tmp_path, capsys):
     (tmp_path / "a").mkdir()
@@ -277,6 +279,7 @@ def test_model_index_manifest_models_omits_private_scan_fields(tmp_path):
 
 
 # --- scan_static: extension allowlist, symlinks, the vendor/LICENSE carve-out --
+
 
 def test_scan_static_indexes_only_allowed_extensions(tmp_path):
     (tmp_path / "app.css").write_text("body {}")
@@ -353,6 +356,7 @@ def test_scan_static_cap_truncates_and_warns(tmp_path, monkeypatch, capsys):
 
 # --- StaticIndex ------------------------------------------------------------
 
+
 def test_static_index_content_type_of_known_and_extensionless_files():
     assert paths.StaticIndex.content_type_of("app.css") == paths.CONTENT_TYPES[".css"]
     assert paths.StaticIndex.content_type_of("main.js") == paths.CONTENT_TYPES[".js"]
@@ -376,6 +380,7 @@ def test_build_static_index_resolves_present_files(tmp_path):
 
 # --- create_image_file: the one path that creates a file from a model's input --
 
+
 def test_create_image_file_writes_into_images_and_makes_the_directory(tmp_path):
     fd, target = paths.create_image_file(tmp_path, "front.png")
     try:
@@ -387,15 +392,18 @@ def test_create_image_file_writes_into_images_and_makes_the_directory(tmp_path):
     assert oct(target.stat().st_mode)[-3:] == "644"
 
 
-@pytest.mark.parametrize("name", [
-    "../escape.png",          # traversal
-    "sub/front.png",          # a directory component
-    ".hidden.png",            # a dotfile, which the scan excludes anyway
-    "front.svg",              # an extension /asset would not serve
-    "front",                  # no extension at all
-    "",                       # nothing
-    "front.png\x00.txt",      # a NUL, in case a lower layer truncates at it
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "../escape.png",  # traversal
+        "sub/front.png",  # a directory component
+        ".hidden.png",  # a dotfile, which the scan excludes anyway
+        "front.svg",  # an extension /asset would not serve
+        "front",  # no extension at all
+        "",  # nothing
+        "front.png\x00.txt",  # a NUL, in case a lower layer truncates at it
+    ],
+)
 def test_create_image_file_refuses_a_name_it_would_not_serve_back(tmp_path, name):
     """The whole containment check for a name that may come from the model, so
     it is a whitelist: a name accepted here is one /asset can hand back, and
@@ -428,6 +436,7 @@ def test_create_image_file_raises_rather_than_overwriting(tmp_path):
 
 # --- atomic_replace ---------------------------------------------------------
 
+
 def test_atomic_replace_keeps_an_existing_files_mode(tmp_path):
     """mkstemp creates 0600 and os.replace carries the mode across, so without
     the chmod a deliberate mode would silently narrow on every write."""
@@ -435,9 +444,9 @@ def test_atomic_replace_keeps_an_existing_files_mode(tmp_path):
     target.write_text("{}")
     os.chmod(target, 0o640)
 
-    paths.atomic_replace(target, b"{\"annotations\": []}")
+    paths.atomic_replace(target, b'{"annotations": []}')
     assert oct(target.stat().st_mode)[-3:] == "640"
-    assert target.read_text() == "{\"annotations\": []}"
+    assert target.read_text() == '{"annotations": []}'
 
 
 def test_atomic_replace_gives_a_new_file_the_default_mode(tmp_path):

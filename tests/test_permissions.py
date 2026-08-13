@@ -157,8 +157,7 @@ async def test_allow_always_persists_and_grants_a_later_request_without_asking(t
     _assert_session_rule(second, "Write")
     # A grant answered from memory opens no request, so it announces neither a
     # request nor a resolution: the only pair on the wire is the first one.
-    assert [type(e).__name__ for e in events] == [
-        "PermissionRequest", "PermissionResolved"]
+    assert [type(e).__name__ for e in events] == ["PermissionRequest", "PermissionResolved"]
 
     # A fresh broker over the same file, simulating a process restart,
     # loads the grant from disk and grants it without ever creating a
@@ -389,7 +388,8 @@ async def test_a_decision_announces_the_resolution_with_its_outcome():
     await task
 
     assert [(r.request_id, r.outcome) for r in _resolutions(events)] == [
-        (request.request_id, "allow")]
+        (request.request_id, "allow")
+    ]
 
 
 @pytest.mark.parametrize("decision", ["allow", "allow_always", "deny"])
@@ -461,7 +461,8 @@ async def test_the_resolution_is_announced_after_the_request_stops_being_pending
     still outstanding must not be told about the request it just closed."""
     seen = []
     broker = PermissionBroker(
-        lambda event: seen.append((event, [r.request_id for r in broker.pending_requests()])))
+        lambda event: seen.append((event, [r.request_id for r in broker.pending_requests()]))
+    )
     broker.viewer_connected()
     task = asyncio.ensure_future(broker.ask("Edit", {}, None))
     await asyncio.sleep(0)
@@ -512,12 +513,12 @@ async def test_a_reload_keeps_an_outstanding_request_waiting():
     broker.viewer_connected()
     task, request = await _pending_request(broker, events)
 
-    broker.viewer_disconnected()       # the page unloads
+    broker.viewer_disconnected()  # the page unloads
     await asyncio.sleep(0.05)
     assert not task.done(), "the request must survive the gap a reload leaves"
 
-    broker.viewer_connected()          # the page comes back
-    await asyncio.sleep(0.3)           # past what would have been the deadline
+    broker.viewer_connected()  # the page comes back
+    await asyncio.sleep(0.3)  # past what would have been the deadline
     assert not task.done(), "a viewer came back, so nothing should have expired"
     assert [r.request_id for r in broker.pending_requests()] == [request.request_id]
 

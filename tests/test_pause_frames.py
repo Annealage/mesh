@@ -76,8 +76,15 @@ async def _dispatch(bus, paused, registry=None, event_log=None):
     registry = registry if registry is not None else StubRegistry()
     event_log = event_log if event_log is not None else StubEventLog()
     await ws_module._dispatch(
-        sock, _Conn(), registry, event_log, "tok",
-        {"v": 1, "type": "pause", "paused": paused}, None, bus)
+        sock,
+        _Conn(),
+        registry,
+        event_log,
+        "tok",
+        {"v": 1, "type": "pause", "paused": paused},
+        None,
+        bus,
+    )
     return sock.sent, registry, event_log
 
 
@@ -95,8 +102,8 @@ async def test_a_pause_frame_moves_the_flag_and_announces_it():
     assert sent == []
     assert isinstance(event_log.appended[0], PauseChanged)
     assert registry.broadcasts == [
-        {"v": 1, "type": "event", "seq": 1,
-         "event": {"kind": "pause_changed", "paused": True}}]
+        {"v": 1, "type": "event", "seq": 1, "event": {"kind": "pause_changed", "paused": True}}
+    ]
 
 
 async def test_unpausing_announces_the_new_value_too():
@@ -129,9 +136,16 @@ async def test_pausing_counts_as_interaction_with_this_view():
 
 async def test_viewer_only_mode_says_there_is_nothing_to_pause():
     sock = RecordingSocket()
-    await ws_module._dispatch(sock, _Conn(), StubRegistry(), StubEventLog(), "tok",
-                              {"v": 1, "type": "pause", "paused": True},
-                              None, None)
+    await ws_module._dispatch(
+        sock,
+        _Conn(),
+        StubRegistry(),
+        StubEventLog(),
+        "tok",
+        {"v": 1, "type": "pause", "paused": True},
+        None,
+        None,
+    )
     assert len(sock.sent) == 1
     assert sock.sent[0]["type"] == "refused"
     assert "viewer-only" in sock.sent[0]["reason"]

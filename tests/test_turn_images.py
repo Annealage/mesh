@@ -40,7 +40,8 @@ def _no_real_transport(monkeypatch):
     def _forbidden(*args, **kwargs):
         raise AssertionError(
             "a real SubprocessCLITransport was constructed; the fake "
-            "Transport passed to SdkSession was not used")
+            "Transport passed to SdkSession was not used"
+        )
 
     monkeypatch.setattr(subprocess_cli, "SubprocessCLITransport", _forbidden)
 
@@ -71,14 +72,16 @@ class FakeTransport(Transport):
         if obj.get("type") == "control_request":
             subtype = obj["request"].get("subtype")
             if subtype == "initialize":
-                self._queue.put_nowait({
-                    "type": "control_response",
-                    "response": {
-                        "subtype": "success",
-                        "request_id": obj["request_id"],
-                        "response": {},
-                    },
-                })
+                self._queue.put_nowait(
+                    {
+                        "type": "control_response",
+                        "response": {
+                            "subtype": "success",
+                            "request_id": obj["request_id"],
+                            "response": {},
+                        },
+                    }
+                )
 
     async def read_messages(self):
         while True:
@@ -110,8 +113,9 @@ async def _started_session(serve_dir):
     ``serve_dir``, with its events going to a fresh ``EventRecorder``."""
     transport = FakeTransport()
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd=str(serve_dir), session_id="mesh-sess-1",
-                         transport=transport)
+    session = SdkSession(
+        recorder, cwd=str(serve_dir), session_id="mesh-sess-1", transport=transport
+    )
     await session.start()
     assert session.agent_status() == AGENT_READY
     return session, transport, recorder
@@ -160,8 +164,8 @@ def _write_image(serve_dir, name, data):
 async def test_expansion_is_a_pure_function_of_blocks_and_a_directory(tmp_path):
     rel = _write_image(tmp_path, "pic.png", _png_bytes())
     out = turn_images.expand_turn_blocks(
-        [{"type": "text", "text": "before"}, {"type": "image_path", "path": rel}],
-        str(tmp_path))
+        [{"type": "text", "text": "before"}, {"type": "image_path", "path": rel}], str(tmp_path)
+    )
     assert [b["type"] for b in out] == ["image", "text", "text"]
     assert out[1]["text"] == "attached image: %s" % rel
     assert out[2]["text"] == "before"
@@ -172,22 +176,23 @@ async def test_a_text_only_list_comes_back_unchanged(tmp_path):
     assert turn_images.expand_turn_blocks(blocks, str(tmp_path)) == blocks
 
 
-@pytest.mark.parametrize("path", [
-    "mesh-comments.json",
-    "/etc/passwd",
-    "images/../../etc/passwd",
-    "images/",
-    "images/sub/pic.png",
-    None,
-    12,
-])
-async def test_a_path_that_is_not_a_single_name_under_images_never_becomes_an_image(
-        tmp_path, path):
+@pytest.mark.parametrize(
+    "path",
+    [
+        "mesh-comments.json",
+        "/etc/passwd",
+        "images/../../etc/passwd",
+        "images/",
+        "images/sub/pic.png",
+        None,
+        12,
+    ],
+)
+async def test_a_path_that_is_not_a_single_name_under_images_never_becomes_an_image(tmp_path, path):
     """Every one of these is refused on the string alone or by resolve_asset,
     and each becomes a note rather than an image, so a caller cannot turn an
     attachment reference into a read of something else."""
-    out = turn_images.expand_turn_blocks([{"type": "image_path", "path": path}],
-                                         str(tmp_path))
+    out = turn_images.expand_turn_blocks([{"type": "image_path", "path": path}], str(tmp_path))
     assert all(b["type"] == "text" for b in out), out
 
 
@@ -200,10 +205,12 @@ async def test_image_path_expands_to_an_image_block_and_path_text(tmp_path):
     rel = _write_image(tmp_path, "pic.png", _png_bytes())
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel},
-            {"type": "text", "text": "look at this"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel},
+                {"type": "text", "text": "look at this"},
+            ]
+        )
         content = _last_turn_content(transport)
         assert content[0]["type"] == "image"
         assert content[0]["source"]["type"] == "base64"
@@ -225,14 +232,19 @@ async def test_the_image_block_precedes_the_text_that_refers_to_it(tmp_path):
     rel = _write_image(tmp_path, "pic.png", _png_bytes())
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel},
-            {"type": "text", "text": "what is this a picture of?"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel},
+                {"type": "text", "text": "what is this a picture of?"},
+            ]
+        )
         content = _last_turn_content(transport)
         image_index = next(i for i, b in enumerate(content) if b["type"] == "image")
-        text_index = next(i for i, b in enumerate(content)
-                          if b["type"] == "text" and b["text"] == "what is this a picture of?")
+        text_index = next(
+            i
+            for i, b in enumerate(content)
+            if b["type"] == "text" and b["text"] == "what is this a picture of?"
+        )
         assert image_index < text_index
     finally:
         await session.close()
@@ -243,11 +255,13 @@ async def test_two_attachments_both_expand_before_the_trailing_text(tmp_path):
     rel_b = _write_image(tmp_path, "b.png", _png_bytes(b"bbb"))
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel_a},
-            {"type": "image_path", "path": rel_b},
-            {"type": "text", "text": "compare these two"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel_a},
+                {"type": "image_path", "path": rel_b},
+                {"type": "text", "text": "compare these two"},
+            ]
+        )
         content = _last_turn_content(transport)
         kinds = [b["type"] for b in content]
         assert kinds == ["image", "text", "image", "text", "text"]
@@ -266,10 +280,12 @@ async def test_a_path_outside_images_is_refused_as_a_note_with_no_image_block(tm
     refused on the string alone, with no filesystem access."""
     session, transport, recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": "mesh-comments.json"},
-            {"type": "text", "text": "hi"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": "mesh-comments.json"},
+                {"type": "text", "text": "hi"},
+            ]
+        )
         content = _last_turn_content(transport)
         assert not any(b["type"] == "image" for b in content)
         note = content[0]
@@ -287,10 +303,12 @@ async def test_a_traversal_attempt_is_refused(tmp_path):
     refused as malformed before ``paths.resolve_asset`` is even called."""
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": "images/../../etc/passwd"},
-            {"type": "text", "text": "hi"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": "images/../../etc/passwd"},
+                {"type": "text", "text": "hi"},
+            ]
+        )
         content = _last_turn_content(transport)
         assert not any(b["type"] == "image" for b in content)
         assert "images/../../etc/passwd" in content[0]["text"]
@@ -304,10 +322,12 @@ async def test_an_absent_file_is_noted_and_the_turn_still_sent(tmp_path):
     (tmp_path / "images").mkdir()
     session, transport, recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": "images/missing.png"},
-            {"type": "text", "text": "hi"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": "images/missing.png"},
+                {"type": "text", "text": "hi"},
+            ]
+        )
         content = _last_turn_content(transport)
         assert not any(b["type"] == "image" for b in content)
         assert content[-1] == {"type": "text", "text": "hi"}
@@ -349,10 +369,12 @@ async def test_an_image_over_the_inline_cap_is_named_rather_than_inlined(tmp_pat
     rel = _write_image(tmp_path, "huge.png", big)
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel},
-            {"type": "text", "text": "why is this wall thin?"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel},
+                {"type": "text", "text": "why is this wall thin?"},
+            ]
+        )
         content = _last_turn_content(transport)
         assert [b["type"] for b in content] == ["text", "text"]
         assert rel in content[0]["text"]
@@ -385,11 +407,13 @@ async def test_a_blank_text_block_never_reaches_the_transport(tmp_path):
     rel = _write_image(tmp_path, "pic.png", _png_bytes())
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel},
-            {"type": "text", "text": ""},
-            {"type": "text", "text": "   \n  "},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel},
+                {"type": "text", "text": ""},
+                {"type": "text", "text": "   \n  "},
+            ]
+        )
         content = _last_turn_content(transport)
         assert all(b["type"] != "text" or b["text"].strip() for b in content), content
         assert content[0]["type"] == "image"
@@ -422,28 +446,34 @@ async def test_the_overflow_note_is_bounded_by_what_it_names(tmp_path):
     this is the one place an inbound string is copied into the model's context.
     """
     long_name = "z" * 4000
-    blocks = [{"type": "image_path", "path": "images/%s-%d.png" % (long_name, i)}
-              for i in range(400)]
+    blocks = [
+        {"type": "image_path", "path": "images/%s-%d.png" % (long_name, i)} for i in range(400)
+    ]
     session, transport, _recorder = await _started_session(tmp_path)
     try:
         await session.submit_turn(blocks)
         content = _last_turn_content(transport)
         rendered = json.dumps(content)
         assert len(rendered) < 20000, len(rendered)
-        assert "and %d more" % (400 - turn_images.MAX_TURN_IMAGES
-                                - turn_images._PATHS_NAMED_IN_NOTE) in rendered
+        assert (
+            "and %d more" % (400 - turn_images.MAX_TURN_IMAGES - turn_images._PATHS_NAMED_IN_NOTE)
+            in rendered
+        )
     finally:
         await session.close()
 
 
 async def test_the_attachment_count_cap_drops_the_extras_with_one_note(tmp_path):
-    rels = [_write_image(tmp_path, "img%d.png" % i, _png_bytes(str(i).encode()))
-            for i in range(turn_images.MAX_TURN_IMAGES + 1)]
+    rels = [
+        _write_image(tmp_path, "img%d.png" % i, _png_bytes(str(i).encode()))
+        for i in range(turn_images.MAX_TURN_IMAGES + 1)
+    ]
     session, transport, _recorder = await _started_session(tmp_path)
     try:
         await session.submit_turn(
             [{"type": "image_path", "path": rel} for rel in rels]
-            + [{"type": "text", "text": "all of these"}])
+            + [{"type": "text", "text": "all of these"}]
+        )
         content = _last_turn_content(transport)
         image_blocks = [b for b in content if b["type"] == "image"]
         assert len(image_blocks) == turn_images.MAX_TURN_IMAGES
@@ -459,8 +489,7 @@ async def test_the_attachment_count_cap_drops_the_extras_with_one_note(tmp_path)
         await session.close()
 
 
-async def test_the_total_byte_cap_drops_an_attachment_that_would_exceed_it(
-        tmp_path, monkeypatch):
+async def test_the_total_byte_cap_drops_an_attachment_that_would_exceed_it(tmp_path, monkeypatch):
     # A tiny budget, so this test writes bytes rather than megabytes: the
     # code path exercised (a running total checked in encounter order) does
     # not depend on the constant's real-world size, which is pinned
@@ -470,11 +499,13 @@ async def test_the_total_byte_cap_drops_an_attachment_that_would_exceed_it(
     rel_b = _write_image(tmp_path, "b.png", _png_bytes(b""))  # 12 bytes
     session, transport, _recorder = await _started_session(tmp_path)
     try:
-        await session.submit_turn([
-            {"type": "image_path", "path": rel_a},
-            {"type": "image_path", "path": rel_b},
-            {"type": "text", "text": "both please"},
-        ])
+        await session.submit_turn(
+            [
+                {"type": "image_path", "path": rel_a},
+                {"type": "image_path", "path": rel_b},
+                {"type": "text", "text": "both please"},
+            ]
+        )
         content = _last_turn_content(transport)
         image_blocks = [b for b in content if b["type"] == "image"]
         # 12 bytes fits the 20 byte budget; a second 12 bytes on top of that

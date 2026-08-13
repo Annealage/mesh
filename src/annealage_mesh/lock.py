@@ -41,8 +41,7 @@ class LockHeld(LockError):
         self.pid = pid
         self.port = port
         self.token = token
-        super().__init__(
-            "annealage-mesh is already running here (pid %d, port %d)" % (pid, port))
+        super().__init__("annealage-mesh is already running here (pid %d, port %d)" % (pid, port))
 
 
 class LockCorrupt(LockError):
@@ -93,7 +92,7 @@ def _read_record(path: Path):
     except FileNotFoundError:
         raise
     except (ValueError, KeyError, TypeError, OSError) as exc:
-        raise LockCorrupt("%s exists but is not a valid lock record (%s)" % (path, exc))
+        raise LockCorrupt("%s exists but is not a valid lock record (%s)" % (path, exc)) from exc
     return pid, port, token
 
 
@@ -224,7 +223,8 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
 
         sys.stderr.write(
             "annealage-mesh: reclaiming stale lock at %s (pid %d is no longer "
-            "running)\n" % (path, held_pid))
+            "running)\n" % (path, held_pid)
+        )
         try:
             os.unlink(path)
         except FileNotFoundError:

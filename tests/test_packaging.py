@@ -33,7 +33,9 @@ def _build(out_dir):
     """
     subprocess.run(
         ["uv", "build", "-o", str(out_dir), str(REPO_ROOT)],
-        check=True, capture_output=True, text=True,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     sdists = list(Path(out_dir).glob("*.tar.gz"))
     wheels = list(Path(out_dir).glob("*.whl"))

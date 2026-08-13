@@ -1,21 +1,49 @@
-"""Command-line entry point for Annealage Mesh."""
+"""Command-line entry point for Annealage Mesh.
+
+Four invocations, one of which is bare:
+
+    annealage-mesh [DIR]        scaffold if needed, then the viewer with a chat
+                                 pane driving an agent in DIR
+    annealage-mesh view [DIR]   the viewer alone: no agent, no scaffold, no git,
+                                 no lock, and the agent SDK is never imported
+    annealage-mesh init [DIR]   scaffold plus git, idempotent, no server
+    annealage-mesh doctor [DIR] what this machine has and what this project
+                                 looks like, then exit
+
+Bare invocation is agent mode because that is what the tool is for. The
+exception is an environment that already has an agent in it: when ``CLAUDECODE``
+is set, the default flips to the viewer and says so, so a skill telling Claude
+Code to run this tool never starts a second agent inside the first. ``view``
+pins that explicitly and is what the published skill passes.
+
+A subcommand is recognised only when the first argument matches one of the
+three names exactly, so a directory of models that happens to be called
+``doctor`` is still servable as ``./doctor``.
+"""
 
 import argparse
 import asyncio
+import os
 import socket
 import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__
+from . import __version__, diagnostics, lock, net, paths, sessions
 from . import app as app_module
-from . import lock
-from . import net
-from . import paths
-from . import sessions
+from . import project as project_module
+from . import settings as settings_module
 from .http.routes_viewer import VIEWER_HTML
 
 DEFAULT_PORT = 8765
+
+#: Subcommand names, recognised only as an exact first argument.
+SUBCOMMANDS = ("view", "init", "doctor")
+
+#: Environment variable Claude Code sets in its own shells. Its presence means
+#: this invocation is already inside an agent session, so agent mode would nest
+#: one agent inside another.
+NESTED_AGENT_ENV = "CLAUDECODE"
 
 # ``-r``/``--resume`` given with no id lists sessions and exits, rather than
 # resuming anything (plan section 3.4: that would duplicate ``-c`` and blur
@@ -25,61 +53,159 @@ DEFAULT_PORT = 8765
 _RESUME_BARE = object()
 
 
-def build_parser():
-    ap = argparse.ArgumentParser(
-        prog="annealage-mesh",
-        description="Local web tool for pin-comment review of 3D-print STL models.",
-        epilog="-r/--resume takes its SID from the next token unconditionally, so "
-               "\"annealage-mesh -r mydir\" reads mydir as SID, not as the directory "
-               "to serve. Put DIR before -r/-c, or spell the id as --resume=SID.",
-    )
+def _add_dir(ap):
     ap.add_argument(
         "dir",
         nargs="?",
         default=".",
         help="directory of STL files to serve (default: current directory)",
     )
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT,
-                     help="TCP port (default: %(default)s)")
-    ap.add_argument("--host", default=None,
-                     help="bind address: an IP, a resolvable name, 0.0.0.0 for every "
-                          "interface, or the alias \"tailscale\" to bind this host's "
-                          "tailnet address (default: 127.0.0.1, this machine only)")
-    ap.add_argument("--origin", action="append", default=[], metavar="ORIGIN",
-                     help="an additional allowed browser Origin, repeatable; needed "
-                          "when a reverse proxy or \"tailscale serve\" fronts this "
-                          "server under another name or scheme")
-    ap.add_argument("--token", default=None,
-                     help="use this per-run token instead of a generated one")
-    ap.add_argument("--no-open", action="store_true",
-                     help="do not try to open a browser automatically")
-    ap.add_argument("--model", default=None,
-                     help="model for the agent to use (default: whatever the "
-                          "claude CLI is configured for)")
-    ap.add_argument("--permission-mode", default=None,
-                     choices=("default", "acceptEdits", "plan"),
-                     help="permission mode for the agent. bypassPermissions is "
-                          "deliberately not offered: it is never persistable and "
-                          "not selectable here")
-    ap.add_argument("--no-agent", action="store_true",
-                     help="viewer only: no agent session, no lock, several may run "
-                          "at once against the same directory")
-    ap.add_argument("--trust-project-config", action="store_true",
-                     help="accept the Claude configuration in this directory "
-                          "(.claude/, .mcp.json), which can declare shell commands "
-                          "the agent's CLI runs. Recorded per directory against the "
-                          "exact content present, so a later change asks again")
+
+
+def build_parser():
+    """The parser for the two server modes, agent and viewer.
+
+    Every settings-backed flag defaults to ``None`` (or, for ``--no-open``, to
+    the absence of the flag) so that "not given" is distinguishable from "given
+    the value that happens to be the default". Without that distinction a
+    project or user setting could never outrank a default, which is the whole
+    point of the layering.
+    """
+    ap = argparse.ArgumentParser(
+        prog="annealage-mesh",
+        description="Build 3D-printable parts with an agent: a local 3D viewer beside a chat pane.",
+        epilog="Subcommands: view (viewer only), init (scaffold a project), "
+        "doctor (report what this machine has). A directory named like a "
+        "subcommand is still servable as ./view, ./init or ./doctor. "
+        "-r/--resume takes its SID from the next token unconditionally, "
+        'so "annealage-mesh -r mydir" reads mydir as SID, not as the '
+        "directory to serve. Put DIR before -r/-c, or spell the id as "
+        "--resume=SID.",
+    )
+    _add_dir(ap)
+    ap.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="TCP port (default: %d, or whatever your settings say)" % DEFAULT_PORT,
+    )
+    ap.add_argument(
+        "--host",
+        default=None,
+        help="bind address: an IP, a resolvable name, 0.0.0.0 for every "
+        'interface, or the alias "tailscale" to bind this host\'s '
+        "tailnet address (default: 127.0.0.1, this machine only)",
+    )
+    ap.add_argument(
+        "--origin",
+        action="append",
+        default=[],
+        metavar="ORIGIN",
+        help="an additional allowed browser Origin, repeatable; needed "
+        'when a reverse proxy or "tailscale serve" fronts this '
+        "server under another name or scheme",
+    )
+    ap.add_argument(
+        "--token", default=None, help="use this per-run token instead of a generated one"
+    )
+    ap.add_argument(
+        "--no-open", action="store_true", help="do not try to open a browser automatically"
+    )
+    ap.add_argument(
+        "--model",
+        default=None,
+        help="model for the agent to use (default: whatever the claude CLI is configured for)",
+    )
+    ap.add_argument(
+        "--effort",
+        default=None,
+        choices=("low", "medium", "high", "xhigh", "max"),
+        help="how much thinking the agent does per turn (default: "
+        "whatever the claude CLI is configured for)",
+    )
+    ap.add_argument(
+        "--permission-mode",
+        default=None,
+        choices=("default", "acceptEdits", "plan"),
+        help="permission mode for the agent. bypassPermissions is "
+        "deliberately not offered: it is never persistable and "
+        "not selectable here",
+    )
+    ap.add_argument(
+        "--no-agent",
+        action="store_true",
+        help="viewer only: the same thing the view subcommand does",
+    )
+    ap.add_argument(
+        "--no-git",
+        action="store_true",
+        help="do not run git init, and do not make the scaffold commit",
+    )
+    ap.add_argument(
+        "--settings",
+        action="store_true",
+        help="print every setting with the layer it came from, then exit",
+    )
+    ap.add_argument(
+        "--trust-project-config",
+        action="store_true",
+        help="accept the Claude configuration in this directory "
+        "(.claude/, .mcp.json), which can declare shell commands "
+        "the agent's CLI runs. Recorded per directory against the "
+        "exact content present, so a later change asks again",
+    )
     session_group = ap.add_mutually_exclusive_group()
     session_group.add_argument(
-        "-c", "--continue", dest="continue_", action="store_true",
+        "-c",
+        "--continue",
+        dest="continue_",
+        action="store_true",
         help="continue the most recent session for this project; takes no "
-             "argument, Mesh resolves which session itself")
+        "argument, Mesh resolves which session itself",
+    )
     session_group.add_argument(
-        "-r", "--resume", dest="resume", nargs="?", const=_RESUME_BARE, default=None,
+        "-r",
+        "--resume",
+        dest="resume",
+        nargs="?",
+        const=_RESUME_BARE,
+        default=None,
         metavar="SID",
-        help="resume session SID; given with no SID, list this project's "
-             "sessions and exit")
+        help="resume session SID; given with no SID, list this project's sessions and exit",
+    )
     ap.add_argument("--version", action="version", version="annealage-mesh %s" % __version__)
+    return ap
+
+
+def build_init_parser():
+    ap = argparse.ArgumentParser(
+        prog="annealage-mesh init",
+        description="Create the directories and files a mesh project uses, and "
+        "start a git repository if git is installed. Idempotent: "
+        "anything already there is left alone.",
+    )
+    _add_dir(ap)
+    ap.add_argument(
+        "--no-git",
+        action="store_true",
+        help="do not run git init, and do not make the scaffold commit",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="rewrite the generated .gitignore and CLAUDE.md, which "
+        "are otherwise kept exactly as they are",
+    )
+    return ap
+
+
+def build_doctor_parser():
+    ap = argparse.ArgumentParser(
+        prog="annealage-mesh doctor",
+        description="Report what this machine has, what this project looks like, "
+        "and which settings files are in play. Starts no server.",
+    )
+    _add_dir(ap)
     return ap
 
 
@@ -87,8 +213,13 @@ def _format_session_line(info):
     cost = "$%.2f" % info.cost_usd
     snippet = info.first_user_text or "(no turn yet)"
     return "  %s  %s  %d turn%s  %s  %s" % (
-        info.session_id, info.started_at or "unknown start", info.turn_count,
-        "" if info.turn_count == 1 else "s", cost, snippet)
+        info.session_id,
+        info.started_at or "unknown start",
+        info.turn_count,
+        "" if info.turn_count == 1 else "s",
+        cost,
+        snippet,
+    )
 
 
 def _print_session_list(serve_dir):
@@ -111,6 +242,7 @@ class _SdkRequirements:
 
     def __getattr__(self, name):
         from .session import sdk
+
         return getattr(sdk, name)
 
 
@@ -126,6 +258,163 @@ def _resumable_sdk_id(serve_dir, mesh_sid):
     """
     info = sessions.get_session_info(serve_dir, mesh_sid)
     return info.sdk_session_id if info is not None else None
+
+
+def flags_from(args):
+    """The settings flags this invocation actually gave, as ``{name: value}``.
+
+    Only keys whose flag was present appear, which is what lets a project or
+    user file outrank a built-in default while a flag still outranks both.
+    ``--no-open`` is the one negative form, and its absence is not a request
+    for a browser, only the absence of a request against one.
+    """
+    flags = {}
+    for name, value in (
+        ("host", args.host),
+        ("port", args.port),
+        ("model", getattr(args, "model", None)),
+        ("effort", getattr(args, "effort", None)),
+        ("permission_mode", getattr(args, "permission_mode", None)),
+    ):
+        if value is not None:
+            flags[name] = value
+    if getattr(args, "no_open", False):
+        flags["open_browser"] = False
+    return flags
+
+
+def settings_report(resolved, serve_dir):
+    """Lines describing every setting, its value, and where it came from.
+
+    Named files rather than layer names alone, because "from user settings" is
+    only actionable once you know which file that is; the point of reporting
+    provenance at all is that someone can go and change it.
+    """
+    origins = {
+        settings_module.FLAG: "command-line flag (this run only)",
+        settings_module.PROJECT: "project config: %s"
+        % settings_module.project_config_path(serve_dir),
+        settings_module.USER: "user settings: %s" % settings_module.user_settings_path(),
+        settings_module.DEFAULT: "built-in default",
+    }
+    width = max(len(key.name) for key in settings_module.SETTING_KEYS)
+    lines = ["settings for %s" % serve_dir]
+    for key in settings_module.SETTING_KEYS:
+        value = resolved[key.name]
+        shown = "(unset)" if value is None else repr(value)
+        lines.append(
+            "  %-*s  %-22s %s" % (width, key.name, shown, origins[resolved.provenance(key.name)])
+        )
+    return lines
+
+
+def scaffold_report(result, project_dir):
+    """Lines describing what a scaffold did, or nothing if it did nothing.
+
+    Silent when a project was already complete, because the common case is
+    every run after the first and a list of things that did not happen is
+    noise. Git's outcome is always reported when it has one to report: a
+    skipped commit is a thing someone needs to know about their own repository.
+    """
+    lines = []
+    for label, names in (("created", result.created), ("regenerated", result.regenerated)):
+        if names:
+            lines.append("  %s: %s" % (label, ", ".join(names)))
+    git = result.git
+    if git is not None:
+        if git.initialised and git.committed:
+            lines.append("  git: repository created and the scaffold committed")
+        elif git.initialised:
+            lines.append(
+                "  git: repository created, nothing committed (%s)"
+                % (git.skipped_reason or "no reason given")
+            )
+        elif git.skipped_reason:
+            lines.append("  git: %s" % git.skipped_reason)
+    if lines:
+        lines.insert(0, "project %s" % project_dir)
+    return lines
+
+
+def diagnostics_report(facts):
+    """Lines for ``doctor``, in the order someone debugging reads them."""
+    lines = ["Annealage Mesh %s" % facts["mesh_version"]]
+    python = facts["python"]
+    lines.append("  python           : %s  (%s)" % (python["version"], python["executable"]))
+
+    cli = facts["claude_cli"]
+    if cli["source"] == "missing":
+        lines.append(
+            "  claude CLI       : NOT FOUND. Agent mode cannot run; "
+            "install the agent SDK or put claude on PATH"
+        )
+    else:
+        lines.append(
+            "  claude CLI       : %s  (%s, %s)"
+            % (
+                cli["version"] or "version not reported",
+                cli["path"],
+                "bundled with the SDK" if cli["source"] == "bundled" else "found on PATH",
+            )
+        )
+
+    git = facts["git"]
+    lines.append(
+        "  git              : %s"
+        % (
+            "%s  (%s)" % (git["version"] or "version not reported", git["path"])
+            if git
+            else "not installed; a project will not be a repository"
+        )
+    )
+
+    sandbox = facts["sandbox"]
+    if not sandbox["dependencies"]:
+        lines.append("  sandbox          : provided by this platform, nothing to install")
+    elif sandbox["missing"]:
+        lines.append(
+            "  sandbox          : MISSING %s. Agent mode refuses to start "
+            "without them; the viewer alone needs neither" % ", ".join(sandbox["missing"])
+        )
+    else:
+        lines.append("  sandbox          : %s present" % ", ".join(sandbox["dependencies"]))
+
+    lines.append("  project          : %s" % facts["project_root"])
+    files = facts["settings_files"]
+    lines.append(
+        "  user settings    : %s%s"
+        % (files["user"], "" if files["user_present"] else "  (not written yet)")
+    )
+    lines.append(
+        "  project config   : %s%s"
+        % (files["project"], "" if files["project_present"] else "  (not written yet)")
+    )
+
+    held = facts["lock"]
+    if held is None:
+        lines.append("  lock             : free")
+    elif held.get("error"):
+        lines.append(
+            "  lock             : unreadable (%s); remove %s by hand once "
+            "you have checked nothing is running" % (held["error"], held.get("path"))
+        )
+    else:
+        lines.append(
+            "  lock             : held by pid %s on port %s (%s)"
+            % (
+                held.get("pid"),
+                held.get("port"),
+                "running" if held.get("live") else "stale, will be reclaimed",
+            )
+        )
+
+    reachable = facts["reachable"]
+    if reachable:
+        lines.append(
+            "  addresses        : %s"
+            % ", ".join("%s on %s" % (entry["address"], entry["interface"]) for entry in reachable)
+        )
+    return lines
 
 
 def describe_agent_posture(mode, session):
@@ -188,22 +477,110 @@ def port_in_use(port, host="0.0.0.0"):
     return False
 
 
-def main(argv=None):
-    args = build_parser().parse_args(argv)
+def _resolved_dir(raw):
+    """``(path, None)`` for a servable directory, or ``(None, message)``."""
+    resolved = Path(raw).resolve()
+    if not resolved.is_dir():
+        return None, "directory does not exist: %s" % resolved
+    return resolved, None
 
-    serve_dir = Path(args.dir).resolve()
-    if not serve_dir.is_dir():
-        sys.stderr.write("error: directory does not exist: %s\n" % serve_dir)
+
+def init_command(argv):
+    """``annealage-mesh init``: scaffold, git, and nothing else."""
+    args = build_init_parser().parse_args(argv)
+    serve_dir, message = _resolved_dir(args.dir)
+    if serve_dir is None:
+        sys.stderr.write("error: %s\n" % message)
+        return 2
+    result = project_module.ensure_project(serve_dir, git=not args.no_git, force=args.force)
+    lines = scaffold_report(result, serve_dir)
+    if not lines:
+        sys.stdout.write("project %s is already set up; nothing to do\n" % serve_dir)
+    else:
+        sys.stdout.write("\n".join(lines) + "\n")
+    for name in result.kept:
+        sys.stdout.write("  kept as it is: %s\n" % name)
+    return 0
+
+
+def doctor_command(argv):
+    """``annealage-mesh doctor``: report and exit, taking no lock and no port."""
+    args = build_doctor_parser().parse_args(argv)
+    serve_dir, message = _resolved_dir(args.dir)
+    if serve_dir is None:
+        sys.stderr.write("error: %s\n" % message)
+        return 2
+    facts = diagnostics.collect(serve_dir)
+    sys.stdout.write("\n".join(diagnostics_report(facts)) + "\n")
+    return 0
+
+
+def _split_command(argv):
+    """``(command, rest)``, where ``command`` is None for the bare form."""
+    if argv and argv[0] in SUBCOMMANDS:
+        return argv[0], argv[1:]
+    return None, argv
+
+
+def main(argv=None):
+    argv = list(sys.argv[1:] if argv is None else argv)
+    command, rest = _split_command(argv)
+    if command == "init":
+        return init_command(rest)
+    if command == "doctor":
+        return doctor_command(rest)
+
+    args = build_parser().parse_args(rest)
+
+    serve_dir, message = _resolved_dir(args.dir)
+    if serve_dir is None:
+        sys.stderr.write("error: %s\n" % message)
         return 2
     if not VIEWER_HTML.exists():
         sys.stderr.write("error: packaged viewer.html missing: %s\n" % VIEWER_HTML)
         return 2
 
-    if args.no_agent and (args.continue_ or args.resume is not None):
+    # Viewer-only when asked for, and also when this process is already inside
+    # an agent's own shell: a skill that runs this tool would otherwise start a
+    # second agent inside the first, each with its own approval flow.
+    nested = command is None and not args.no_agent and os.environ.get(NESTED_AGENT_ENV)
+    viewer_only = command == "view" or args.no_agent or bool(nested)
+    mode = "viewer" if viewer_only else "agent"
+
+    agent_only = [
+        name
+        for name, given in (
+            ("-c/--continue", args.continue_),
+            ("-r/--resume", args.resume is not None),
+            ("--model", args.model is not None),
+            ("--effort", args.effort is not None),
+            ("--permission-mode", args.permission_mode is not None),
+            ("--trust-project-config", args.trust_project_config),
+        )
+        if given
+    ]
+    if viewer_only and agent_only and not nested:
         sys.stderr.write(
-            "error: -c/--continue and -r/--resume resolve an agent session; "
-            "--no-agent runs none\n")
+            "error: %s %s the agent, and this run has none (%s)\n"
+            % (
+                ", ".join(agent_only),
+                "configure" if len(agent_only) > 1 else "configures",
+                "view" if command == "view" else "--no-agent",
+            )
+        )
         return 2
+
+    try:
+        resolved_settings = settings_module.resolve(serve_dir, flags=flags_from(args))
+    except settings_module.SettingsError as exc:
+        sys.stderr.write("error: %s\n" % exc)
+        return 2
+
+    if args.settings:
+        sys.stdout.write("\n".join(settings_report(resolved_settings, serve_dir)) + "\n")
+        return 0
+
+    port = resolved_settings["port"]
 
     # Bare -r lists and exits before anything else opens: it names no
     # session to resume, starts no server, and needs neither a resolved
@@ -217,12 +594,19 @@ def main(argv=None):
     # whatever address a fallback would have chosen. resolve_bind raises rather
     # than widening a bind, which is the whole point of the tailscale alias.
     try:
-        bind = net.resolve_bind(args.host)
+        bind = net.resolve_bind(resolved_settings["host"])
     except net.BindError as exc:
         sys.stderr.write("error: %s\n" % exc)
         return 2
 
-    mode = "viewer" if args.no_agent else "agent"
+    if nested:
+        sys.stdout.write(
+            "note: %s is set, so this is the viewer alone with no agent, to "
+            'avoid starting one inside another. Pass "view" to say so '
+            "explicitly, or unset %s to run the agent here.\n"
+            % (NESTED_AGENT_ENV, NESTED_AGENT_ENV)
+        )
+
     mesh_sid = None
     resumed = False
     held_lock = None
@@ -243,9 +627,13 @@ def main(argv=None):
                 "  missing: %s\n"
                 "  install: apt install %s   (or your distribution's equivalent)\n"
                 "  or run the viewer alone, which needs neither: "
-                "annealage-mesh --no-agent\n"
-                % (" and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
-                   ", ".join(missing), sdk_requirements.SANDBOX_PACKAGES))
+                "annealage-mesh view\n"
+                % (
+                    " and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
+                    ", ".join(missing),
+                    sdk_requirements.SANDBOX_PACKAGES,
+                )
+            )
             return 2
 
         # Before the session opens, because what this gate prevents is a
@@ -253,28 +641,31 @@ def main(argv=None):
         # already happened. Viewer-only mode starts no agent CLI, so nothing in
         # the directory is ever read as configuration and the gate is moot.
         from .session import workspace_trust
+
         trusted_digest = workspace_trust.config_digest(serve_dir)
         if trusted_digest != workspace_trust.EMPTY_DIGEST:
             store = workspace_trust.TrustStore()
             if args.trust_project_config:
                 store.accept(serve_dir, trusted_digest)
             elif not store.accepted(serve_dir, trusted_digest):
-                sys.stderr.write(workspace_trust.refusal_message(
-                    serve_dir, workspace_trust.present(serve_dir)))
+                sys.stderr.write(
+                    workspace_trust.refusal_message(serve_dir, workspace_trust.present(serve_dir))
+                )
                 return 2
 
         if args.continue_:
             mesh_sid = sessions.resolve_continue(serve_dir)
             if mesh_sid is None:
                 sys.stderr.write(
-                    "error: no prior session for %s; run without -c to start one\n"
-                    % serve_dir)
+                    "error: no prior session for %s; run without -c to start one\n" % serve_dir
+                )
                 return 1
             resumed = True
         elif args.resume is not None:
             if sessions.get_session_info(serve_dir, args.resume) is None:
                 sys.stderr.write(
-                    "error: session %r is not known to %s\n" % (args.resume, serve_dir))
+                    "error: session %r is not known to %s\n" % (args.resume, serve_dir)
+                )
                 return 1
             mesh_sid = args.resume
             resumed = True
@@ -287,33 +678,43 @@ def main(argv=None):
         # one events.jsonl is corruption (plan section 3.4), so this has
         # no --allow-multiple escape hatch.
         try:
-            held_lock = lock.acquire(sessions.mesh_dir(serve_dir), args.port, token)
+            held_lock = lock.acquire(sessions.mesh_dir(serve_dir), port, token)
         except lock.LockHeld as exc:
             sys.stderr.write(
                 "error: %s\n  it is serving: %s\n"
-                % (exc, net.viewer_url(bind, exc.port, exc.token)))
+                % (exc, net.viewer_url(bind, exc.port, exc.token))
+            )
             return 3
         except lock.LockCorrupt as exc:
             sys.stderr.write(
                 "error: %s\n  remove it by hand once you have checked nothing is "
-                "actually running, then retry\n" % exc)
+                "actually running, then retry\n" % exc
+            )
             return 1
+
+        # Scaffolded while the lock is held, so two starts against one project
+        # cannot both be writing these files, and after the trust gate above,
+        # because git reads configuration out of this very directory and a
+        # hostile .git/config can name commands git will run.
+        scaffold = project_module.ensure_project(serve_dir, git=not args.no_git)
 
         if mesh_sid is None:
             mesh_sid = sessions.create_session(serve_dir)
         sessions.record_last_session(serve_dir, mesh_sid)
     else:
+        scaffold = None
         token = net.generate_token(args.token)
 
-    if port_in_use(args.port, bind.address):
+    if port_in_use(port, bind.address):
         sys.stderr.write(
             "error: port %d is already in use on %s, stop whatever is using it, "
-            "or pass --port.\n" % (args.port, bind.address))
+            "or pass --port.\n" % (port, bind.address)
+        )
         if held_lock is not None:
             held_lock.release()
         return 1
 
-    open_url = net.viewer_url(bind, args.port, token)
+    open_url = net.viewer_url(bind, port, token)
 
     # Held so on_ready can report the posture the session actually got, rather
     # than the one that was asked for. A list with one slot because the factory
@@ -352,14 +753,18 @@ def main(argv=None):
             # the session's own allow list, so nothing further is passed for
             # them; the write-class ones are absent from every allow list, which
             # is what makes them reach the broker above and therefore the human.
-            mcp_servers=MeshTools(bus, serve_dir).mcp_servers,
-            model=args.model,
-            permission_mode=args.permission_mode,
+            # The session id goes with it for the one tool that writes the
+            # conversation out.
+            mcp_servers=MeshTools(bus, serve_dir, mesh_sid).mcp_servers,
+            model=resolved_settings["model"],
+            effort=resolved_settings["effort"],
+            permission_mode=resolved_settings["permission_mode"],
             # The SDK resumes only a conversation it already knows; a
             # freshly created mesh session has no SDK id to resume yet.
             resume=_resumable_sdk_id(serve_dir, mesh_sid) if resumed else None,
             on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
-                serve_dir, mesh_sid, sdk_id),
+                serve_dir, mesh_sid, sdk_id
+            ),
             # What the gate above accepted, so the session can refuse tool
             # calls if it stops being true while the run is in progress.
             trusted_config_digest=trusted_digest,
@@ -370,18 +775,26 @@ def main(argv=None):
     async def on_ready():
         sys.stdout.write("Annealage Mesh\n")
         sys.stdout.write("  serving STLs from : %s\n" % serve_dir)
-        sys.stdout.write("  human comments    : %s  (written on submit)\n"
-                          % paths.comments_path(serve_dir))
+        sys.stdout.write(
+            "  human comments    : %s  (written on submit)\n" % paths.comments_path(serve_dir)
+        )
         sys.stdout.write("  comments log      : %s\n" % paths.comments_log_path(serve_dir))
-        sys.stdout.write("  agent callouts    : %s  (agent writes here to show pins)\n"
-                          % paths.callouts_path(serve_dir))
+        sys.stdout.write(
+            "  agent callouts    : %s  (agent writes here to show pins)\n"
+            % paths.callouts_path(serve_dir)
+        )
         if mode == "agent":
-            sys.stdout.write("  session           : %s%s\n"
-                              % (mesh_sid, "  (resumed)" if resumed else "  (fresh)"))
+            sys.stdout.write(
+                "  session           : %s%s\n"
+                % (mesh_sid, "  (resumed)" if resumed else "  (fresh)")
+            )
+        if scaffold is not None:
+            for line in scaffold_report(scaffold, serve_dir):
+                sys.stdout.write(line + "\n")
         # The exposure banner prints every run, whatever the bind, because a
         # default or a persisted setting means the user never typed a flag
         # that would have reminded them what this is reachable on.
-        sys.stdout.write("%s\n" % net.format_banner(bind, args.port, token))
+        sys.stdout.write("%s\n" % net.format_banner(bind, port, token))
         # The session, when one was built, so this reports the posture that is
         # actually in effect: a requested sandbox that could not engage says so
         # here, naming what is missing, rather than leaving the human to infer
@@ -390,7 +803,7 @@ def main(argv=None):
             sys.stdout.write(line + "\n")
         sys.stdout.write("  (Ctrl-C to stop)\n\n")
         sys.stdout.flush()
-        if not args.no_open:
+        if resolved_settings["open_browser"]:
             # webbrowser.open can shell out and block on the child process
             # (GenericBrowser.open does Popen(cmd).wait() whenever BROWSER
             # names a command with no "%s" placeholder), so it runs in the
@@ -404,10 +817,19 @@ def main(argv=None):
                 pass  # never fail startup just because a browser couldn't be opened
 
     try:
-        asyncio.run(app_module.run(
-            serve_dir, bind.address, args.port, on_ready=on_ready,
-            token=token, extra_origins=tuple(args.origin), mesh_session_id=mesh_sid,
-            build_session=build_session))
+        asyncio.run(
+            app_module.run(
+                serve_dir,
+                bind.address,
+                port,
+                on_ready=on_ready,
+                token=token,
+                extra_origins=tuple(args.origin),
+                mesh_session_id=mesh_sid,
+                build_session=build_session,
+                settings=resolved_settings,
+            )
+        )
     except KeyboardInterrupt:
         pass
     finally:

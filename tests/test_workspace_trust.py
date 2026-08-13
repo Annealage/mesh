@@ -23,6 +23,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     about the trust gate, which sits behind that refusal, so the requirement is
     reported satisfied rather than depending on what the host has installed."""
     from annealage_mesh.session import sdk
+
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
 
@@ -214,8 +215,17 @@ def _run_cli(monkeypatch, args):
     """Run ``cli.main`` with the server stubbed out, returning its exit code."""
     started = []
 
-    async def _stub_run(serve_dir, host, port, on_ready=None, token=None,
-                        extra_origins=(), build_session=None, mesh_session_id=None):
+    async def _stub_run(
+        serve_dir,
+        host,
+        port,
+        on_ready=None,
+        token=None,
+        extra_origins=(),
+        build_session=None,
+        mesh_session_id=None,
+        settings=None,
+    ):
         started.append(serve_dir)
 
     monkeypatch.setattr(cli.app_module, "run", _stub_run)
@@ -223,7 +233,8 @@ def _run_cli(monkeypatch, args):
 
 
 def test_agent_mode_refuses_a_directory_whose_config_was_never_accepted(
-        tmp_path, monkeypatch, capsys):
+    tmp_path, monkeypatch, capsys
+):
     _settings(tmp_path)
     code, started = _run_cli(monkeypatch, [str(tmp_path), "--no-open"])
     assert code == 2
@@ -261,8 +272,7 @@ def test_a_plain_directory_starts_with_no_prompting(tmp_path, monkeypatch):
 
 def test_accepting_records_it_and_starts(tmp_path, monkeypatch):
     _settings(tmp_path)
-    code, started = _run_cli(
-        monkeypatch, [str(tmp_path), "--no-open", "--trust-project-config"])
+    code, started = _run_cli(monkeypatch, [str(tmp_path), "--no-open", "--trust-project-config"])
     assert code == 0
     assert started == [tmp_path]
     assert wt.TrustStore().accepted(tmp_path, wt.config_digest(tmp_path))

@@ -15,6 +15,7 @@ import { initWs } from "./ws.js";
 import { initChat } from "./chat.js";
 import { initCommands } from "./commands.js";
 import { initSketch } from "./sketch.js";
+import { initSettings, loadSettings } from "./settings.js";
 
 const appEl = document.getElementById("app");
 
@@ -69,9 +70,21 @@ wsApi = initWs({
   dispatchCall: commandsApi.dispatch,
 });
 
+const settingsApi = initSettings({
+  openButton: document.getElementById("settingsBtn"),
+  container: document.getElementById("settingsModal"),
+});
+
+// Saved viewer preferences are applied to this page as soon as they arrive,
+// which is after the first frame: the alternative is blocking the whole boot on
+// an HTTP round trip to learn which axis is up, and a model that appears
+// immediately and then settles is better than one that waits.
+loadSettings();
+
 // Inspection surface for the browser console and for the Playwright tests
 // in tests/test_viewer_e2e.py. Not read by any other module in this tree.
 window.mesh = {
+  settings: settingsApi,
   store,
   scene: scene3d.scene,
   camera: scene3d.camera,

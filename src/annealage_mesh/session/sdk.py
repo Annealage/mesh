@@ -48,11 +48,11 @@ for what is watched and why that is the boundary.
 """
 
 import asyncio
-import warnings
+import platform
 import re
 import shutil
 import sys
-import platform
+import warnings
 from typing import Any, Optional, Tuple
 
 from claude_agent_sdk import (
@@ -72,7 +72,6 @@ from claude_agent_sdk import (
 
 from ..tools import registry
 from . import turn_images, workspace_trust
-
 from .base import (
     AGENT_CONNECTING,
     AGENT_READY,
@@ -138,7 +137,8 @@ SANDBOX_SETTINGS = {
 # empty ``missing``, which the banner renders as an unreported dependency.
 _SANDBOX_DISABLED_RE = re.compile(r"sandbox\s+disabled", re.IGNORECASE)
 _SANDBOX_MISSING_RE = re.compile(
-    r"dependencies?\s+are\s+missing:\s*(?P<items>[^·\n]+)", re.IGNORECASE)
+    r"dependencies?\s+are\s+missing:\s*(?P<items>[^·\n]+)", re.IGNORECASE
+)
 
 # How many unparseable messages in a row are tolerated before the session gives
 # up. One is a hiccup worth skipping; a stream of them means this build and the
@@ -163,6 +163,8 @@ _STDERR_KEEP_LINES = 200
 # the names it would list are pinned by a test, so a tool reaching that list
 # unintentionally still fails there.
 warnings.filterwarnings("ignore", category=CanUseToolShadowedWarning)
+
+
 class SdkSession:
     """An ``AgentSession`` driving a real ``ClaudeSDKClient``.
 
@@ -177,16 +179,31 @@ class SdkSession:
     notice an SDK upgrade breaking the control protocol.
     """
 
-    def __init__(self, on_event, *, cwd, session_id, broker=None, model=None,
-                 permission_mode=None, resume=None, sandbox=True,
-                 mcp_servers=None, extra_allowed_tools=(), transport=None,
-                 on_sdk_session_id=None, trusted_config_digest=None):
+    def __init__(
+        self,
+        on_event,
+        *,
+        cwd,
+        session_id,
+        broker=None,
+        model=None,
+        effort=None,
+        permission_mode=None,
+        resume=None,
+        sandbox=True,
+        mcp_servers=None,
+        extra_allowed_tools=(),
+        transport=None,
+        on_sdk_session_id=None,
+        trusted_config_digest=None,
+    ):
         self._on_event = on_event
         self.cwd = str(cwd)
         self.session_id = session_id
         self.sdk_session_id = None
         self._broker = broker
         self._model = model
+        self._effort = effort
         self._permission_mode = permission_mode
         self._resume = resume
         self._sandbox_requested = bool(sandbox)
@@ -209,8 +226,7 @@ class SdkSession:
         # Predicted now so the banner, printed once at startup, is right on a
         # machine that plainly cannot sandbox. Corrected by the child if it
         # reports its own list.
-        self._sandbox_missing = (missing_sandbox_dependencies()
-                                 if self._sandbox_requested else ())
+        self._sandbox_missing = missing_sandbox_dependencies() if self._sandbox_requested else ()
         self._sandbox_child_reported = False
         self._viewers_seen = 0
 
@@ -280,27 +296,33 @@ class SdkSession:
         reading the same loop.
         """
         if self._client is None or self._status == AGENT_UNAVAILABLE:
-            self._emit(AgentError(
-                stderr=self._recent_stderr(),
-                remediation="the agent is not running, so this turn was not sent; "
-                            "check the startup output for why and use Retry",
-                viewer=viewer,
-            ))
+            self._emit(
+                AgentError(
+                    stderr=self._recent_stderr(),
+                    remediation="the agent is not running, so this turn was not sent; "
+                    "check the startup output for why and use Retry",
+                    viewer=viewer,
+                )
+            )
             return
         self._turn += 1
         try:
             loop = asyncio.get_running_loop()
             expanded = await loop.run_in_executor(
-                None, turn_images.expand_turn_blocks, blocks, self.cwd)
-            await self._client.query(_one_message({
-                "type": "user",
-                "message": {"role": "user", "content": expanded},
-            }))
+                None, turn_images.expand_turn_blocks, blocks, self.cwd
+            )
+            await self._client.query(
+                _one_message(
+                    {
+                        "type": "user",
+                        "message": {"role": "user", "content": expanded},
+                    }
+                )
+            )
         except Exception as exc:
             self._fail(exc, viewer=viewer)
 
-    async def decide_permission(self, request_id: str, decision: str,
-                                message: str = "") -> None:
+    async def decide_permission(self, request_id: str, decision: str, message: str = "") -> None:
         """Route a human's decision to the broker.
 
         ``UnknownRequest`` propagates deliberately. Two tabs can hold one card
@@ -317,8 +339,9 @@ class SdkSession:
         except UnknownRequest:
             raise
         except Exception as exc:
-            sys.stderr.write("warning: permission decision %s was not applied: %r\n"
-                             % (request_id, exc))
+            sys.stderr.write(
+                "warning: permission decision %s was not applied: %r\n" % (request_id, exc)
+            )
 
     async def interrupt(self) -> None:
         if self._client is None:
@@ -341,8 +364,7 @@ class SdkSession:
         and must keep serving the viewer whatever the agent does.
         """
         try:
-            self._client = ClaudeSDKClient(options=self._build_options(),
-                                           transport=self._transport)
+            self._client = ClaudeSDKClient(options=self._build_options(), transport=self._transport)
             await self._client.connect()
         except Exception as exc:
             self._client = None
@@ -364,28 +386,27 @@ class SdkSession:
             try:
                 await self._client.disconnect()
             except Exception as exc:
-                sys.stderr.write("warning: agent client did not disconnect cleanly: %r\n"
-                                 % (exc,))
+                sys.stderr.write("warning: agent client did not disconnect cleanly: %r\n" % (exc,))
         self._client = None
         self._set_status(AGENT_UNAVAILABLE)
 
     def _build_options(self) -> ClaudeAgentOptions:
         allowed = list(PRE_ALLOWED_MESH_TOOLS) + list(self._extra_allowed_tools)
-        kwargs = dict(
-            cwd=self.cwd,
-            setting_sources=list(SETTING_SOURCES),
-            allowed_tools=allowed,
+        kwargs = {
+            "cwd": self.cwd,
+            "setting_sources": list(SETTING_SOURCES),
+            "allowed_tools": allowed,
             # Token-level streaming. Without this only whole assistant
             # messages arrive, which is not a chat pane.
-            include_partial_messages=True,
-            stderr=self._note_stderr,
-            mcp_servers=self._mcp_servers,
+            "include_partial_messages": True,
+            "stderr": self._note_stderr,
+            "mcp_servers": self._mcp_servers,
             # Only the servers named above. Without this the CLI also honours a
             # `.mcp.json` in the served directory, and an entry there names a
             # command to spawn, so an unreviewed file in a downloaded folder
             # would choose processes to run.
-            strict_mcp_config=True,
-        )
+            "strict_mcp_config": True,
+        }
         if self._sandbox_requested:
             kwargs["sandbox"] = dict(SANDBOX_SETTINGS)
         if self._trusted_config_digest is not None:
@@ -396,6 +417,10 @@ class SdkSession:
             kwargs["can_use_tool"] = self._broker.ask
         if self._model:
             kwargs["model"] = self._model
+        if self._effort:
+            # How much thinking the model does per turn. Passed only when set,
+            # so the CLI's own configured default stands otherwise.
+            kwargs["effort"] = self._effort
         if self._permission_mode:
             kwargs["permission_mode"] = self._permission_mode
         if self._resume:
@@ -436,21 +461,25 @@ class SdkSession:
             current = workspace_trust.config_digest(self.cwd)
             unchanged = current == self._trusted_config_digest
         except Exception as exc:
-            sys.stderr.write("warning: could not check the served directory's "
-                             "Claude configuration: %r\n" % (exc,))
+            sys.stderr.write(
+                "warning: could not check the served directory's "
+                "Claude configuration: %r\n" % (exc,)
+            )
             unchanged = False
         if unchanged:
             return {}
         if not self._config_change_reported:
             self._config_change_reported = True
-            self._emit(AgentError(
-                stderr="the Claude configuration under %s no longer matches what was "
-                       "accepted when this session started" % self.cwd,
-                remediation="tool calls are refused until this is resolved, because a "
-                            "settings file there can grant tools without asking; "
-                            "inspect .claude/ and .mcp.json, then restart mesh to "
-                            "review and accept the current contents",
-            ))
+            self._emit(
+                AgentError(
+                    stderr="the Claude configuration under %s no longer matches what was "
+                    "accepted when this session started" % self.cwd,
+                    remediation="tool calls are refused until this is resolved, because a "
+                    "settings file there can grant tools without asking; "
+                    "inspect .claude/ and .mcp.json, then restart mesh to "
+                    "review and accept the current contents",
+                )
+            )
         return {
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
@@ -460,7 +489,8 @@ class SdkSession:
                     "directory changed after the human accepted it, and configuration "
                     "there can grant tool permissions without asking. Do not attempt to "
                     "modify .claude/ or .mcp.json. Tell the human what you were trying "
-                    "to do and that mesh must be restarted to review the change."),
+                    "to do and that mesh must be restarted to review the change."
+                ),
             },
         }
 
@@ -492,13 +522,15 @@ class SdkSession:
                 # contained shell learns otherwise. It goes to the chat pane as
                 # an error without marking the session unavailable: the agent
                 # is working, it is the containment that is not.
-                self._emit(AgentError(
-                    stderr=line.strip(),
-                    remediation="the agent's shell is NOT sandboxed for this run, so "
-                                "bash will ask for approval instead of running "
-                                "contained; restart once %s is available"
-                                % ", ".join(self._sandbox_missing),
-                ))
+                self._emit(
+                    AgentError(
+                        stderr=line.strip(),
+                        remediation="the agent's shell is NOT sandboxed for this run, so "
+                        "bash will ask for approval instead of running "
+                        "contained; restart once %s is available"
+                        % ", ".join(self._sandbox_missing),
+                    )
+                )
 
     def _recent_stderr(self) -> str:
         return "\n".join(self._stderr_lines[-40:])
@@ -523,8 +555,9 @@ class SdkSession:
                     except Exception as exc:
                         # One message this file cannot make sense of must not end
                         # the conversation.
-                        sys.stderr.write("warning: could not handle %s: %r\n"
-                                         % (type(message).__name__, exc))
+                        sys.stderr.write(
+                            "warning: could not handle %s: %r\n" % (type(message).__name__, exc)
+                        )
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -542,7 +575,8 @@ class SdkSession:
                     sys.stderr.write(
                         "warning: skipping a message the SDK could not parse (%d of %d "
                         "in a row allowed): %r\n"
-                        % (parse_failures, _MAX_CONSECUTIVE_PARSE_FAILURES, exc))
+                        % (parse_failures, _MAX_CONSECUTIVE_PARSE_FAILURES, exc)
+                    )
                     continue
                 self._fail(exc)
                 return
@@ -555,8 +589,14 @@ class SdkSession:
             self._remember_sdk_session(getattr(message, "session_id", None))
             for block in message.content or []:
                 if isinstance(block, ToolUseBlock):
-                    self._emit(ToolUse(turn=self._turn, tool_use_id=block.id,
-                                       name=block.name, input=block.input or {}))
+                    self._emit(
+                        ToolUse(
+                            turn=self._turn,
+                            tool_use_id=block.id,
+                            name=block.name,
+                            input=block.input or {},
+                        )
+                    )
                 # A TextBlock here is the whole assistant text, which the
                 # stream events have already delivered delta by delta; emitting
                 # it again would double every reply in the pane.
@@ -564,19 +604,23 @@ class SdkSession:
         if isinstance(message, UserMessage):
             for block in message.content or []:
                 if isinstance(block, ToolResultBlock):
-                    self._emit(ToolResult(
-                        tool_use_id=block.tool_use_id,
-                        is_error=bool(block.is_error),
-                        text=_content_to_text(block.content),
-                    ))
+                    self._emit(
+                        ToolResult(
+                            tool_use_id=block.tool_use_id,
+                            is_error=bool(block.is_error),
+                            text=_content_to_text(block.content),
+                        )
+                    )
             return
         if isinstance(message, ResultMessage):
             self._remember_sdk_session(getattr(message, "session_id", None))
-            self._emit(TurnEnd(
-                turn=self._turn,
-                stop_reason=message.stop_reason or message.subtype or "end_turn",
-                cost_usd=message.total_cost_usd,
-            ))
+            self._emit(
+                TurnEnd(
+                    turn=self._turn,
+                    stop_reason=message.stop_reason or message.subtype or "end_turn",
+                    cost_usd=message.total_cost_usd,
+                )
+            )
             return
         if isinstance(message, SystemMessage):
             self._handle_system(message)
@@ -613,9 +657,12 @@ class SdkSession:
         if message.subtype == "init" and self._resume:
             reported = data.get("session_id")
             if reported and reported != self._resume:
-                self._emit(SessionReset(
-                    reason="asked to resume %s and the agent started %s instead; "
-                           "this is a new conversation" % (self._resume, reported)))
+                self._emit(
+                    SessionReset(
+                        reason="asked to resume %s and the agent started %s instead; "
+                        "this is a new conversation" % (self._resume, reported)
+                    )
+                )
 
     def _remember_sdk_session(self, sdk_session_id) -> None:
         """Record the SDK's own session id, which is never fabricated: it stays
@@ -630,8 +677,7 @@ class SdkSession:
                     # Recording the id is what lets a later -c or -r resume this
                     # conversation; failing to record it costs that and nothing
                     # in the running session, so it is reported, not raised.
-                    sys.stderr.write("warning: could not record the SDK session id: %r\n"
-                                     % (exc,))
+                    sys.stderr.write("warning: could not record the SDK session id: %r\n" % (exc,))
 
     # -- failure -------------------------------------------------------------
 
@@ -643,11 +689,13 @@ class SdkSession:
         child's own message is the only thing that tells the human what to do.
         """
         self._set_status(AGENT_UNAVAILABLE)
-        self._emit(AgentError(
-            stderr=(self._recent_stderr() or "%s: %s" % (type(exc).__name__, exc)),
-            remediation=_remediation_for(exc),
-            viewer=viewer,
-        ))
+        self._emit(
+            AgentError(
+                stderr=(self._recent_stderr() or "%s: %s" % (type(exc).__name__, exc)),
+                remediation=_remediation_for(exc),
+                viewer=viewer,
+            )
+        )
 
     def _emit(self, event) -> None:
         try:
@@ -655,8 +703,7 @@ class SdkSession:
         except Exception as exc:
             # The callback appends to a log and broadcasts; a failure there must
             # not take down the pump, or one bad frame would end the session.
-            sys.stderr.write("warning: could not deliver %s: %r\n"
-                             % (type(event).__name__, exc))
+            sys.stderr.write("warning: could not deliver %s: %r\n" % (type(event).__name__, exc))
 
 
 # The two binaries the CLI's own disabled-sandbox message names, and the
@@ -767,13 +814,19 @@ def _remediation_for(exc: BaseException) -> str:
     """
     name = type(exc).__name__
     if name == "CLINotFoundError":
-        return ("the claude CLI could not be found; the SDK normally bundles it, so "
-                "this usually means the package was installed from its source "
-                "distribution, and claude needs to be on PATH")
+        return (
+            "the claude CLI could not be found; the SDK normally bundles it, so "
+            "this usually means the package was installed from its source "
+            "distribution, and claude needs to be on PATH"
+        )
     if name == "CLIConnectionError":
-        return ("the claude CLI could not be started or lost its connection; run "
-                "annealage-mesh doctor, and check that it is authenticated")
+        return (
+            "the claude CLI could not be started or lost its connection; run "
+            "annealage-mesh doctor, and check that it is authenticated"
+        )
     if name == "CLIJSONDecodeError":
-        return ("the claude CLI sent something this build could not parse, which "
-                "usually means a version mismatch; check the pinned SDK range")
+        return (
+            "the claude CLI sent something this build could not parse, which "
+            "usually means a version mismatch; check the pinned SDK range"
+        )
     return "the agent is unavailable; the captured output above is what it reported"

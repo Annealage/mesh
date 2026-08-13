@@ -34,8 +34,9 @@ _POINT_SCHEMA = {
 # What a reference in ``measure`` may look like, quoted in that tool's own
 # description and in the error it raises, so the two can never drift apart.
 _REFERENCE_FORMS = (
-    "\"pin:3\" for the human's pin 3, \"callout:2\" for your own callout 2, or "
-    "\"12.5,-3.2,44\" for an explicit x,y,z point in model coordinates")
+    '"pin:3" for the human\'s pin 3, "callout:2" for your own callout 2, or '
+    '"12.5,-3.2,44" for an explicit x,y,z point in model coordinates'
+)
 
 
 def _read_point(args, key):
@@ -47,17 +48,18 @@ def _read_point(args, key):
     """
     value = args.get(key)
     if not isinstance(value, (list, tuple)) or len(value) != 3:
-        raise ValueError("%s must be an array of exactly three numbers, "
-                         "[x, y, z] in model coordinates" % key)
+        raise ValueError(
+            "%s must be an array of exactly three numbers, [x, y, z] in model coordinates" % key
+        )
     try:
         return [float(v) for v in value]
     except (TypeError, ValueError):
-        raise ValueError("%s must be three numbers, got %r" % (key, value))
+        raise ValueError("%s must be three numbers, got %r" % (key, value)) from None
 
 
 def _read_axis(value):
     if value not in ("z", "y"):
-        raise ValueError("axis must be \"z\" or \"y\", got %r" % (value,))
+        raise ValueError('axis must be "z" or "y", got %r' % (value,))
     return value
 
 
@@ -83,12 +85,15 @@ def build(bus):
         {
             "type": "object",
             "properties": {
-                "position": dict(_POINT_SCHEMA,
-                                 description="where the camera goes, [x, y, z]"),
-                "target": dict(_POINT_SCHEMA,
-                               description="what the camera looks at and orbits, [x, y, z]"),
-                "up_axis": {"type": "string", "enum": ["z", "y"],
-                            "description": "which axis is up; leave out to keep the current one"},
+                "position": dict(_POINT_SCHEMA, description="where the camera goes, [x, y, z]"),
+                "target": dict(
+                    _POINT_SCHEMA, description="what the camera looks at and orbits, [x, y, z]"
+                ),
+                "up_axis": {
+                    "type": "string",
+                    "enum": ["z", "y"],
+                    "description": "which axis is up; leave out to keep the current one",
+                },
             },
         },
     )
@@ -104,7 +109,8 @@ def build(bus):
             raise ValueError(
                 "set_view needs at least one of position, target or up_axis; "
                 "call get_view first if you want to move relative to where the "
-                "camera is now, or fit_view to frame everything visible")
+                "camera is now, or fit_view to frame everything visible"
+            )
         return ok(await bus.call("viewer.set_view", params))
 
     @tool(
@@ -137,12 +143,12 @@ def build(bus):
     async def set_visibility(args):
         rel = args.get("rel")
         if not isinstance(rel, str) or not rel:
-            raise ValueError("rel must be a model's rel path, as reported by "
-                             "list_models or get_visibility")
+            raise ValueError(
+                "rel must be a model's rel path, as reported by list_models or get_visibility"
+            )
         if not isinstance(args.get("visible"), bool):
             raise ValueError("visible must be true (show) or false (hide)")
-        return ok(await bus.call("viewer.set_visibility",
-                                 {"rel": rel, "visible": args["visible"]}))
+        return ok(await bus.call("viewer.set_visibility", {"rel": rel, "visible": args["visible"]}))
 
     @tool(
         "set_up_axis",
@@ -152,8 +158,7 @@ def build(bus):
         {"axis": str},
     )
     async def set_up_axis(args):
-        return ok(await bus.call("viewer.set_up_axis",
-                                 {"axis": _read_axis(args.get("axis"))}))
+        return ok(await bus.call("viewer.set_up_axis", {"axis": _read_axis(args.get("axis"))}))
 
     @tool(
         "select_pin",
@@ -165,8 +170,9 @@ def build(bus):
     async def select_pin(args):
         pin = args.get("pin")
         if not isinstance(pin, int) or isinstance(pin, bool):
-            raise ValueError("pin must be a pin number, as shown in the "
-                             "viewer and in mesh-comments.json")
+            raise ValueError(
+                "pin must be a pin number, as shown in the viewer and in mesh-comments.json"
+            )
         return ok(await bus.call("viewer.select_pin", {"pin": pin}))
 
     @tool(
@@ -179,9 +185,12 @@ def build(bus):
         {
             "type": "object",
             "properties": {
-                "width": {"type": "integer", "minimum": 64, "maximum": 1568,
-                          "description": "pixel width to render at; leave out for "
-                                         "the canvas's own size"},
+                "width": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 1568,
+                    "description": "pixel width to render at; leave out for the canvas's own size",
+                },
             },
         },
     )
@@ -200,23 +209,31 @@ def build(bus):
             # rather than anything the model did. Said plainly, because the
             # alternative is a model that received an image block containing
             # nothing and has no way to tell that from a blank render.
-            return fail("the viewer returned a capture this build could not read; "
-                        "the image was not delivered")
-        media_type = prefix[len("data:"):-len(";base64")]
+            return fail(
+                "the viewer returned a capture this build could not read; "
+                "the image was not delivered"
+            )
+        media_type = prefix[len("data:") : -len(";base64")]
         # Fact 8: an image item in a tool result reaches the model as a real
         # image, so the capture needs no file on disk and no second round trip.
         # The text block alongside it carries the numbers an image cannot: what
         # the camera was, and what size the capture actually is.
-        facts = json.dumps({
-            "width": result.get("width"),
-            "height": result.get("height"),
-            "format": result.get("format"),
-            "camera": result.get("camera"),
-        }, indent=2, default=str)
-        return {"content": [
-            {"type": "image", "data": data, "mimeType": media_type},
-            {"type": "text", "text": facts},
-        ]}
+        facts = json.dumps(
+            {
+                "width": result.get("width"),
+                "height": result.get("height"),
+                "format": result.get("format"),
+                "camera": result.get("camera"),
+            },
+            indent=2,
+            default=str,
+        )
+        return {
+            "content": [
+                {"type": "image", "data": data, "mimeType": media_type},
+                {"type": "text", "text": facts},
+            ]
+        }
 
     @tool(
         "measure",
@@ -231,8 +248,18 @@ def build(bus):
         for key in ("a", "b"):
             if not isinstance(args.get(key), str) or not args[key].strip():
                 raise ValueError("%s must be %s" % (key, _REFERENCE_FORMS))
-        return ok(await bus.call("viewer.measure",
-                                 {"a": args["a"].strip(), "b": args["b"].strip()}))
+        return ok(
+            await bus.call("viewer.measure", {"a": args["a"].strip(), "b": args["b"].strip()})
+        )
 
-    return [get_view, set_view, fit_view, get_visibility, set_visibility,
-            set_up_axis, select_pin, capture_view, measure]
+    return [
+        get_view,
+        set_view,
+        fit_view,
+        get_visibility,
+        set_visibility,
+        set_up_axis,
+        select_pin,
+        capture_view,
+        measure,
+    ]

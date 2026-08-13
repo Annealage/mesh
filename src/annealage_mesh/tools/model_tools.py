@@ -20,6 +20,7 @@ from claude_agent_sdk import tool
 from .. import paths, stl
 from . import fail, ok
 
+
 def _list(serve_dir):
     models, truncated = paths.scan_models(serve_dir)
     listing = []
@@ -35,9 +36,11 @@ def _list(serve_dir):
         else:
             entry["bytes"] = st.st_size
         listing.append(entry)
-    return {"dir": str(paths.resolve_serve_dir(serve_dir)),
-            "models": listing,
-            "truncated": truncated}
+    return {
+        "dir": str(paths.resolve_serve_dir(serve_dir)),
+        "models": listing,
+        "truncated": truncated,
+    }
 
 
 def _facts(serve_dir, rel):
@@ -50,19 +53,26 @@ def _facts(serve_dir, rel):
     try:
         facts = stl.read_stl_facts(str(target))
     except stl.StlError as exc:
-        return ("%s is not readable as STL: %s. If you have just written it, it "
-                "may still be being written; otherwise check what generated it."
-                % (rel, exc))
+        return (
+            "%s is not readable as STL: %s. If you have just written it, it "
+            "may still be being written; otherwise check what generated it." % (rel, exc)
+        )
     except OSError as exc:
         return "could not read %s: %s" % (rel, exc)
     size = facts.get("bbox_min"), facts.get("bbox_max")
     extent = None
     if all(v is not None for v in size):
-        extent = [round(hi - lo, 4) for lo, hi in zip(size[0], size[1])]
-    return {"rel": rel, "format": facts["format"], "triangles": facts["triangles"],
-            "bbox_min": facts["bbox_min"], "bbox_max": facts["bbox_max"],
-            "extent": extent, "bytes": facts["size_bytes"],
-            "header": facts["header"]}
+        extent = [round(hi - lo, 4) for lo, hi in zip(size[0], size[1], strict=True)]
+    return {
+        "rel": rel,
+        "format": facts["format"],
+        "triangles": facts["triangles"],
+        "bbox_min": facts["bbox_min"],
+        "bbox_max": facts["bbox_max"],
+        "extent": extent,
+        "bytes": facts["size_bytes"],
+        "header": facts["header"],
+    }
 
 
 def build(serve_dir):
@@ -91,8 +101,7 @@ def build(serve_dir):
     async def model_info(args):
         rel = args.get("rel")
         if not isinstance(rel, str) or not rel:
-            raise ValueError("rel must be a model's rel path, as reported by "
-                             "list_models")
+            raise ValueError("rel must be a model's rel path, as reported by list_models")
         loop = asyncio.get_running_loop()
         facts = await loop.run_in_executor(None, _facts, serve_dir, rel)
         return fail(facts) if isinstance(facts, str) else ok(facts)

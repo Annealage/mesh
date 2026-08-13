@@ -118,7 +118,8 @@ _COORD_MAX_MAGNITUDE = 1e9
 # First token of a line the ASCII grammar recognises. Any non-blank line
 # whose first token is not one of these is rejected rather than ignored.
 _ASCII_KEYWORDS = frozenset(
-    {"solid", "facet", "outer", "vertex", "endloop", "endfacet", "endsolid"})
+    {"solid", "facet", "outer", "vertex", "endloop", "endfacet", "endsolid"}
+)
 
 
 class StlError(Exception):
@@ -196,8 +197,7 @@ class _BBoxTracker:
 
     def update(self, vx, vy, vz):
         if not (math.isfinite(vx) and math.isfinite(vy) and math.isfinite(vz)):
-            raise StlError(
-                "non-finite vertex coordinate: (%r, %r, %r)" % (vx, vy, vz))
+            raise StlError("non-finite vertex coordinate: (%r, %r, %r)" % (vx, vy, vz))
         if self._min is None:
             self._min = [vx, vy, vz]
             self._max = [vx, vy, vz]
@@ -238,8 +238,8 @@ def _read_binary(fh, declared, header, size_bytes):
             present = processed + len(chunk) // TRIANGLE_RECORD_SIZE
             raise StlError(
                 "truncated binary STL: header declares %d triangles, only "
-                "%d fully present before the data ran out"
-                % (declared, present))
+                "%d fully present before the data ran out" % (declared, present)
+            )
         for record in _RECORD_STRUCT.iter_unpack(chunk):
             # record[0:3] is the facet normal, record[3:12] the three
             # vertices; the normal doesn't affect the bounding box.
@@ -279,10 +279,14 @@ def _decode_header(raw_header):
     space_pending = False
     for ch in text:
         code = ord(ch)
-        if (code < 0x20 or code == 0x7F or 0x80 <= code <= 0x9F
-                or code in (0x2028, 0x2029)
-                or 0x202A <= code <= 0x202E
-                or 0x2066 <= code <= 0x2069):
+        if (
+            code < 0x20
+            or code == 0x7F
+            or 0x80 <= code <= 0x9F
+            or code in (0x2028, 0x2029)
+            or 0x202A <= code <= 0x202E
+            or 0x2066 <= code <= 0x2069
+        ):
             space_pending = True
             continue
         if space_pending:
@@ -309,9 +313,7 @@ def _control_byte_rejection_message(path, size_bytes, mismatch):
     integer, and the message reports only the control bytes.
     """
     if mismatch is None:
-        return (
-            "%s is not valid ASCII STL text (contains control bytes)"
-            % path)
+        return "%s is not valid ASCII STL text (contains control bytes)" % path
     declared, expected_size = mismatch
     if size_bytes > expected_size:
         # Deliberately does not claim the declared records are all present
@@ -321,11 +323,12 @@ def _control_byte_rejection_message(path, size_bytes, mismatch):
         return (
             "%s declares %d triangles, which implies %d bytes, but the "
             "file is %d bytes; more data than the declared triangle count "
-            "accounts for" % (path, declared, expected_size, size_bytes))
+            "accounts for" % (path, declared, expected_size, size_bytes)
+        )
     return (
         "%s declares %d triangles, which implies %d bytes, but the file "
-        "is %d bytes; truncated or corrupt binary STL"
-        % (path, declared, expected_size, size_bytes))
+        "is %d bytes; truncated or corrupt binary STL" % (path, declared, expected_size, size_bytes)
+    )
 
 
 def _has_control_byte(text):
@@ -352,9 +355,7 @@ def _has_control_byte(text):
     for example one from a file that uses bare CR as its line ending, is
     caught here like any other control byte.
     """
-    return any(
-        (ord(ch) < 0x20 and ch != "\t") or ord(ch) == 0x7F
-        for ch in text)
+    return any((ord(ch) < 0x20 and ch != "\t") or ord(ch) == 0x7F for ch in text)
 
 
 def _first_record_parses_as_a_triangle(sample):
@@ -450,7 +451,8 @@ def _iter_ascii_lines(fh, path):
             raise StlError(
                 "not ASCII STL: %s has a line longer than %d bytes with no "
                 "line feed in sight; likely truncated binary STL data that "
-                "reached the ASCII reader" % (path, _MAX_ASCII_LINE_BYTES))
+                "reached the ASCII reader" % (path, _MAX_ASCII_LINE_BYTES)
+            )
     if pending:
         yield pending.decode("latin-1")
 
@@ -489,8 +491,7 @@ def _read_ascii(fh, path, size_bytes, mismatch):
         # hiding it from `_has_control_byte`.
         control_check_line = line[:-1] if line.endswith("\r") else line
         if _has_control_byte(control_check_line):
-            raise StlError(
-                _control_byte_rejection_message(path, size_bytes, mismatch))
+            raise StlError(_control_byte_rejection_message(path, size_bytes, mismatch))
         stripped = line.strip()
         if not stripped:
             continue
@@ -501,115 +502,96 @@ def _read_ascii(fh, path, size_bytes, mismatch):
                 raise StlError(
                     "not a recognisable STL file: %s (%d bytes; does not "
                     "match a binary STL by size, and does not start with "
-                    "the 'solid' keyword)" % (path, size_bytes))
+                    "the 'solid' keyword)" % (path, size_bytes)
+                )
             in_solid = True
             continue
 
         parts = stripped.split()
         keyword = parts[0].lower()
         if keyword not in _ASCII_KEYWORDS:
-            raise StlError(
-                "malformed ASCII STL: unrecognised line in %s: %r"
-                % (path, stripped))
+            raise StlError("malformed ASCII STL: unrecognised line in %s: %r" % (path, stripped))
 
         if keyword == "solid":
             if in_facet or in_loop:
-                raise StlError(
-                    "malformed ASCII STL: 'solid' inside an open facet: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: 'solid' inside an open facet: %r" % stripped)
             if in_solid:
                 raise StlError(
                     "malformed ASCII STL: 'solid' opened before the "
-                    "previous solid was closed with 'endsolid': %r"
-                    % stripped)
+                    "previous solid was closed with 'endsolid': %r" % stripped
+                )
             in_solid = True
         elif keyword == "facet":
             if not in_solid:
-                raise StlError(
-                    "malformed ASCII STL: 'facet' outside any solid: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: 'facet' outside any solid: %r" % stripped)
             if in_facet:
-                raise StlError(
-                    "malformed ASCII STL: nested facet, missing endfacet: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: nested facet, missing endfacet: %r" % stripped)
             in_facet = True
             facet_loops = 0
         elif keyword == "outer":
             if not in_facet or in_loop:
-                raise StlError(
-                    "malformed ASCII STL: 'outer loop' outside a facet: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: 'outer loop' outside a facet: %r" % stripped)
             if len(parts) < 2 or parts[1].lower() != "loop":
-                raise StlError(
-                    "malformed ASCII STL: 'outer' not followed by 'loop': %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: 'outer' not followed by 'loop': %r" % stripped)
             in_loop = True
             loop_vertices = 0
         elif keyword == "vertex":
             if not in_loop:
-                raise StlError(
-                    "malformed ASCII STL: vertex outside outer loop: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: vertex outside outer loop: %r" % stripped)
             if len(parts) != 4:
                 raise StlError(
                     "malformed ASCII STL: vertex line must have exactly 3 "
-                    "coordinates: %r" % stripped)
+                    "coordinates: %r" % stripped
+                )
             # A bare float() call accepts PEP 515 underscore digit
             # separators ("1_0" -> 10.0), so a coordinate token containing
             # one is rejected outright rather than silently parsed to a
             # different number.
             if any("_" in token for token in parts[1:4]):
-                raise StlError(
-                    "malformed ASCII STL: non-numeric vertex: %r" % stripped)
+                raise StlError("malformed ASCII STL: non-numeric vertex: %r" % stripped)
             try:
                 vx, vy, vz = (float(parts[1]), float(parts[2]), float(parts[3]))
             except ValueError as exc:
-                raise StlError(
-                    "malformed ASCII STL: non-numeric vertex: %r"
-                    % stripped) from exc
+                raise StlError("malformed ASCII STL: non-numeric vertex: %r" % stripped) from exc
             tracker.update(vx, vy, vz)
             loop_vertices += 1
         elif keyword == "endloop":
             if not in_loop:
-                raise StlError(
-                    "malformed ASCII STL: endloop without outer loop: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: endloop without outer loop: %r" % stripped)
             if loop_vertices != 3:
                 raise StlError(
                     "malformed ASCII STL: facet loop has %d vertices, "
-                    "expected 3: %r" % (loop_vertices, stripped))
+                    "expected 3: %r" % (loop_vertices, stripped)
+                )
             in_loop = False
             facet_loops += 1
         elif keyword == "endfacet":
             if not in_facet or in_loop:
-                raise StlError(
-                    "malformed ASCII STL: endfacet without a closed loop: %r"
-                    % stripped)
+                raise StlError("malformed ASCII STL: endfacet without a closed loop: %r" % stripped)
             if facet_loops != 1:
                 raise StlError(
                     "malformed ASCII STL: facet has %d outer loops, "
-                    "expected exactly 1: %r" % (facet_loops, stripped))
+                    "expected exactly 1: %r" % (facet_loops, stripped)
+                )
             in_facet = False
             triangles += 1
         elif keyword == "endsolid":
             if in_facet or in_loop:
                 raise StlError(
-                    "malformed ASCII STL: endsolid with a facet still "
-                    "open: %r" % stripped)
+                    "malformed ASCII STL: endsolid with a facet still open: %r" % stripped
+                )
             if not in_solid:
                 raise StlError(
-                    "malformed ASCII STL: 'endsolid' without a matching "
-                    "'solid': %r" % stripped)
+                    "malformed ASCII STL: 'endsolid' without a matching 'solid': %r" % stripped
+                )
             in_solid = False
 
     if first_line is None:
         raise StlError("empty file, not a recognisable STL: %s" % path)
     if in_facet or in_loop:
-        raise StlError(
-            "truncated ASCII STL: %s ends with a facet still open" % path)
+        raise StlError("truncated ASCII STL: %s ends with a facet still open" % path)
     if in_solid:
-        raise StlError(
-            "truncated ASCII STL: %s has no closing 'endsolid'" % path)
+        raise StlError("truncated ASCII STL: %s has no closing 'endsolid'" % path)
 
     return {
         "format": "ascii",

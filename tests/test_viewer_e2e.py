@@ -54,8 +54,9 @@ def _find_chrome():
     env = os.environ.get("MESH_E2E_CHROME")
     if env:
         return env
-    matches = sorted(glob.glob(os.path.expanduser(
-        "~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome")))
+    matches = sorted(
+        glob.glob(os.path.expanduser("~/.cache/ms-playwright/chromium-*/chrome-linux64/chrome"))
+    )
     return matches[0] if matches else None
 
 
@@ -98,12 +99,13 @@ class _ServerThread:
     build has grown a ``token`` parameter yet.
     """
 
-    def __init__(self, serve_dir, token=None, build_session=None):
+    def __init__(self, serve_dir, token=None, build_session=None, mesh_session_id=None):
         self.serve_dir = serve_dir
         self.host = "127.0.0.1"
         self.port = _free_port()
         self.base_url = "http://%s:%d" % (self.host, self.port)
         self.token = token
+        self.mesh_session_id = mesh_session_id
         self.build_session = build_session
         self._loop = None
         self._task = None
@@ -129,6 +131,8 @@ class _ServerThread:
                 run_kwargs["token"] = self.token
             if self.build_session is not None:
                 run_kwargs["build_session"] = self.build_session
+            if self.mesh_session_id is not None:
+                run_kwargs["mesh_session_id"] = self.mesh_session_id
             # on_ready is threading.Event.set: synchronous, non-blocking,
             # not awaitable, so run() proceeds immediately after calling it
             # rather than waiting on anything that touches this same loop.
@@ -185,8 +189,14 @@ def _cube_stl_bytes(center, half):
     y0, y1 = cy - half, cy + half
     z0, z1 = cz - half, cz + half
     v = {
-        0: (x0, y0, z0), 1: (x1, y0, z0), 2: (x1, y1, z0), 3: (x0, y1, z0),
-        4: (x0, y0, z1), 5: (x1, y0, z1), 6: (x1, y1, z1), 7: (x0, y1, z1),
+        0: (x0, y0, z0),
+        1: (x1, y0, z0),
+        2: (x1, y1, z0),
+        3: (x0, y1, z0),
+        4: (x0, y0, z1),
+        5: (x1, y0, z1),
+        6: (x1, y1, z1),
+        7: (x0, y1, z1),
     }
     faces = [
         ((0.0, 0.0, -1.0), (0, 2, 1), (0, 3, 2)),
@@ -350,7 +360,8 @@ def _wait_connection_state(page, state, timeout=15000):
     """
     page.wait_for_function(
         "(s) => window.mesh && window.mesh.store.getState().connection === s",
-        arg=state, timeout=timeout,
+        arg=state,
+        timeout=timeout,
     )
 
 
@@ -368,7 +379,8 @@ def _wait_for_request_growth(page, requests, baseline, timeout=5.0):
     while len(requests) <= baseline:
         if time.time() >= deadline:
             raise AssertionError(
-                "no new request landed within %.1fs (stayed at %d)" % (timeout, len(requests)))
+                "no new request landed within %.1fs (stayed at %d)" % (timeout, len(requests))
+            )
         # page.wait_for_timeout, not time.sleep: the synchronous Playwright API
         # dispatches events only while a call into it is in progress, so a bare
         # sleep leaves every queued "request" event undelivered until the next
@@ -399,6 +411,7 @@ def _wait_both_meshes_loaded(page):
 
 # 1. Page load, part list, no CDN --------------------------------------------
 
+
 def test_part_list_shows_both_labels_with_no_external_requests(browser, mesh_server):
     """Proves the manifest-driven part list renders both models' `label`
     text, and that vendoring three.js means nothing on the page reaches
@@ -428,6 +441,7 @@ def test_part_list_shows_both_labels_with_no_external_requests(browser, mesh_ser
 
 # 2. Checkbox -> store and mesh -----------------------------------------------
 
+
 def test_unchecking_a_part_moves_both_store_visibility_and_mesh_visible(browser, mesh_server):
     """Unchecking a part's checkbox must move both `window.mesh.store`'s
     visibility and the loaded mesh's own `.visible` flag: the checkbox-to-
@@ -444,13 +458,15 @@ def test_unchecking_a_part_moves_both_store_visibility_and_mesh_visible(browser,
         checkbox.uncheck()
 
         page.wait_for_function(
-            "(rel) => window.mesh.store.getState().visibility[rel] === false", arg=rel)
+            "(rel) => window.mesh.store.getState().visibility[rel] === false", arg=rel
+        )
         assert page.evaluate("(rel) => window.mesh.meshes[rel].visible", rel) is False
     finally:
         page.close()
 
 
 # 3. store.setVisibility -> checkbox and mesh --------------------------------
+
 
 def test_programmatic_set_visibility_unchecks_checkbox_and_hides_mesh(browser, mesh_server):
     """The defect M3 exists to fix: calling `store.setVisibility` from
@@ -467,14 +483,14 @@ def test_programmatic_set_visibility_unchecks_checkbox_and_hides_mesh(browser, m
 
         page.evaluate("(rel) => window.mesh.store.setVisibility(rel, false)", rel)
 
-        page.wait_for_function(
-            "(rel) => window.mesh.meshes[rel].visible === false", arg=rel)
+        page.wait_for_function("(rel) => window.mesh.meshes[rel].visible === false", arg=rel)
         assert not checkbox.is_checked()
     finally:
         page.close()
 
 
 # 4. Narrow viewport: tabs, and resize recovery after a zero-sized box -------
+
 
 def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
     """At 390x844 the tab bar governs which of #app/#side is shown, starting
@@ -512,19 +528,22 @@ def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
         page.click("#tabbar button[data-tab='model']")
         page.wait_for_function("document.querySelector('#app').style.display !== 'none'")
         page.wait_for_function(
-            "(f) => window.mesh.renderer.info.render.frame > f", arg=frame_while_hidden)
+            "(f) => window.mesh.renderer.info.render.frame > f", arg=frame_while_hidden
+        )
 
         assert page.evaluate("window.mesh.renderer.domElement.width") > 0
         assert page.evaluate("window.mesh.renderer.domElement.height") > 0
         assert page.evaluate("Number.isFinite(window.mesh.camera.aspect)")
         assert page.evaluate(
             "document.querySelector('#app canvas').clientWidth === "
-            "document.querySelector('#app').clientWidth")
+            "document.querySelector('#app').clientWidth"
+        )
     finally:
         page.close()
 
 
 # 5. Wide viewport: no tab bar, container-box sizing -------------------------
+
 
 def test_wide_viewport_no_tabbar_and_panel_toggle_resizes_canvas(browser, mesh_server):
     """At 1600 px wide the tab bar stays CSS-hidden and the Panel button
@@ -536,26 +555,26 @@ def test_wide_viewport_no_tabbar_and_panel_toggle_resizes_canvas(browser, mesh_s
         page.goto(mesh_server.base_url + "/")
         _wait_both_meshes_loaded(page)
 
-        assert page.evaluate(
-            "getComputedStyle(document.querySelector('#tabbar')).display") == "none"
+        assert (
+            page.evaluate("getComputedStyle(document.querySelector('#tabbar')).display") == "none"
+        )
 
         page.wait_for_function("window.mesh.renderer.domElement.width > 0")
         open_width = page.evaluate("window.mesh.renderer.domElement.width")
 
         page.click("#panelBtn")
-        page.wait_for_function(
-            "(w) => window.mesh.renderer.domElement.width > w", arg=open_width)
+        page.wait_for_function("(w) => window.mesh.renderer.domElement.width > w", arg=open_width)
         closed_width = page.evaluate("window.mesh.renderer.domElement.width")
         assert closed_width > open_width
 
         page.click("#panelBtn")
-        page.wait_for_function(
-            "(w) => window.mesh.renderer.domElement.width < w", arg=closed_width)
+        page.wait_for_function("(w) => window.mesh.renderer.domElement.width < w", arg=closed_width)
     finally:
         page.close()
 
 
 # 6. Add-pin click -> store -> /submit -> disk -------------------------------
+
 
 def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_server):
     """A click on the visible model while in Add-pin mode must create a
@@ -570,8 +589,9 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         page.click("#modeBtn")
         page.wait_for_function("window.mesh.store.getState().mode === 'annotate'")
 
-        assert page.locator("#pins .empty").count() == 1, \
+        assert page.locator("#pins .empty").count() == 1, (
             "an empty pin list should say so, exactly once"
+        )
 
         page.click("#app canvas")
         page.wait_for_function("window.mesh.store.getState().pins.length === 1")
@@ -579,8 +599,9 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         # The empty-state message is owned by js/pins.js alone. A second copy
         # written into viewer.html would be an element nothing removes, still
         # claiming there are no pins while this pin was listed underneath it.
-        assert page.locator("#pins .empty").count() == 0, \
-            "\"no pins yet\" must not survive alongside a pin"
+        assert page.locator("#pins .empty").count() == 0, (
+            '"no pins yet" must not survive alongside a pin'
+        )
 
         # press_sequentially dispatches one keydown/input pair per
         # character, the way a real keyboard does; page.fill sets the whole
@@ -591,7 +612,8 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         textarea.click()
         textarea.press_sequentially(comment_text, delay=20)
         page.wait_for_function(
-            "(t) => window.mesh.store.getState().pins[0].comment === t", arg=comment_text)
+            "(t) => window.mesh.store.getState().pins[0].comment === t", arg=comment_text
+        )
 
         page.click("#submit")
         page.wait_for_function("document.getElementById('toast').className === 'ok'")
@@ -612,8 +634,8 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
 
 # 7. The store defers a mutator called from inside a subscriber ---------------
 
-def test_a_mutator_called_from_inside_a_subscriber_is_deferred_not_nested(
-        browser, mesh_server):
+
+def test_a_mutator_called_from_inside_a_subscriber_is_deferred_not_nested(browser, mesh_server):
     """store.js queues a mutator called from within a notification instead of
     running it inline, so every listener observes one complete state change at
     a time. measure.js depends on this: its 'pins' subscriber re-validates the
@@ -679,8 +701,9 @@ def test_a_mutator_called_from_inside_a_subscriber_is_deferred_not_nested(
             }"""
         )
         assert result["maxDepth"] == 1, "a listener was re-entered from inside itself"
-        assert result["alsoSeen"] == [[False, True], [False, False]], \
+        assert result["alsoSeen"] == [[False, True], [False, False]], (
             "the second listener saw the two changes out of causal order"
+        )
         assert result["seen"] == [[False, True], [False, False]]
         assert result["final"] == [False, False]
         assert result["meshVisible"] == [False, False]
@@ -690,8 +713,8 @@ def test_a_mutator_called_from_inside_a_subscriber_is_deferred_not_nested(
 
 # 8. Reload revalidates the vendored bundle instead of refetching it ---------
 
-def test_reload_revalidates_the_vendored_three_js_rather_than_refetching(
-        browser, mesh_server):
+
+def test_reload_revalidates_the_vendored_three_js_rather_than_refetching(browser, mesh_server):
     """The vendored three.module.js is over a megabyte and every page load
     wants it, which is the cost of dropping the CDN. The packaged assets
     therefore carry a validator and Cache-Control: no-cache, so a reload asks
@@ -722,6 +745,7 @@ def test_reload_revalidates_the_vendored_three_js_rather_than_refetching(
 
 # 9. A hand-edited callouts file arrives by push, not by the 1.5s poll ------
 
+
 def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_server):
     """M4's whole demonstrable deliverable (plan section 4, milestone M4):
     writing mesh-callouts.json by hand, with the socket live and nothing
@@ -739,7 +763,9 @@ def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_
     server = token_mesh_server
     page = browser.new_page()
     callouts_requests = []
-    page.on("request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None)
+    page.on(
+        "request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None
+    )
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
@@ -754,10 +780,17 @@ def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_
         _wait_for_request_growth(page, callouts_requests, 0)
         baseline = len(callouts_requests)
 
-        record = {"annotations": [{
-            "id": 1, "part": "alpha", "label": "+Z",
-            "point": [0.0, 0.0, 10.0], "comment": "hand-edited callout",
-        }]}
+        record = {
+            "annotations": [
+                {
+                    "id": 1,
+                    "part": "alpha",
+                    "label": "+Z",
+                    "point": [0.0, 0.0, 10.0],
+                    "comment": "hand-edited callout",
+                }
+            ]
+        }
         callouts_path = server.serve_dir / "mesh-callouts.json"
         start = time.time()
         # Written via a temp-file-plus-rename rather than a direct write, so
@@ -771,25 +804,32 @@ def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_
         os.replace(tmp_path, callouts_path)
 
         page.wait_for_function(
-            "() => window.mesh.store.getState().callouts.length === 1", timeout=5000)
+            "() => window.mesh.store.getState().callouts.length === 1", timeout=5000
+        )
         elapsed = time.time() - start
 
-        assert page.evaluate("window.mesh.store.getState().callouts[0].comment") == \
-            "hand-edited callout"
-        assert page.evaluate("window.mesh.store.getState().connection") == "live", \
+        assert (
+            page.evaluate("window.mesh.store.getState().callouts[0].comment")
+            == "hand-edited callout"
+        )
+        assert page.evaluate("window.mesh.store.getState().connection") == "live", (
             "the socket must still be live; a fallback poll would also explain the pin appearing"
+        )
         assert len(callouts_requests) - baseline == 1, (
             "expected exactly one /callouts fetch after the baseline (the push-triggered "
             "refetch), got %d; a second one would mean a poll was also running"
-            % (len(callouts_requests) - baseline))
+            % (len(callouts_requests) - baseline)
+        )
         assert elapsed < 1.2, (
             "took %.3fs; the 1.5s poll interval could have produced this on its own, "
-            "which is exactly what this test must rule out" % elapsed)
+            "which is exactly what this test must rule out" % elapsed
+        )
     finally:
         page.close()
 
 
 # 10. A protocol-version mismatch closes the socket with code 4400 ----------
+
 
 def test_protocol_version_mismatch_closes_with_code_4400(browser, token_mesh_server):
     """Verified fact 4 in the M4 brief is explicit that this is the one
@@ -834,6 +874,7 @@ def test_protocol_version_mismatch_closes_with_code_4400(browser, token_mesh_ser
 
 # 11. No token in the URL: the page ends refused, not stuck connecting -----
 
+
 def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh_server):
     """Per the M4 brief, fact 2: an auth failure on /ws is an HTTP 403
     before any upgrade, never a close code, so the browser's WebSocket API
@@ -865,6 +906,7 @@ def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh
 
 # 12. A dropped socket resumes the poll, and a reconnect stops it again ----
 
+
 def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_mesh_server):
     """Plan section 3.3 / the M4 brief: "a viewer whose socket is closed or
     never opened resumes the 1500 ms poll after one backoff interval,"
@@ -889,7 +931,9 @@ def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_me
     page = browser.new_page()
     replacement = None
     callouts_requests = []
-    page.on("request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None)
+    page.on(
+        "request", lambda r: callouts_requests.append(r) if r.url.endswith("/callouts") else None
+    )
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
@@ -901,8 +945,9 @@ def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_me
             deadline = time.time() + 6.0
             while time.time() < deadline and len(callouts_requests) < 2:
                 page.wait_for_timeout(100)
-            assert len(callouts_requests) >= 2, \
+            assert len(callouts_requests) >= 2, (
                 "the fallback poll never fired while the socket was down"
+            )
         finally:
             # Same directory, same port and the same token, so the page's own
             # reconnect attempts start succeeding without it being reloaded:
@@ -924,8 +969,9 @@ def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_me
         _wait_for_request_growth(page, callouts_requests, pre_reconnect)
         baseline = len(callouts_requests)
         page.wait_for_timeout(2000)
-        assert len(callouts_requests) == baseline, \
+        assert len(callouts_requests) == baseline, (
             "the poll kept firing after the socket reconnected and went live again"
+        )
     finally:
         page.close()
         if replacement is not None:
@@ -933,6 +979,7 @@ def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_me
 
 
 # 13. Chat pane: a typed turn reaches the AgentSession -----------------------
+
 
 def test_typed_turn_reaches_the_session(browser, chat_server):
     """Typing a message and clicking Send must submit it to the
@@ -951,8 +998,10 @@ def test_typed_turn_reaches_the_session(browser, chat_server):
         page.fill("#chatInput", "why is this wall thin?")
         page.click("#chatSend")
 
-        _wait_until(lambda: len(session.submitted_turns) == 1,
-                    message="the turn frame never reached AgentSession.submit_turn")
+        _wait_until(
+            lambda: len(session.submitted_turns) == 1,
+            message="the turn frame never reached AgentSession.submit_turn",
+        )
         blocks, viewer = session.submitted_turns[0]
         assert blocks == [{"type": "text", "text": "why is this wall thin?"}]
         # Not asserted: that `viewer` carries the tab id the browser's own
@@ -967,6 +1016,7 @@ def test_typed_turn_reaches_the_session(browser, chat_server):
 
 
 # 14. Chat pane: a streamed reply arrives incrementally ----------------------
+
 
 def test_streamed_reply_arrives_incrementally_not_all_at_once(browser, chat_server):
     """Two `text_delta` events for one turn must each be individually
@@ -996,7 +1046,8 @@ def test_streamed_reply_arrives_incrementally_not_all_at_once(browser, chat_serv
             arg=text_sel,
         )
         assert "measures 2mm" not in page.evaluate(
-            "(sel) => document.querySelector(sel).textContent", text_sel)
+            "(sel) => document.querySelector(sel).textContent", text_sel
+        )
 
         _emit_on_loop(server, session, session_base.TextDelta(turn=1, text="measures 2mm."))
         page.wait_for_function(
@@ -1009,6 +1060,7 @@ def test_streamed_reply_arrives_incrementally_not_all_at_once(browser, chat_serv
 
 
 # 15. Chat pane: a permission card appears and Allow reaches the session -----
+
 
 def test_permission_card_allow_reaches_the_session(browser, chat_server):
     """A `permission_request` event must render as a card naming the tool, and
@@ -1028,26 +1080,37 @@ def test_permission_card_allow_reaches_the_session(browser, chat_server):
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_1", tool="Bash", input={"command": "curl example.com"}))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_1", tool="Bash", input={"command": "curl example.com"}
+            ),
+        )
 
         card = "div.permcard[data-request-id='pr_1']"
         page.wait_for_selector(card)
-        assert page.evaluate(
-            "(sel) => document.querySelector(sel).textContent", card + " .ptool") == "Bash"
+        assert (
+            page.evaluate("(sel) => document.querySelector(sel).textContent", card + " .ptool")
+            == "Bash"
+        )
 
         page.click(card + " .pactions button:nth-of-type(1)")
 
-        _wait_until(lambda: len(session.permission_decisions) == 1,
-                    message="the allow decision never reached AgentSession.decide_permission")
+        _wait_until(
+            lambda: len(session.permission_decisions) == 1,
+            message="the allow decision never reached AgentSession.decide_permission",
+        )
         assert session.permission_decisions[0] == ("pr_1", "allow", "")
 
         page.wait_for_selector(card + ".submitted")
-        assert page.locator(card + " .pactions button:disabled").count() == 3, \
+        assert page.locator(card + " .pactions button:disabled").count() == 3, (
             "an in-flight decision must not accept a second click"
+        )
 
-        _emit_on_loop(server, session, session_base.PermissionResolved(
-            request_id="pr_1", outcome="allow"))
+        _emit_on_loop(
+            server, session, session_base.PermissionResolved(request_id="pr_1", outcome="allow")
+        )
         page.wait_for_selector(card, state="detached")
     finally:
         page.close()
@@ -1065,19 +1128,24 @@ def test_a_decision_that_did_not_apply_says_so(browser, chat_server):
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_9", tool="Write", input={"file_path": "/etc/hosts"}))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_9", tool="Write", input={"file_path": "/etc/hosts"}
+            ),
+        )
         card = "div.permcard[data-request-id='pr_9']"
         page.wait_for_selector(card)
         page.click(card + " .pactions button:nth-of-type(3)")
         page.wait_for_selector(card + ".submitted")
 
         # What the other view's Allow produces on this one.
-        _emit_on_loop(server, session, session_base.PermissionResolved(
-            request_id="pr_9", outcome="allow"))
+        _emit_on_loop(
+            server, session, session_base.PermissionResolved(request_id="pr_9", outcome="allow")
+        )
 
-        page.wait_for_function(
-            "() => document.getElementById('toast').style.display === 'block'")
+        page.wait_for_function("() => document.getElementById('toast').style.display === 'block'")
         message = page.evaluate("() => document.getElementById('toast').textContent")
         assert "did not apply" in message
         assert "was allowed" in message
@@ -1100,8 +1168,7 @@ def test_a_part_the_agent_generates_appears_without_a_reload(browser, chat_serve
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
-        page.wait_for_function(
-            "() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+        page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
         # The widest x coordinate in the loaded geometry. Triangle count cannot
         # be the signal here: a cube has twelve triangles whatever its size, so
@@ -1119,9 +1186,11 @@ def test_a_part_the_agent_generates_appears_without_a_reload(browser, chat_serve
 
         # A part that did not exist when the page loaded.
         (server.serve_dir / "bracket.stl").write_bytes(
-            _cube_stl_bytes(center=(30.0, 0.0, 0.0), half=4.0))
+            _cube_stl_bytes(center=(30.0, 0.0, 0.0), half=4.0)
+        )
         page.wait_for_function(
-            "() => window.mesh.meshes['bracket.stl'] !== undefined", timeout=15000)
+            "() => window.mesh.meshes['bracket.stl'] !== undefined", timeout=15000
+        )
         # And it is a real part, listed for toggling like any other.
         page.wait_for_selector("#parts label")
         assert page.evaluate(
@@ -1131,18 +1200,23 @@ def test_a_part_the_agent_generates_appears_without_a_reload(browser, chat_serve
         # An existing part regenerated with different geometry, which is what a
         # CAD script re-run produces.
         (server.serve_dir / "alpha.stl").write_bytes(
-            _cube_stl_bytes(center=(0.0, 0.0, 0.0), half=6.0))
+            _cube_stl_bytes(center=(0.0, 0.0, 0.0), half=6.0)
+        )
         page.wait_for_function(
             "(fn) => { const f = eval(fn); const mx = f('alpha.stl');"
             "  return mx !== null && Math.abs(mx - 6.0) < 0.001; }",
-            arg=widest, timeout=15000)
+            arg=widest,
+            timeout=15000,
+        )
 
         # One mesh per part, not a new copy layered over the old one.
-        assert page.evaluate(
-            "() => Object.keys(window.mesh.meshes).length") == 2
-        assert page.evaluate(
-            "() => window.mesh.scene.children.filter(c => c.userData && c.userData.rel === 'alpha.stl').length"
-        ) == 1, "a regenerated part must replace its mesh, not add another"
+        assert page.evaluate("() => Object.keys(window.mesh.meshes).length") == 2
+        assert (
+            page.evaluate(
+                "() => window.mesh.scene.children.filter(c => c.userData && c.userData.rel === 'alpha.stl').length"
+            )
+            == 1
+        ), "a regenerated part must replace its mesh, not add another"
     finally:
         page.close()
 
@@ -1152,22 +1226,21 @@ def test_a_part_the_agent_deletes_disappears_without_a_reload(browser, chat_serv
     page = browser.new_page()
     try:
         (server.serve_dir / "spare.stl").write_bytes(
-            _cube_stl_bytes(center=(40.0, 0.0, 0.0), half=3.0))
+            _cube_stl_bytes(center=(40.0, 0.0, 0.0), half=3.0)
+        )
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
-        page.wait_for_function(
-            "() => window.mesh.meshes['spare.stl'] !== undefined", timeout=15000)
+        page.wait_for_function("() => window.mesh.meshes['spare.stl'] !== undefined", timeout=15000)
         rows_before = page.locator("#parts label").count()
 
         (server.serve_dir / "spare.stl").unlink()
 
-        page.wait_for_function(
-            "() => window.mesh.meshes['spare.stl'] === undefined", timeout=15000)
+        page.wait_for_function("() => window.mesh.meshes['spare.stl'] === undefined", timeout=15000)
         # The checkbox goes too: a row for a file that no longer exists offers a
         # toggle that silently does nothing.
         page.wait_for_function(
-            "(n) => document.querySelectorAll('#parts label').length === n - 1",
-            arg=rows_before)
+            "(n) => document.querySelectorAll('#parts label').length === n - 1", arg=rows_before
+        )
     finally:
         page.close()
 
@@ -1184,12 +1257,23 @@ def test_reloading_re_shows_a_prompt_that_is_still_waiting(browser, chat_server)
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_20", tool="Write", input={"file_path": "/tmp/a"}))
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_21", tool="Bash", input={"command": "ls"}))
-        _emit_on_loop(server, session, session_base.PermissionResolved(
-            request_id="pr_21", outcome="allow"))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_20", tool="Write", input={"file_path": "/tmp/a"}
+            ),
+        )
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_21", tool="Bash", input={"command": "ls"}
+            ),
+        )
+        _emit_on_loop(
+            server, session, session_base.PermissionResolved(request_id="pr_21", outcome="allow")
+        )
         page.wait_for_selector("div.permcard[data-request-id='pr_20']")
         page.wait_for_selector("div.permcard[data-request-id='pr_21']", state="detached")
 
@@ -1203,12 +1287,15 @@ def test_reloading_re_shows_a_prompt_that_is_still_waiting(browser, chat_server)
         _wait_connection_state(page, "live")
 
         page.wait_for_selector("div.permcard[data-request-id='pr_20']")
-        assert page.locator("div.permcard[data-request-id='pr_21']").count() == 0, \
+        assert page.locator("div.permcard[data-request-id='pr_21']").count() == 0, (
             "an answered request must not come back as a live card on reload"
+        )
         # Still answerable after the reload, which is the point of re-showing it.
         page.click("div.permcard[data-request-id='pr_20'] .pactions button:nth-of-type(1)")
-        _wait_until(lambda: ("pr_20", "allow", "") in session.permission_decisions,
-                    message="the decision made after a reload never reached the session")
+        _wait_until(
+            lambda: ("pr_20", "allow", "") in session.permission_decisions,
+            message="the decision made after a reload never reached the session",
+        )
     finally:
         page.close()
 
@@ -1225,14 +1312,21 @@ def test_a_multiline_command_is_shown_as_a_script_not_as_escapes(browser, chat_s
         _wait_connection_state(page, "live")
 
         command = "python3 - <<'EOF'\nimport struct\nprint('hi')\nEOF"
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_11", tool="Bash",
-            input={"command": command, "description": "measure the STL"}))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_11",
+                tool="Bash",
+                input={"command": command, "description": "measure the STL"},
+            ),
+        )
 
         card = "div.permcard[data-request-id='pr_11']"
         page.wait_for_selector(card)
         shown = page.evaluate(
-            "(sel) => document.querySelector(sel).textContent", card + " .toolinput")
+            "(sel) => document.querySelector(sel).textContent", card + " .toolinput"
+        )
 
         assert "\\n" not in shown, "line breaks must be line breaks, not escapes"
         assert "import struct" in shown
@@ -1253,22 +1347,27 @@ def test_a_request_that_expired_is_not_reported_as_answered(browser, chat_server
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_10", tool="Bash", input={"command": "ls"}))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_10", tool="Bash", input={"command": "ls"}
+            ),
+        )
         page.wait_for_selector("div.permcard[data-request-id='pr_10']")
 
-        _emit_on_loop(server, session, session_base.PermissionResolved(
-            request_id="pr_10", outcome="timeout"))
+        _emit_on_loop(
+            server, session, session_base.PermissionResolved(request_id="pr_10", outcome="timeout")
+        )
 
-        page.wait_for_function(
-            "() => document.getElementById('toast').style.display === 'block'")
-        assert "expired" in page.evaluate(
-            "() => document.getElementById('toast').textContent")
+        page.wait_for_function("() => document.getElementById('toast').style.display === 'block'")
+        assert "expired" in page.evaluate("() => document.getElementById('toast').textContent")
     finally:
         page.close()
 
 
 # 16. Chat pane: Deny carries the human's typed reason ------------------------
+
 
 def test_permission_card_deny_sends_the_typed_reason(browser, chat_server):
     """A deny's `message` reaches the model verbatim (M5 brief fact 2), so
@@ -1286,8 +1385,13 @@ def test_permission_card_deny_sends_the_typed_reason(browser, chat_server):
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _emit_on_loop(server, session, session_base.PermissionRequest(
-            request_id="pr_2", tool="Write", input={"file_path": "/etc/hosts"}))
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_2", tool="Write", input={"file_path": "/etc/hosts"}
+            ),
+        )
         card = "div.permcard[data-request-id='pr_2']"
         page.wait_for_selector(card)
 
@@ -1299,18 +1403,22 @@ def test_permission_card_deny_sends_the_typed_reason(browser, chat_server):
 
         page.click(card + " .pactions button:nth-of-type(3)")
 
-        _wait_until(lambda: len(session.permission_decisions) == 1,
-                    message="the deny decision never reached AgentSession.decide_permission")
+        _wait_until(
+            lambda: len(session.permission_decisions) == 1,
+            message="the deny decision never reached AgentSession.decide_permission",
+        )
         assert session.permission_decisions[0] == ("pr_2", "deny", reason)
 
-        _emit_on_loop(server, session, session_base.PermissionResolved(
-            request_id="pr_2", outcome="deny"))
+        _emit_on_loop(
+            server, session, session_base.PermissionResolved(request_id="pr_2", outcome="deny")
+        )
         page.wait_for_selector(card, state="detached")
     finally:
         page.close()
 
 
 # 17. Chat pane: Interrupt reaches the session --------------------------------
+
 
 def test_interrupt_button_ends_a_turn(browser, chat_server):
     """The Interrupt button starts disabled (nothing to interrupt), becomes
@@ -1332,13 +1440,16 @@ def test_interrupt_button_ends_a_turn(browser, chat_server):
 
         page.click("#chatInterrupt")
 
-        _wait_until(lambda: session.interrupted == 1,
-                    message="the interrupt frame never reached AgentSession.interrupt")
+        _wait_until(
+            lambda: session.interrupted == 1,
+            message="the interrupt frame never reached AgentSession.interrupt",
+        )
     finally:
         page.close()
 
 
 # 18. Chat pane: model text is escaped, never executed -----------------------
+
 
 def test_model_text_is_escaped_and_never_executes(browser, chat_server):
     """A reply carrying a `<script>` tag and an `<img onerror=...>` handler
@@ -1361,8 +1472,10 @@ def test_model_text_is_escaped_and_never_executes(browser, chat_server):
         page.click("#chatSend")
         _wait_until(lambda: len(session.submitted_turns) == 1)
 
-        payload = ('<script>window.__xssFired = true</script>'
-                   '<img src=x onerror="window.__xssFired = true">')
+        payload = (
+            "<script>window.__xssFired = true</script>"
+            '<img src=x onerror="window.__xssFired = true">'
+        )
         _emit_on_loop(server, session, session_base.TextDelta(turn=1, text=payload))
 
         text_sel = "div.turn[data-turn='1'] .msg.assistant .text"
@@ -1389,6 +1502,7 @@ def test_model_text_is_escaped_and_never_executes(browser, chat_server):
 
 # 19. Agent-authored callout text is never markup ------------------------------
 
+
 def test_a_callout_carrying_markup_renders_as_text_not_html(browser, mesh_server):
     """mesh-callouts.json is written by the agent and served verbatim, with no
     field validation, so every field in it is untrusted input to this page.
@@ -1407,15 +1521,24 @@ def test_a_callout_carrying_markup_renders_as_text_not_html(browser, mesh_server
         _wait_both_meshes_loaded(page)
 
         payload = '<img src=x onerror="window.__xss = true">'
-        (mesh_server.serve_dir / "mesh-callouts.json").write_text(json.dumps({
-            "annotations": [{
-                "id": 1, "part": payload, "label": payload,
-                "point": [0, 0, 0], "comment": "look here",
-            }],
-        }))
+        (mesh_server.serve_dir / "mesh-callouts.json").write_text(
+            json.dumps(
+                {
+                    "annotations": [
+                        {
+                            "id": 1,
+                            "part": payload,
+                            "label": payload,
+                            "point": [0, 0, 0],
+                            "comment": "look here",
+                        }
+                    ],
+                }
+            )
+        )
         page.wait_for_function(
-            "() => document.querySelectorAll('#agentPins .apin').length === 1",
-            timeout=15000)
+            "() => document.querySelectorAll('#agentPins .apin').length === 1", timeout=15000
+        )
 
         row = page.locator("#agentPins .apin .part").first
         # The markup arrived as characters, so it is visible as text and no
@@ -1428,6 +1551,7 @@ def test_a_callout_carrying_markup_renders_as_text_not_html(browser, mesh_server
 
 
 # 20. Mesh tools: a real tool call drives the browser --------------------------
+
 
 def _mesh_tools(server):
     """`{name: handler}` for a tool server built on this app's own bus.
@@ -1477,14 +1601,15 @@ def test_a_set_view_tool_call_actually_moves_the_camera(browser, chat_server):
         _wait_connection_state(page, "live")
         page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
-        result = _call_tool(server, "set_view", {"position": [80, -60, 40],
-                                                 "target": [1, 2, 3]})
+        result = _call_tool(server, "set_view", {"position": [80, -60, 40], "target": [1, 2, 3]})
         assert "is_error" not in result, _tool_text(result)
 
-        assert page.evaluate("() => window.mesh.camera.position.toArray()") == \
-            pytest.approx([80, -60, 40], abs=0.01)
-        assert page.evaluate("() => window.mesh.controls.target.toArray()") == \
-            pytest.approx([1, 2, 3], abs=0.01)
+        assert page.evaluate("() => window.mesh.camera.position.toArray()") == pytest.approx(
+            [80, -60, 40], abs=0.01
+        )
+        assert page.evaluate("() => window.mesh.controls.target.toArray()") == pytest.approx(
+            [1, 2, 3], abs=0.01
+        )
         # And the tool told the model where the camera ended up, rather than
         # only that the call succeeded.
         assert json.loads(_tool_text(result))["target"] == pytest.approx([1, 2, 3], abs=0.01)
@@ -1595,6 +1720,7 @@ def test_an_unknown_rel_comes_back_as_the_viewers_own_refusal(browser, chat_serv
 
 # 21. Mesh tools: the human's pause switch is enforced in the server -----------
 
+
 def test_the_topbar_pause_button_stops_the_agent_driving_the_view(browser, chat_server):
     """What the previous version of this control claimed and did not do. The
     click has to travel to the server, because that is where the tools run: a
@@ -1673,14 +1799,21 @@ def test_a_callout_the_agent_adds_appears_as_a_pin_without_a_reload(browser, cha
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        result = _call_tool(server, "add_callout", {
-            "point": [0, 0, 10], "comment": "moved this wall out 2mm",
-            "part": "alpha", "label": "+Z"})
+        result = _call_tool(
+            server,
+            "add_callout",
+            {
+                "point": [0, 0, 10],
+                "comment": "moved this wall out 2mm",
+                "part": "alpha",
+                "label": "+Z",
+            },
+        )
         assert "is_error" not in result, _tool_text(result)
 
         page.wait_for_function(
-            "() => document.querySelectorAll('#agentPins .apin').length === 1",
-            timeout=15000)
+            "() => document.querySelectorAll('#agentPins .apin').length === 1", timeout=15000
+        )
         assert "moved this wall out 2mm" in page.locator("#agentPins .apin").first.inner_text()
     finally:
         page.close()
@@ -1697,7 +1830,8 @@ def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
         _wait_connection_state(page, "live")
         overflow = page.evaluate(
             "() => { const b = document.getElementById('topbar');"
-            " return b.scrollWidth - b.clientWidth; }")
+            " return b.scrollWidth - b.clientWidth; }"
+        )
         assert overflow <= 0, "the topbar overflows by %dpx at 390px wide" % overflow
         assert page.locator("#pauseBtn").is_visible()
     finally:
@@ -1712,8 +1846,8 @@ def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
 # nothing would leave that assertion unable to tell a broken image apart
 # from a wrong `src`.
 _TINY_PNG_BYTES = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY"
-    "42YAAAAASUVORK5CYII=")
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
 
 
 def _drop_files_onto(page, selector, files):
@@ -1755,17 +1889,24 @@ def test_a_picker_upload_becomes_a_chip_then_an_image_path_block(browser, chat_s
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        page.set_input_files("#chatFileInput", {
-            "name": "photo.png", "mimeType": "image/png", "buffer": _TINY_PNG_BYTES,
-        })
+        page.set_input_files(
+            "#chatFileInput",
+            {
+                "name": "photo.png",
+                "mimeType": "image/png",
+                "buffer": _TINY_PNG_BYTES,
+            },
+        )
         page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
         assert page.locator("#chatAttachStrip .attachchip.error").count() == 0
 
         page.fill("#chatInput", "what do you make of this?")
         page.click("#chatSend")
 
-        _wait_until(lambda: len(session.submitted_turns) == 1,
-                    message="the turn frame never reached AgentSession.submit_turn")
+        _wait_until(
+            lambda: len(session.submitted_turns) == 1,
+            message="the turn frame never reached AgentSession.submit_turn",
+        )
         blocks, _viewer = session.submitted_turns[0]
         assert len(blocks) == 2
         assert blocks[0]["type"] == "image_path"
@@ -1793,15 +1934,21 @@ def test_a_dropped_file_becomes_a_chip_then_an_image_path_block(browser, chat_se
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        _drop_files_onto(page, "#chat", [
-            ("dropped.png", "image/png", base64.b64encode(_TINY_PNG_BYTES).decode()),
-        ])
+        _drop_files_onto(
+            page,
+            "#chat",
+            [
+                ("dropped.png", "image/png", base64.b64encode(_TINY_PNG_BYTES).decode()),
+            ],
+        )
         page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
 
         page.click("#chatSend")
 
-        _wait_until(lambda: len(session.submitted_turns) == 1,
-                    message="the turn frame never reached AgentSession.submit_turn")
+        _wait_until(
+            lambda: len(session.submitted_turns) == 1,
+            message="the turn frame never reached AgentSession.submit_turn",
+        )
         blocks, _viewer = session.submitted_turns[0]
         assert len(blocks) == 1, blocks
         assert blocks[0]["type"] == "image_path"
@@ -1825,25 +1972,31 @@ def test_an_oversized_or_wrong_typed_drop_is_refused_without_a_request(browser, 
     # Matched on the path with any query string stripped, and anchored to the
     # end, so this does not also catch the unrelated static asset
     # `/static/js/uploads.js`, whose URL contains the same substring.
-    page.on("request", lambda r: upload_requests.append(r)
-            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    page.on(
+        "request",
+        lambda r: upload_requests.append(r) if r.url.split("?", 1)[0].endswith("/upload") else None,
+    )
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        page.set_input_files("#chatFileInput", {
-            "name": "notes.txt", "mimeType": "text/plain", "buffer": b"not an image"})
-        page.wait_for_function(
-            "() => document.getElementById('toast').style.display === 'block'")
+        page.set_input_files(
+            "#chatFileInput",
+            {"name": "notes.txt", "mimeType": "text/plain", "buffer": b"not an image"},
+        )
+        page.wait_for_function("() => document.getElementById('toast').style.display === 'block'")
         assert "PNG, JPEG or WEBP" in page.evaluate(
-            "() => document.getElementById('toast').textContent")
+            "() => document.getElementById('toast').textContent"
+        )
         assert page.locator("#chatAttachStrip .attachchip").count() == 0
 
         oversized = b"\x89PNG\r\n\x1a\n" + os.urandom(8 * 1024 * 1024)
-        page.set_input_files("#chatFileInput", {
-            "name": "big.png", "mimeType": "image/png", "buffer": oversized})
+        page.set_input_files(
+            "#chatFileInput", {"name": "big.png", "mimeType": "image/png", "buffer": oversized}
+        )
         page.wait_for_function(
-            "() => document.getElementById('toast').textContent.includes('8 MB')")
+            "() => document.getElementById('toast').textContent.includes('8 MB')"
+        )
         assert page.locator("#chatAttachStrip .attachchip").count() == 0
 
         assert upload_requests == []
@@ -1866,9 +2019,14 @@ def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_ser
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
 
-        page.set_input_files("#chatFileInput", {
-            "name": "photo.png", "mimeType": "image/png", "buffer": _TINY_PNG_BYTES,
-        })
+        page.set_input_files(
+            "#chatFileInput",
+            {
+                "name": "photo.png",
+                "mimeType": "image/png",
+                "buffer": _TINY_PNG_BYTES,
+            },
+        )
         page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
         page.click("#chatSend")
         _wait_until(lambda: len(session.submitted_turns) == 1)
@@ -1876,8 +2034,9 @@ def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_ser
         # A turn row only exists once some event has touched its turn number
         # (store.js's `ensureTurn`); TurnEnd is the event a real reply ends
         # with.
-        _emit_on_loop(server, session, session_base.TurnEnd(
-            turn=1, stop_reason="end_turn", cost_usd=0.0))
+        _emit_on_loop(
+            server, session, session_base.TurnEnd(turn=1, stop_reason="end_turn", cost_usd=0.0)
+        )
 
         thumb = page.wait_for_selector("div.turn[data-turn='1'] .msg.user .attachthumbs img")
         src = thumb.get_attribute("src")
@@ -1890,6 +2049,7 @@ def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_ser
 
 
 # 23. Chat pane: sketch overlay ------------------------------------------------
+
 
 def test_drawing_a_sketch_stroke_never_moves_the_camera(browser, chat_server):
     """Sketch mode's whole reason to exist: the overlay canvas sits above the
@@ -1925,10 +2085,12 @@ def test_drawing_a_sketch_stroke_never_moves_the_camera(browser, chat_server):
         # when idle, which reintroduces float rounding far below this
         # tolerance; a real rotate from the drag this test performs moves
         # the camera by whole units.
-        assert after_pos == pytest.approx(before_pos, abs=1e-6), \
+        assert after_pos == pytest.approx(before_pos, abs=1e-6), (
             "the camera moved while a stroke was being drawn"
-        assert after_target == pytest.approx(before_target, abs=1e-6), \
+        )
+        assert after_target == pytest.approx(before_target, abs=1e-6), (
             "the camera's target moved while a stroke was being drawn"
+        )
     finally:
         page.close()
 
@@ -2021,16 +2183,19 @@ def test_attaching_a_sketch_delivers_a_composited_image_path_block(browser, chat
         pixels = _composite_pixel_facts(page, "/asset/" + sketch_files[0].name)
         assert pixels["strokePixels"] > 100, (
             "the composite carries %d pixels of the stroke colour, so the stroke "
-            "did not reach it" % pixels["strokePixels"])
+            "did not reach it" % pixels["strokePixels"]
+        )
         assert pixels["distinctColors"] > 16, (
             "the composite has only %d distinct colours, so it is a stroke on a "
-            "flat background rather than a stroke on the render"
-            % pixels["distinctColors"])
+            "flat background rather than a stroke on the render" % pixels["distinctColors"]
+        )
 
         page.fill("#chatInput", "look at this stroke")
         page.click("#chatSend")
-        _wait_until(lambda: len(session.submitted_turns) == 1,
-                    message="the turn frame never reached AgentSession.submit_turn")
+        _wait_until(
+            lambda: len(session.submitted_turns) == 1,
+            message="the turn frame never reached AgentSession.submit_turn",
+        )
         blocks, _viewer = session.submitted_turns[0]
         assert blocks[0]["type"] == "image_path"
         assert blocks[0]["path"].startswith("images/sketch-") and blocks[0]["path"].endswith(".png")
@@ -2054,8 +2219,10 @@ def test_a_sketch_is_refused_when_the_view_moved_under_it(browser, chat_server):
     server, session = chat_server
     page = browser.new_page()
     upload_requests = []
-    page.on("request", lambda r: upload_requests.append(r)
-            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    page.on(
+        "request",
+        lambda r: upload_requests.append(r) if r.url.split("?", 1)[0].endswith("/upload") else None,
+    )
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
@@ -2075,10 +2242,8 @@ def test_a_sketch_is_refused_when_the_view_moved_under_it(browser, chat_server):
         assert "is_error" not in moved, _tool_text(moved)
 
         page.click("#sketchAttachBtn")
-        page.wait_for_function(
-            "() => document.getElementById('toast').style.display === 'block'")
-        assert "view moved" in page.evaluate(
-            "() => document.getElementById('toast').textContent")
+        page.wait_for_function("() => document.getElementById('toast').style.display === 'block'")
+        assert "view moved" in page.evaluate("() => document.getElementById('toast').textContent")
 
         assert upload_requests == []
         assert not list((server.serve_dir / "images").glob("sketch-*.png"))
@@ -2115,8 +2280,9 @@ def test_send_waits_for_an_upload_still_in_flight(browser, chat_server):
         assert page.locator("#chatSend").is_disabled()
         assert "uploading" in page.locator("#chatSend").get_attribute("title")
         page.keyboard.press("Enter")
-        assert len(session.submitted_turns) == 0, \
+        assert len(session.submitted_turns) == 0, (
             "Enter sent the turn while an attachment was still uploading"
+        )
 
         # The chip lands, and only then is the turn allowed to carry it.
         page.evaluate("""() => {
@@ -2128,8 +2294,10 @@ def test_send_waits_for_an_upload_still_in_flight(browser, chat_server):
         page.wait_for_function("() => !document.getElementById('chatSend').disabled")
 
         page.click("#chatSend")
-        _wait_until(lambda: len(session.submitted_turns) == 1,
-                    message="the turn frame never reached AgentSession.submit_turn")
+        _wait_until(
+            lambda: len(session.submitted_turns) == 1,
+            message="the turn frame never reached AgentSession.submit_turn",
+        )
         blocks, _viewer = session.submitted_turns[0]
         assert [b["type"] for b in blocks] == ["image_path", "text"]
     finally:
@@ -2144,8 +2312,10 @@ def test_escape_leaves_sketch_mode_with_nothing_uploaded(browser, chat_server):
     server, session = chat_server
     page = browser.new_page()
     upload_requests = []
-    page.on("request", lambda r: upload_requests.append(r)
-            if r.url.split("?", 1)[0].endswith("/upload") else None)
+    page.on(
+        "request",
+        lambda r: upload_requests.append(r) if r.url.split("?", 1)[0].endswith("/upload") else None,
+    )
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
@@ -2197,7 +2367,8 @@ def test_leaving_sketch_mode_restores_orbit_controls(browser, chat_server):
 
         page.wait_for_function(
             "(before) => JSON.stringify(window.mesh.camera.position.toArray()) !== JSON.stringify(before)",
-            arg=before)
+            arg=before,
+        )
     finally:
         page.close()
 
@@ -2211,7 +2382,161 @@ def test_the_pause_control_is_not_offered_when_there_is_no_agent(browser, token_
         page.goto(token_mesh_server.viewer_url)
         _wait_connection_state(page, "live")
         page.wait_for_function(
-            "() => window.mesh.store.getState().chat.agentStatus === 'unavailable'")
+            "() => window.mesh.store.getState().chat.agentStatus === 'unavailable'"
+        )
         assert page.locator("#pauseBtn").is_disabled()
+    finally:
+        page.close()
+
+
+# 12. The settings window and the Export button ------------------------------
+
+
+@pytest.fixture
+def settings_server(tmp_path_factory, monkeypatch):
+    """A token-gated server whose user settings file is a scratch path.
+
+    ``XDG_CONFIG_HOME`` is already redirected per test by
+    ``tests/conftest.py``, and ``settings.user_settings_path()`` is resolved
+    inside the request rather than at import, so a file written here is what the
+    route reads even though the server runs on its own thread.
+    """
+    from annealage_mesh import sessions as mesh_sessions
+
+    d = tmp_path_factory.mktemp("mesh_e2e_settings")
+    (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
+    sid = mesh_sessions.create_session(d)
+
+    built = []
+
+    def build_session(on_event, *, bus):
+        session = FakeSession(on_event)
+        built.append(session)
+        return session
+
+    server = _ServerThread(
+        d, token=secrets.token_urlsafe(16), build_session=build_session, mesh_session_id=sid
+    )
+    server.start()
+    server.session_id = sid
+    try:
+        yield server, d
+    finally:
+        server.stop()
+
+
+def _wait_one_mesh_loaded(page):
+    """The fixtures in this section serve a single model, unlike the
+    module-scoped one `_wait_both_meshes_loaded` is written for."""
+    page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
+
+
+def _open_settings(page):
+    page.click("#settingsBtn")
+    page.wait_for_selector(".setpanel", state="visible")
+
+
+def test_settings_window_shows_each_value_with_where_it_came_from(settings_server, browser):
+    """Provenance is the whole point of the window: a port with no layer named
+    beside it tells a reader nothing about which file to go and edit."""
+    server, _served = settings_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+        _open_settings(page)
+
+        port_note = page.text_content("[data-key='port'] .setnote")
+        assert "built-in default" in port_note
+        # Restart-required is stated rather than implied, because the field is
+        # editable and saving it will not move the running listener.
+        assert "takes effect next run" in port_note
+
+        # Diagnostics duplicates `doctor` on purpose: this is the only way to
+        # read it from a phone with no terminal.
+        diagnostics = page.text_content(".diagblock")
+        assert "bundled with the SDK" in diagnostics or "found on PATH" in diagnostics
+        assert server.session_id in diagnostics
+    finally:
+        page.close()
+
+
+def test_saving_a_restart_required_setting_reports_it_as_saved_not_applied(
+    settings_server, browser
+):
+    """The window must not claim a new port is in effect while the server is
+    still listening on the old one; it says saved, and says when it applies."""
+    server, _served = settings_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+        _open_settings(page)
+
+        page.fill("#set-port", "9411")
+        page.click(".setpanel footer button.primary")
+        page.wait_for_selector(".setpanel", state="hidden")
+        assert "takes effect next run" in page.text_content("#toast")
+
+        _open_settings(page)
+        note = page.text_content("[data-key='port'] .setnote")
+        # The field holds what is saved, so pressing Save again cannot revert
+        # it; the note holds what the running server is still bound to.
+        assert page.input_value("#set-port") == "9411"
+        assert "still using 8765" in note
+    finally:
+        page.close()
+
+
+def test_a_saved_viewer_preference_is_applied_when_the_page_loads(settings_server, browser):
+    """up_axis takes effect at load rather than on restart, so a saved value
+    must reach the running scene without anyone touching the topbar."""
+    from annealage_mesh import settings as mesh_settings
+
+    server, _served = settings_server
+    path = mesh_settings.user_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('up_axis = "y"\n', encoding="utf-8")
+
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+        page.wait_for_function("() => window.mesh.store.getState().upAxis === 'y'")
+        assert page.evaluate("() => window.mesh.store.getState().upAxis") == "y"
+    finally:
+        page.close()
+
+
+def test_export_button_writes_a_transcript_and_names_the_file(settings_server, browser):
+    """The human's own export asks nobody: the button posts, the file lands in
+    the project, and the path is reported because the file is the point."""
+    server, served = settings_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+        page.wait_for_function("() => !document.getElementById('chatExport').disabled")
+
+        page.click("#chatExport")
+        page.wait_for_selector("#chatBanner:not([hidden])")
+        banner = page.text_content("#chatBannerText")
+        assert "review/transcript-" in banner
+
+        written = banner.split("review/")[1].strip()
+        assert (served / "review" / written).is_file()
+    finally:
+        page.close()
+
+
+def test_export_button_is_disabled_when_there_is_no_conversation(mesh_server, browser):
+    """A viewer-only run has no session, so the button says so by being
+    unavailable rather than by failing when pressed."""
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        assert page.is_disabled("#chatExport")
+        assert "no conversation" in page.get_attribute("#chatExport", "title")
     finally:
         page.close()

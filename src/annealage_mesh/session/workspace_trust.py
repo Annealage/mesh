@@ -167,7 +167,8 @@ class TrustStore:
         except OSError as exc:
             sys.stderr.write(
                 "warning: could not read %s: %r; the served directory's Claude "
-                "configuration will need accepting again\n" % (self.path, exc))
+                "configuration will need accepting again\n" % (self.path, exc)
+            )
             return {}
         records = {}
         for line in text.splitlines():
@@ -220,5 +221,5 @@ def refusal_message(root, entries: Iterable[Path]) -> str:
         "    accept them for this directory : annealage-mesh --trust-project-config\n"
         "    or run the viewer with no agent : annealage-mesh --no-agent\n"
         "  Acceptance is recorded per directory against the exact content reviewed, so\n"
-        "  any later change to these files asks again.\n"
-        % (root, listed))
+        "  any later change to these files asks again.\n" % (root, listed)
+    )

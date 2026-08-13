@@ -121,7 +121,8 @@ async def _wait_for_sent_count(ws, count, timeout=1.0):
     while len(ws.sent) < count:
         if loop.time() >= deadline:
             raise AssertionError(
-                "writer sent %d frame(s), expected at least %d" % (len(ws.sent), count))
+                "writer sent %d frame(s), expected at least %d" % (len(ws.sent), count)
+            )
         await asyncio.sleep(0.005)
 
 
@@ -140,7 +141,9 @@ def _is_viewer_primary(frame, primary_tab_id):
 # entry rather than mutating an existing one, so reusing one object across
 # many broadcasts and comparing by ``==`` afterwards is safe.
 _PING = build_ping(1)
-_FILLER = build_event(1, ToolUse(turn=1, tool_use_id="tu_1", name="mcp__mesh__x", input={}).to_wire())
+_FILLER = build_event(
+    1, ToolUse(turn=1, tool_use_id="tu_1", name="mcp__mesh__x", input={}).to_wire()
+)
 _PERMISSION = build_event(1, PermissionRequest(request_id="pr_1", tool="Bash", input={}).to_wire())
 _TURN_END = build_event(1, TurnEnd(turn=1, stop_reason="end_turn", cost_usd=0.01).to_wire())
 
@@ -158,7 +161,8 @@ async def test_call_resolves_with_the_result_from_a_matching_reply():
     registry = ViewerRegistry()
     conn = await registry.add(_FakeWebSocket())
     call_task = asyncio.ensure_future(
-        registry.call("viewer.get_camera", {}, timeout=5, url="http://x"))
+        registry.call("viewer.get_camera", {}, timeout=5, url="http://x")
+    )
     await asyncio.sleep(0)  # let call() enqueue and reach its own await
     call_id = next(iter(registry._pending))
 
@@ -175,7 +179,8 @@ async def test_call_raises_call_error_on_a_matching_error_reply():
     call_id = next(iter(registry._pending))
 
     registry.resolve_call(
-        conn, {"type": "error", "id": call_id, "error": {"code": "no_canvas", "message": "nope"}})
+        conn, {"type": "error", "id": call_id, "error": {"code": "no_canvas", "message": "nope"}}
+    )
 
     with pytest.raises(CallError) as excinfo:
         await call_task
@@ -324,7 +329,8 @@ async def test_touch_broadcasts_viewer_primary_to_every_connection_on_a_change()
     for conn in (conn_a, conn_b):
         frames = _queue_frames(conn)
         assert any(_is_viewer_primary(f, "a") for f in frames), (
-            "connection %r was never told conn_a became primary" % conn.tab_id)
+            "connection %r was never told conn_a became primary" % conn.tab_id
+        )
 
 
 async def test_touching_the_current_primary_again_does_not_rebroadcast():
@@ -390,8 +396,8 @@ async def test_removing_the_primary_tells_survivors_who_is_primary_now():
 
     frames = _queue_frames(conn_b)
     assert any(_is_viewer_primary(f, "b") for f in frames), (
-        "surviving viewer was never told it became primary after the old "
-        "primary disconnected")
+        "surviving viewer was never told it became primary after the old primary disconnected"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +437,9 @@ async def test_overflow_drops_an_incoming_ping_before_trying_any_other_relief():
 
     await registry.broadcast(_PING)
 
-    assert _queue_frames(conn) == before, "an incoming ping must be dropped outright, not evicted for"
+    assert _queue_frames(conn) == before, (
+        "an incoming ping must be dropped outright, not evicted for"
+    )
 
 
 async def test_overflow_evicts_a_queued_ping_to_make_room_for_a_protected_frame():
@@ -512,7 +520,9 @@ async def test_overflow_closes_1013_when_a_delta_has_no_same_turn_entry_to_colla
     await registry.broadcast(_delta(1, "a"))
     await registry.broadcast(_delta(2, "b"))  # full: [delta(turn1), delta(turn2)], no ping
 
-    await registry.broadcast(_delta(3, "c"))  # a third, still different, turn: nothing to merge into
+    await registry.broadcast(
+        _delta(3, "c")
+    )  # a third, still different, turn: nothing to merge into
 
     assert ws.closed is True
     payload, _ = ws.sent[0]
@@ -534,7 +544,9 @@ async def test_permission_request_and_turn_end_and_call_are_never_dropped_by_eit
 
         await registry.broadcast(protected)
 
-        assert ws.closed is True, "%r was silently dropped instead of closing the connection" % protected
+        assert ws.closed is True, (
+            "%r was silently dropped instead of closing the connection" % protected
+        )
 
 
 async def test_overflow_evicts_a_queued_ping_to_make_room_for_a_call_frame():
@@ -606,7 +618,8 @@ async def test_writer_coalesces_same_turn_deltas_into_one_send_carrying_the_late
     assert frame["event"]["text"] == "Hello"
     assert frame["seq"] == 11, (
         "the merged frame must carry the later delta's seq, or a reconnecting "
-        "client resuming from it would be replayed text this send already delivered")
+        "client resuming from it would be replayed text this send already delivered"
+    )
 
 
 async def test_writer_flushes_a_lone_pending_delta_within_the_injected_interval():
@@ -639,7 +652,8 @@ async def test_writer_never_sends_a_queued_non_delta_frame_before_a_pending_delt
     await _wait_for_sent_count(ws, 2)
     kinds = [json.loads(data)["event"]["kind"] for data, _ in ws.sent]
     assert kinds == ["text_delta", "turn_end"], (
-        "a pending delta must flush before any frame queued behind it, never after")
+        "a pending delta must flush before any frame queued behind it, never after"
+    )
 
 
 async def test_writer_send_failure_removes_the_connection_and_broadcasts_the_new_primary():
@@ -677,8 +691,12 @@ async def test_the_bus_binds_the_timeout_and_the_url_a_tool_should_not_have_to_c
     bus = ViewerBus(registry, url="http://127.0.0.1:8765/#t=tok", timeout=3.5)
 
     assert await bus.call("viewer.get_view") == {"ok": True}
-    assert seen == {"method": "viewer.get_view", "params": {},
-                    "timeout": 3.5, "url": "http://127.0.0.1:8765/#t=tok"}
+    assert seen == {
+        "method": "viewer.get_view",
+        "params": {},
+        "timeout": 3.5,
+        "url": "http://127.0.0.1:8765/#t=tok",
+    }
 
 
 async def test_the_bus_reports_no_viewer_with_the_url_to_open():

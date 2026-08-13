@@ -47,13 +47,9 @@ def _stl_bytes(triangles=2, z=0.0):
     """A structurally complete binary STL with ``triangles`` records."""
     out = [b"\0" * 80, struct.pack("<I", triangles)]
     for i in range(triangles):
-        out.append(struct.pack(
-            "<12fH",
-            0.0, 0.0, 1.0,
-            0.0, 0.0, z,
-            1.0 + i, 0.0, z,
-            0.0, 1.0, z,
-            0))
+        out.append(
+            struct.pack("<12fH", 0.0, 0.0, 1.0, 0.0, 0.0, z, 1.0 + i, 0.0, z, 0.0, 1.0, z, 0)
+        )
     return b"".join(out)
 
 
@@ -165,8 +161,7 @@ async def test_a_truncated_model_is_waited_for_not_announced(tmp_path):
     await _prime(watcher)
 
     # A header claiming 40 triangles with only 2 present.
-    (tmp_path / "part.stl").write_bytes(
-        b"\0" * 80 + struct.pack("<I", 40) + _stl_bytes(2)[84:])
+    (tmp_path / "part.stl").write_bytes(b"\0" * 80 + struct.pack("<I", 40) + _stl_bytes(2)[84:])
     assert await watcher.tick(1.0) is False
     assert registry.frames == []
 
@@ -176,8 +171,7 @@ async def test_the_completed_write_is_then_announced(tmp_path):
     watcher, registry = _watcher(tmp_path)
     await _prime(watcher)
 
-    (tmp_path / "part.stl").write_bytes(
-        b"\0" * 80 + struct.pack("<I", 40) + _stl_bytes(2)[84:])
+    (tmp_path / "part.stl").write_bytes(b"\0" * 80 + struct.pack("<I", 40) + _stl_bytes(2)[84:])
     assert await watcher.tick(1.0) is False
 
     _write_model(tmp_path, "part.stl", triangles=6)
@@ -193,9 +187,9 @@ async def test_a_model_that_never_settles_is_announced_at_the_deadline(tmp_path)
 
     truncated = b"\0" * 80 + struct.pack("<I", 40) + _stl_bytes(2)[84:]
     (tmp_path / "part.stl").write_bytes(truncated)
-    assert await watcher.tick(1.0) is False    # deferral starts
-    assert await watcher.tick(2.0) is False    # still inside the window
-    assert await watcher.tick(3.5) is True     # past max_defer, announced anyway
+    assert await watcher.tick(1.0) is False  # deferral starts
+    assert await watcher.tick(2.0) is False  # still inside the window
+    assert await watcher.tick(3.5) is True  # past max_defer, announced anyway
 
 
 async def test_a_removal_is_not_deferred(tmp_path):

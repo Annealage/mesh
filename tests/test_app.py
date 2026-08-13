@@ -12,6 +12,7 @@ import contextlib
 import socket
 
 import pytest
+from conftest import make_test_client
 
 from annealage_mesh import app as app_module
 
@@ -61,12 +62,12 @@ async def test_run_is_accepting_connections_before_on_ready_fires(tmp_path):
                 probe_result["error"] = exc
             finally:
                 probe_done.set()
+
         nonlocal probe_task
         probe_task = asyncio.ensure_future(probe())
         ready.set()
 
-    task = asyncio.ensure_future(
-        app_module.run(tmp_path, "127.0.0.1", port, on_ready=on_ready))
+    task = asyncio.ensure_future(app_module.run(tmp_path, "127.0.0.1", port, on_ready=on_ready))
     try:
         await asyncio.wait_for(ready.wait(), timeout=2.0)
         await asyncio.wait_for(probe_done.wait(), timeout=2.0)
@@ -87,7 +88,8 @@ async def test_run_is_accepting_connections_before_on_ready_fires(tmp_path):
 
 
 async def test_run_returns_promptly_when_cancelled_with_a_connection_still_open(
-        tmp_path, monkeypatch):
+    tmp_path, monkeypatch
+):
     # Bounds the shutdown drain wait tightly so the test itself stays fast;
     # the property under test is that the bound is honoured, not its value.
     monkeypatch.setattr(app_module, "SHUTDOWN_DRAIN_TIMEOUT", 0.1)
@@ -95,8 +97,7 @@ async def test_run_returns_promptly_when_cancelled_with_a_connection_still_open(
     port = _free_port()
     ready = asyncio.Event()
 
-    task = asyncio.ensure_future(
-        app_module.run(tmp_path, "127.0.0.1", port, on_ready=ready.set))
+    task = asyncio.ensure_future(app_module.run(tmp_path, "127.0.0.1", port, on_ready=ready.set))
     await asyncio.wait_for(ready.wait(), timeout=2.0)
 
     # A connection that never finishes sending its request headers: the
@@ -153,8 +154,7 @@ async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_
         built.append(session)
         return session
 
-    app_module.create_app(tmp_path, token="tok", mesh_session_id=sid,
-                          build_session=build_session)
+    app_module.create_app(tmp_path, token="tok", mesh_session_id=sid, build_session=build_session)
     built[0].emit(TurnEnd(turn=1, stop_reason="end_turn", cost_usd=0.0125))
     built[0].emit(TurnEnd(turn=2, stop_reason="end_turn", cost_usd=0.0075))
 
@@ -173,3 +173,28 @@ async def test_viewer_only_mode_writes_no_event_log(tmp_path):
     app_module.create_app(tmp_path, token="tok")
 
     assert not sessions.sessions_dir(tmp_path).exists()
+
+
+async def test_a_session_factory_that_returns_none_builds_a_working_app(tmp_path):
+    """Viewer-only mode passes a factory that answers None, and the app that
+    comes back must serve models with no agent attached.
+
+    The distinction this pins is between two things that look alike from the
+    outside: ``build_session=None`` (no factory at all) and a factory whose
+    answer is None (viewer-only, decided inside the closure ``cli.py`` builds).
+    Only the first was covered while the second was what every ``--no-agent``
+    run actually did, so the whole viewer-only path could crash on startup with
+    the suite green.
+    """
+    calls = []
+
+    def build_session(on_event, *, bus):
+        calls.append(bus)
+        return
+
+    app = app_module.create_app(tmp_path, token="tok", build_session=build_session)
+
+    assert calls, "the factory must still be called; it is what decides"
+    assert app.mesh_session is None
+    res = await make_test_client(app).get("/manifest")
+    assert res.status_code == 200

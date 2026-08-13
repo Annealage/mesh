@@ -49,14 +49,18 @@ class _Conn:
 
 
 def _frame(request_id="pr_1", decision="deny", message="not that file"):
-    return {"v": 1, "type": "permission", "request_id": request_id,
-            "decision": decision, "message": message}
+    return {
+        "v": 1,
+        "type": "permission",
+        "request_id": request_id,
+        "decision": decision,
+        "message": message,
+    }
 
 
 async def _dispatch(session, frame):
     sock = RecordingSocket()
-    await ws_module._dispatch(sock, _Conn(), StubRegistry(), None, "tok",
-                              frame, session)
+    await ws_module._dispatch(sock, _Conn(), StubRegistry(), None, "tok", frame, session)
     return sock.sent
 
 
@@ -116,8 +120,10 @@ async def test_unknown_request_is_importable_without_the_agent_sdk():
     """``ws.py`` has to catch this exception and must keep working with no SDK
     installed, so the exception cannot live in the broker's module."""
     import annealage_mesh.session.base as base
+
     assert base.UnknownRequest is UnknownRequest
-    source = (base.__file__ or "")
+    source = base.__file__ or ""
     assert source.endswith("base.py")
     import inspect
+
     assert "claude_agent_sdk" not in inspect.getsource(base)

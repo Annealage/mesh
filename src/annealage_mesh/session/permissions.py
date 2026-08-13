@@ -230,11 +230,11 @@ class PermissionBroker:
                 # awaiting a future nothing will ever resolve.
                 sys.stderr.write(
                     "error: failed to emit permission_request %r for %r: %r\n"
-                    % (request_id, tool_name, exc))
+                    % (request_id, tool_name, exc)
+                )
                 return PermissionResultDeny(message=_DENY_EMIT_FAILED_TEMPLATE)
             try:
-                result = await asyncio.wait_for(future, timeout=self._timeout)
-                return result
+                return await asyncio.wait_for(future, timeout=self._timeout)
             except asyncio.TimeoutError:
                 # asyncio.wait_for has already cancelled `future` (it
                 # wraps any bare Future the same way it would a Task);
@@ -261,7 +261,8 @@ class PermissionBroker:
                 # the next reload, not a wrong decision.
                 sys.stderr.write(
                     "warning: failed to emit permission_resolved %r (%s): %r\n"
-                    % (request_id, outcome, exc))
+                    % (request_id, outcome, exc)
+                )
 
     # -- resolving a request ------------------------------------------------
 
@@ -298,7 +299,8 @@ class PermissionBroker:
         future = self._pending.get(request_id)
         if future is None or future.done():
             raise UnknownRequest(
-                "permission request %r was already decided or does not exist" % (request_id,))
+                "permission request %r was already decided or does not exist" % (request_id,)
+            )
         event = self._open.get(request_id)
         tool_name = event.tool if event is not None else ""
         result, grant = _build_result(tool_name, decision, message)
@@ -335,7 +337,8 @@ class PermissionBroker:
         async with self._write_lock:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
-                None, _write_grants, self._permissions_path, self._granted_tools)
+                None, _write_grants, self._permissions_path, self._granted_tools
+            )
 
     # -- viewer presence ------------------------------------------------------
 
@@ -389,8 +392,7 @@ class PermissionBroker:
         except RuntimeError:
             self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
             return
-        self._no_viewer_timer = loop.call_later(
-            self._no_viewer_grace, self._deny_for_no_viewer)
+        self._no_viewer_timer = loop.call_later(self._no_viewer_grace, self._deny_for_no_viewer)
 
     def _deny_for_no_viewer(self) -> None:
         """The grace period elapsed with nobody back. Guarded on the count
@@ -409,10 +411,12 @@ class PermissionBroker:
         if self._viewer_url:
             return (
                 "no browser viewer is connected to decide this permission request; "
-                "ask the human to open %s, then try again" % self._viewer_url)
+                "ask the human to open %s, then try again" % self._viewer_url
+            )
         return (
             "no browser viewer is connected to decide this permission request; "
-            "ask the human to open the mesh viewer, then try again")
+            "ask the human to open the mesh viewer, then try again"
+        )
 
     # -- replay and shutdown -----------------------------------------------
 
@@ -480,7 +484,8 @@ def _build_result(
             # wrong direction. What is refused is only the memory of it.
             sys.stderr.write(
                 "warning: allow_always for %r downgraded to a one-time allow; "
-                "%r is never remembered (plan section 5)\n" % (tool_name, tool_name))
+                "%r is never remembered (plan section 5)\n" % (tool_name, tool_name)
+            )
             return PermissionResultAllow(), None
         return PermissionResultAllow(updated_permissions=[_session_rule(tool_name)]), tool_name
     raise ValueError("unknown permission decision: %r" % (decision,))
@@ -535,15 +540,15 @@ def _load_grants(path: Optional[Path]) -> FrozenSet[str]:
         return frozenset()
     except OSError as exc:
         sys.stderr.write(
-            "warning: could not read %s: %r; starting with no remembered grants\n"
-            % (path, exc))
+            "warning: could not read %s: %r; starting with no remembered grants\n" % (path, exc)
+        )
         return frozenset()
     try:
         tools = _parse_grants(text)
     except ValueError as exc:
         sys.stderr.write(
-            "warning: could not parse %s: %r; starting with no remembered grants\n"
-            % (path, exc))
+            "warning: could not parse %s: %r; starting with no remembered grants\n" % (path, exc)
+        )
         return frozenset()
     return frozenset(t for t in tools if t not in NEVER_REMEMBERED)
 

@@ -181,8 +181,9 @@ async def _maybe_not_modified(req, target):
     return None
 
 
-async def _serve_indexed(get_idx, invalidate, req, request_key, lookup,
-                         content_type_for, revalidatable=False):
+async def _serve_indexed(
+    get_idx, invalidate, req, request_key, lookup, content_type_for, revalidatable=False
+):
     """Serve one file through a cached index, rescanning once on a mismatch.
 
     ``get_idx`` and ``invalidate`` come from ``_make_index_cache``, so this
@@ -216,7 +217,8 @@ async def _serve_indexed(get_idx, invalidate, req, request_key, lookup,
             if unchanged is not None:
                 return unchanged
         res = await file_response(
-            target, content_type_for(target), req.method, identity, revalidatable)
+            target, content_type_for(target), req.method, identity, revalidatable
+        )
         if res.status_code != 404:
             return res
         if attempt == 0:
@@ -263,8 +265,12 @@ def register_routes(app, serve_dir):
             if log_state["fd"] is None:
                 loop = asyncio.get_running_loop()
                 log_state["fd"] = await loop.run_in_executor(
-                    None, paths.open_fixed_file_for_append,
-                    serve_dir, paths.COMMENTS_LOG_NAME, _RECORD_FILE_MODE)
+                    None,
+                    paths.open_fixed_file_for_append,
+                    serve_dir,
+                    paths.COMMENTS_LOG_NAME,
+                    _RECORD_FILE_MODE,
+                )
             return log_state["fd"]
 
     get_index, invalidate_index = _make_index_cache(paths.build_model_index, serve_dir)
@@ -276,7 +282,8 @@ def register_routes(app, serve_dir):
     # then stay invisible until something else happened to change.
     app.mesh_invalidate_model_index = invalidate_index
     get_static_index, invalidate_static_index = _make_index_cache(
-        paths.build_static_index, STATIC_DIR)
+        paths.build_static_index, STATIC_DIR
+    )
 
     @app.get("/")
     @app.get("/index.html")
@@ -287,17 +294,27 @@ def register_routes(app, serve_dir):
         # with a new inode is served after one rescan, not 404ed) and the
         # same content-type lookup as everything under /static.
         return await _serve_indexed(
-            get_static_index, invalidate_static_index, req, "viewer.html",
+            get_static_index,
+            invalidate_static_index,
+            req,
+            "viewer.html",
             lambda idx: (idx.by_rel("viewer.html"), idx.identity_of("viewer.html")),
-            lambda target: paths.CONTENT_TYPES[".html"], revalidatable=True)
+            lambda target: paths.CONTENT_TYPES[".html"],
+            revalidatable=True,
+        )
 
     @app.get("/static/<path:rel>")
     async def static_asset(req, rel):
         key = unquote(rel)
         return await _serve_indexed(
-            get_static_index, invalidate_static_index, req, rel,
+            get_static_index,
+            invalidate_static_index,
+            req,
+            rel,
             lambda idx: (idx.by_rel(key), idx.identity_of(key)),
-            lambda target: paths.StaticIndex.content_type_of(key), revalidatable=True)
+            lambda target: paths.StaticIndex.content_type_of(key),
+            revalidatable=True,
+        )
 
     @app.get("/manifest")
     async def manifest(req):
@@ -317,10 +334,15 @@ def register_routes(app, serve_dir):
     async def model(req, rel):
         key = unquote(rel)
         return await _serve_indexed(
-            get_index, invalidate_index, req, rel,
+            get_index,
+            invalidate_index,
+            req,
+            rel,
             lambda idx: (idx.by_rel(key), idx.identity_of(key)),
             lambda target: paths.CONTENT_TYPES.get(
-                target.suffix.lower(), "application/octet-stream"))
+                target.suffix.lower(), "application/octet-stream"
+            ),
+        )
 
     # microdot's URLPattern.compile() splits the raw pattern text on '/'
     # before it ever looks at regex syntax, so a custom "re:" segment cannot
@@ -336,9 +358,13 @@ def register_routes(app, serve_dir):
     async def model_alias(req, name):
         key = unquote(name)
         return await _serve_indexed(
-            get_index, invalidate_index, req, name,
+            get_index,
+            invalidate_index,
+            req,
+            name,
             lambda idx: (idx.by_file(key), idx.identity_of_file(key)),
-            lambda target: paths.CONTENT_TYPES[".stl"])
+            lambda target: paths.CONTENT_TYPES[".stl"],
+        )
 
     @app.get("/asset/<path:rel>")
     async def asset(req, rel):
@@ -361,13 +387,17 @@ def register_routes(app, serve_dir):
         # target served.
         loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(
-            None, paths.read_fixed_file, serve_dir, paths.CALLOUTS_JSON_NAME)
+            None, paths.read_fixed_file, serve_dir, paths.CALLOUTS_JSON_NAME
+        )
         if raw is None:
             return {"annotations": []}
-        return Response(body=raw, headers={
-            "Content-Type": paths.CONTENT_TYPES[".json"],
-            "Cache-Control": "no-store",
-        })
+        return Response(
+            body=raw,
+            headers={
+                "Content-Type": paths.CONTENT_TYPES[".json"],
+                "Cache-Control": "no-store",
+            },
+        )
 
     @app.post("/submit")
     async def submit(req):
@@ -379,15 +409,19 @@ def register_routes(app, serve_dir):
         # nothing ever makes such a read return.
         content_length = req.content_length
         if content_length <= 0:
-            return {"ok": False, "error": "Content-Length is required and "
-                    "must be greater than zero"}, 411
+            return {
+                "ok": False,
+                "error": "Content-Length is required and must be greater than zero",
+            }, 411
         chunks = []
         total = 0
         while total < content_length:
             chunk = await req.stream.read(min(CHUNK_SIZE, content_length - total))
             if not chunk:
-                return {"ok": False, "error": "body ended after %d of %d bytes"
-                        % (total, content_length)}, 400
+                return {
+                    "ok": False,
+                    "error": "body ended after %d of %d bytes" % (total, content_length),
+                }, 400
             chunks.append(chunk)
             total += len(chunk)
         raw = b"".join(chunks)
@@ -415,14 +449,18 @@ def register_routes(app, serve_dir):
         # attacker with write access to this directory wins.
         safe_json = paths.safe_fixed_file(serve_dir, paths.COMMENTS_JSON_NAME)
         if safe_json is None:
-            return {"ok": False,
-                    "error": "refusing to write: %s is not a plain, single-linked file"
-                             % paths.COMMENTS_JSON_NAME}, 500
+            return {
+                "ok": False,
+                "error": "refusing to write: %s is not a plain, single-linked file"
+                % paths.COMMENTS_JSON_NAME,
+            }, 500
         log_fd = await get_log_fd()
         if log_fd is None:
-            return {"ok": False,
-                    "error": "refusing to write: %s is not a plain, single-linked file"
-                             % paths.COMMENTS_LOG_NAME}, 500
+            return {
+                "ok": False,
+                "error": "refusing to write: %s is not a plain, single-linked file"
+                % paths.COMMENTS_LOG_NAME,
+            }, 500
 
         loop = asyncio.get_running_loop()
         try:
@@ -507,8 +545,10 @@ def _print_summary(record, comments_path):
     line = "=" * 64
     out = sys.stdout
     out.write("\n%s\n" % line)
-    out.write("ANNEALAGE MESH COMMENTS SUBMITTED  %s  (%d pins)\n"
-              % (record["submitted_at"], record["count"]))
+    out.write(
+        "ANNEALAGE MESH COMMENTS SUBMITTED  %s  (%d pins)\n"
+        % (record["submitted_at"], record["count"])
+    )
     out.write("wrote: %s\n" % comments_path)
     out.write("%s\n" % line)
     for a in record["annotations"]:

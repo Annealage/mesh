@@ -28,15 +28,28 @@ from annealage_mesh import cli, lock, net
 # bind a real listening port; ``session/sdk.py`` and the ``claude`` binary
 # are never touched by this file.
 def _make_stub_run(calls):
-    async def _stub_run(serve_dir, host, port, on_ready=None, token=None,
-                         extra_origins=(), build_session=None,
-                         mesh_session_id=None):
-        calls.append({
-            "serve_dir": serve_dir, "host": host, "port": port,
-            "mesh_session_id": mesh_session_id,
-        })
+    async def _stub_run(
+        serve_dir,
+        host,
+        port,
+        on_ready=None,
+        token=None,
+        extra_origins=(),
+        build_session=None,
+        mesh_session_id=None,
+        settings=None,
+    ):
+        calls.append(
+            {
+                "serve_dir": serve_dir,
+                "host": host,
+                "port": port,
+                "mesh_session_id": mesh_session_id,
+            }
+        )
         if on_ready is not None:
             await on_ready()
+
     return _stub_run
 
 
@@ -59,6 +72,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     reached the lock, on any machine lacking them, a stock CI runner included.
     """
     from annealage_mesh.session import sdk
+
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
 
@@ -89,7 +103,8 @@ def test_live_pid_refused_raises_lock_held_with_holder_details(tmp_path):
     # This test process's own pid is guaranteed live for the test's duration,
     # so no mocking of os.kill is needed to pin this path deterministically.
     lock.lock_path(mesh_dir).write_bytes(
-        json.dumps({"pid": os.getpid(), "port": 9001, "token": "held-tok"}).encode())
+        json.dumps({"pid": os.getpid(), "port": 9001, "token": "held-tok"}).encode()
+    )
 
     with pytest.raises(lock.LockHeld) as exc:
         lock.acquire(mesh_dir, 4242, "new-tok")
@@ -209,7 +224,10 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
         barrier = threading.Barrier(2)
         results = [None, None]
 
-        def attempt(i, port, token):
+        def attempt(i, port, token, barrier=barrier, results=results):
+            # barrier and results are bound as defaults rather than captured:
+            # both are rebound on the next iteration of the enclosing loop, and
+            # a closure that read them late would sample the following round's.
             barrier.wait()
             try:
                 results[i] = ("ok", lock.acquire(mesh_dir, port, token))
@@ -227,11 +245,12 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
 
         outcomes = [r[0] for r in results]
         assert outcomes.count("ok") == 1, (
-            "round %d: exactly one racer must win the create: got %r"
-            % (round_number, outcomes))
+            "round %d: exactly one racer must win the create: got %r" % (round_number, outcomes)
+        )
         assert outcomes.count("held") == 1, (
             "round %d: the loser must see the winner as a live holder, never a "
-            "corrupt record: got %r" % (round_number, outcomes))
+            "corrupt record: got %r" % (round_number, outcomes)
+        )
 
         winner = next(r[1] for r in results if r[0] == "ok")
         loser_exc = next(r[1] for r in results if r[0] == "held")
@@ -252,6 +271,7 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
 # cli.main, observable behaviour
 # --------------------------------------------------------------------------
 
+
 def test_second_instance_is_refused_with_exit_3_and_running_url(tmp_path, capsys):
     """A live lock in this project makes ``cli.main`` exit 3 and print the
     URL of the instance that is already running, without starting a second
@@ -262,7 +282,8 @@ def test_second_instance_is_refused_with_exit_3_and_running_url(tmp_path, capsys
     mesh_dir = tmp_path / ".mesh"
     mesh_dir.mkdir()
     lock.lock_path(mesh_dir).write_bytes(
-        json.dumps({"pid": os.getpid(), "port": 9001, "token": "running-tok"}).encode())
+        json.dumps({"pid": os.getpid(), "port": 9001, "token": "running-tok"}).encode()
+    )
 
     rc = cli.main(_lock_argv(tmp_path))
 
@@ -320,7 +341,10 @@ def test_the_record_is_complete_before_the_lock_name_exists(tmp_path, monkeypatc
         assert observed, "the lock name was published without os.link"
         assert observed["name_existed_first"] is False
         assert json.loads(observed["published_bytes"]) == {
-            "pid": os.getpid(), "port": 4242, "token": "tok-atomic"}
+            "pid": os.getpid(),
+            "port": 4242,
+            "token": "tok-atomic",
+        }
     finally:
         held.release()
 
@@ -332,7 +356,7 @@ def test_claiming_never_interprets_an_existing_record(tmp_path):
     mesh_dir = tmp_path / ".mesh"
     mesh_dir.mkdir()
     path = lock.lock_path(mesh_dir)
-    path.write_bytes(b"")   # the exact state the old create-then-write left behind
+    path.write_bytes(b"")  # the exact state the old create-then-write left behind
 
     assert lock._claim(path, b'{"pid": 1, "port": 2, "token": "t"}') is None
     assert path.read_bytes() == b"", "a lost claim must not touch the holder's file"

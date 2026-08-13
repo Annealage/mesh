@@ -194,29 +194,55 @@ def test_build_refused_round_trips():
 
 VALID_FRAMES = [
     {"v": PROTOCOL_VERSION, "type": "hello", "token": "abc"},
-    {"v": PROTOCOL_VERSION, "type": "hello", "token": "abc", "last_seq": 12,
-     "viewer": {"tab_id": "t1", "w": 800, "h": 600}},
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "hello",
+        "token": "abc",
+        "last_seq": 12,
+        "viewer": {"tab_id": "t1", "w": 800, "h": 600},
+    },
     {"v": PROTOCOL_VERSION, "type": "hello", "token": "abc", "viewer": {"tab_id": "t1"}},
-    {"v": PROTOCOL_VERSION, "type": "turn",
-     "blocks": [{"type": "text", "text": "why is this wall thin?"}]},
-    {"v": PROTOCOL_VERSION, "type": "turn",
-     "blocks": [{"type": "image_path", "path": "images/a.png"}]},
-    {"v": PROTOCOL_VERSION, "type": "turn",
-     "blocks": [{"type": "text", "text": "look at"},
-                {"type": "image_path", "path": "images/b.png"}]},
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "turn",
+        "blocks": [{"type": "text", "text": "why is this wall thin?"}],
+    },
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "turn",
+        "blocks": [{"type": "image_path", "path": "images/a.png"}],
+    },
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "turn",
+        "blocks": [
+            {"type": "text", "text": "look at"},
+            {"type": "image_path", "path": "images/b.png"},
+        ],
+    },
     {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1", "decision": "allow"},
-    {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1",
-     "decision": "allow_always"},
-    {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1",
-     "decision": "deny", "message": "no"},
+    {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1", "decision": "allow_always"},
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "permission",
+        "request_id": "pr_1",
+        "decision": "deny",
+        "message": "no",
+    },
     {"v": PROTOCOL_VERSION, "type": "result", "id": "c_1", "result": {"png": "..."}},
-    {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1",
-     "error": {"code": "no_canvas", "message": "nope"}},
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "error",
+        "id": "c_1",
+        "error": {"code": "no_canvas", "message": "nope"},
+    },
     {"v": PROTOCOL_VERSION, "type": "interrupt"},
     {"v": PROTOCOL_VERSION, "type": "state", "state": {}},
-    {"v": PROTOCOL_VERSION, "type": "state",
-     "state": {"camera": {}, "visibility": {"lid": True}, "selection": 3,
-               "mode": "annotate"}},
+    {
+        "v": PROTOCOL_VERSION,
+        "type": "state",
+        "state": {"camera": {}, "visibility": {"lid": True}, "selection": 3, "mode": "annotate"},
+    },
     {"v": PROTOCOL_VERSION, "type": "pause", "paused": True},
     {"v": PROTOCOL_VERSION, "type": "pause", "paused": False},
 ]
@@ -265,28 +291,38 @@ def test_validate_inbound_rejects_frame_with_no_type_at_all():
     assert isinstance(reason, str) and reason
 
 
-@pytest.mark.parametrize("frame", [
-    {"v": PROTOCOL_VERSION, "type": "turn"},
-    {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1"},
-    {"v": PROTOCOL_VERSION, "type": "permission", "decision": "allow"},
-    {"v": PROTOCOL_VERSION, "type": "result", "id": "c_1"},
-    {"v": PROTOCOL_VERSION, "type": "result", "result": {}},
-    {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1"},
-    {"v": PROTOCOL_VERSION, "type": "state"},
-])
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"v": PROTOCOL_VERSION, "type": "turn"},
+        {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1"},
+        {"v": PROTOCOL_VERSION, "type": "permission", "decision": "allow"},
+        {"v": PROTOCOL_VERSION, "type": "result", "id": "c_1"},
+        {"v": PROTOCOL_VERSION, "type": "result", "result": {}},
+        {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1"},
+        {"v": PROTOCOL_VERSION, "type": "state"},
+    ],
+)
 def test_validate_inbound_rejects_frame_missing_a_required_key(frame):
     ok, reason = validate_inbound(frame)
     assert ok is False
     assert isinstance(reason, str) and reason
 
 
-@pytest.mark.parametrize("frame", [
-    {"v": PROTOCOL_VERSION, "type": "interrupt", "extra": 1},
-    {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "extra": 1},
-    {"v": PROTOCOL_VERSION, "type": "turn", "blocks": [{"type": "text", "text": "x"}],
-     "extra": 1},
-    {"v": PROTOCOL_VERSION, "type": "state", "state": {}, "extra": 1},
-])
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"v": PROTOCOL_VERSION, "type": "interrupt", "extra": 1},
+        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "extra": 1},
+        {
+            "v": PROTOCOL_VERSION,
+            "type": "turn",
+            "blocks": [{"type": "text", "text": "x"}],
+            "extra": 1,
+        },
+        {"v": PROTOCOL_VERSION, "type": "state", "state": {}, "extra": 1},
+    ],
+)
 def test_validate_inbound_rejects_unknown_top_level_key(frame):
     ok, reason = validate_inbound(frame)
     assert ok is False
@@ -300,80 +336,88 @@ def test_validate_inbound_rejects_empty_turn_blocks():
 
 def test_validate_inbound_rejects_turn_blocks_not_a_list():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": "why is this wall thin?"})
+        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": "why is this wall thin?"}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_turn_block_that_is_not_an_object():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": ["not an object"]})
+        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": ["not an object"]}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_turn_block_of_unknown_type():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "turn",
-         "blocks": [{"type": "video", "path": "x"}]})
+        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": [{"type": "video", "path": "x"}]}
+    )
     assert ok is False
     assert "video" in reason
 
 
 def test_validate_inbound_rejects_turn_block_missing_a_required_key():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": [{"type": "text"}]})
+        {"v": PROTOCOL_VERSION, "type": "turn", "blocks": [{"type": "text"}]}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_turn_block_with_unknown_key():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "turn",
-         "blocks": [{"type": "text", "text": "x", "size": 12}]})
+        {
+            "v": PROTOCOL_VERSION,
+            "type": "turn",
+            "blocks": [{"type": "text", "text": "x", "size": 12}],
+        }
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_permission_decision_outside_the_allowed_set():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1",
-         "decision": "maybe"})
+        {"v": PROTOCOL_VERSION, "type": "permission", "request_id": "pr_1", "decision": "maybe"}
+    )
     assert ok is False
     assert "decision" in reason
 
 
 def test_validate_inbound_rejects_hello_viewer_that_is_not_an_object():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "viewer": "tab1"})
+        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "viewer": "tab1"}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_hello_viewer_missing_tab_id():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a",
-         "viewer": {"w": 100, "h": 100}})
+        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "viewer": {"w": 100, "h": 100}}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_hello_last_seq_of_the_wrong_type():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "last_seq": "12"})
+        {"v": PROTOCOL_VERSION, "type": "hello", "token": "a", "last_seq": "12"}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_error_missing_message():
     ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1", "error": {"code": "x"}})
+        {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1", "error": {"code": "x"}}
+    )
     assert ok is False
 
 
 def test_validate_inbound_rejects_state_with_an_unknown_key():
-    ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "state", "state": {"zoom": 2}})
+    ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "state", "state": {"zoom": 2}})
     assert ok is False
     assert "zoom" in reason
 
 
 def test_validate_inbound_rejects_pause_that_is_not_a_boolean():
-    ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "pause", "paused": "yes"})
+    ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "pause", "paused": "yes"})
     assert ok is False
     assert "true or false" in reason
 
@@ -388,6 +432,5 @@ def test_validate_inbound_rejects_a_numeric_pause_value():
 
 
 def test_validate_inbound_rejects_state_value_that_is_not_an_object():
-    ok, reason = validate_inbound(
-        {"v": PROTOCOL_VERSION, "type": "state", "state": "front"})
+    ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "state", "state": "front"})
     assert ok is False

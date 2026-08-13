@@ -72,9 +72,7 @@ class FakeSession:
     async def submit_turn(self, blocks: list, viewer: Optional[str] = None) -> None:
         self.submitted_turns.append((blocks, viewer))
 
-    async def decide_permission(
-        self, request_id: str, decision: str, message: str = ""
-    ) -> None:
+    async def decide_permission(self, request_id: str, decision: str, message: str = "") -> None:
         """Record one decision, and raise ``UnknownRequest`` for a second one
         naming the same request.
 
@@ -85,8 +83,7 @@ class FakeSession:
         ordinary path silently never raised at all.
         """
         if request_id in self.decided_requests:
-            raise UnknownRequest(
-                "permission request %r was already decided" % (request_id,))
+            raise UnknownRequest("permission request %r was already decided" % (request_id,))
         self.decided_requests.add(request_id)
         self.permission_decisions.append((request_id, decision, message))
 

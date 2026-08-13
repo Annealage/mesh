@@ -1,6 +1,6 @@
 """Assembly of the mesh tool server, and the two policies every tool obeys.
 
-Sixteen flat tools on one in-process MCP server, declared with the SDK's
+Seventeen flat tools on one in-process MCP server, declared with the SDK's
 ``@tool`` decorator and registered through ``create_sdk_mcp_server``. Flat
 rather than a ``search_actions``/``execute_action`` pair, because the CLI
 already surfaces tools through its own deferred tool search, so a second
@@ -28,7 +28,8 @@ which refuses all of them at once for as long as the human wants the view to
 hold still, and that is what it is for.
 
 ``WRITE_CLASS`` leaves something behind after the page is closed: a callout in
-a file the human's own tooling reads, or an image in the project directory.
+a file the human's own tooling reads, an image in the project directory, or a
+transcript that carries whatever was said about the hardware under review.
 These are deliberately **absent** from every allow list, which is what makes
 them reach the broker and therefore the human as a card. Adding one of these
 names to a pre-allowed list anywhere would silently remove that card.
@@ -52,8 +53,7 @@ from claude_agent_sdk import create_sdk_mcp_server
 
 from .. import __version__
 from ..viewers import CallError, NoViewerConnected, ViewerGone
-from . import MESH_SERVER_NAME, fail, namespaced
-from . import model_tools, review_tools, viewer_tools
+from . import MESH_SERVER_NAME, fail, model_tools, namespaced, review_tools, viewer_tools
 
 #: Changes nothing. Pre-allowed, and not gated by the pause switch.
 READ_CLASS = (
@@ -84,6 +84,7 @@ WRITE_CLASS = (
     "add_callout",
     "delete_callout",
     "snapshot",
+    "export_transcript",
 )
 
 #: What never prompts, as the model sees it, which is what goes into
@@ -108,7 +109,8 @@ PAUSED_MESSAGE = (
     "editing a pin comment and do not want the model moving underneath them. "
     "Every read-only mesh tool still works, so keep looking if that helps; "
     "otherwise say what you were about to do and ask them to press Paused in "
-    "the viewer's topbar when they are ready.")
+    "the viewer's topbar when they are ready."
+)
 
 
 def _verify(tools):
@@ -121,21 +123,24 @@ def _verify(tools):
     for first, second in (("read", "view"), ("read", "write"), ("view", "write")):
         overlap = sorted(set(grades[first]) & set(grades[second]))
         if overlap:
-            raise RuntimeError("mesh tool(s) %s are classified both %s and %s"
-                               % (", ".join(overlap), first, second))
+            raise RuntimeError(
+                "mesh tool(s) %s are classified both %s and %s"
+                % (", ".join(overlap), first, second)
+            )
     classified = set(READ_CLASS) | set(VIEW_CLASS) | set(WRITE_CLASS)
     unclassified = sorted(set(built) - classified)
     if unclassified:
         raise RuntimeError(
             "mesh tool(s) %s are built but not classified read, view or write in "
             "tools/registry.py; every default is wrong for something, so there is "
-            "no default" % ", ".join(unclassified))
+            "no default" % ", ".join(unclassified)
+        )
     missing = sorted(classified - set(built))
     if missing:
         raise RuntimeError(
             "mesh tool(s) %s are classified in tools/registry.py but not built, "
-            "so their names are pre-allowed and match nothing"
-            % ", ".join(missing))
+            "so their names are pre-allowed and match nothing" % ", ".join(missing)
+        )
 
 
 def _wrap(tool_def, *, bus, gated):
@@ -168,24 +173,35 @@ def _wrap(tool_def, *, bus, gated):
             # ask the human to open, so it is passed through unedited.
             return fail(str(exc))
         except ViewerGone:
-            return fail("the view this went to closed before it answered, so %s "
-                        "did not happen; ask the human whether the page is still "
-                        "open, then try again" % tool_def.name)
+            return fail(
+                "the view this went to closed before it answered, so %s "
+                "did not happen; ask the human whether the page is still "
+                "open, then try again" % tool_def.name
+            )
         except asyncio.TimeoutError:
-            return fail("the viewer did not answer %s in time, so it may or may "
-                        "not have happened; the page may be busy or in a "
-                        "background tab. Read the state back before assuming "
-                        "either way" % tool_def.name)
+            return fail(
+                "the viewer did not answer %s in time, so it may or may "
+                "not have happened; the page may be busy or in a "
+                "background tab. Read the state back before assuming "
+                "either way" % tool_def.name
+            )
         except CallError as exc:
             error = exc.error or {}
-            return fail("the viewer refused %s: %s (%s)"
-                        % (tool_def.name, error.get("message", "no reason given"),
-                           error.get("code", "no code")))
+            return fail(
+                "the viewer refused %s: %s (%s)"
+                % (
+                    tool_def.name,
+                    error.get("message", "no reason given"),
+                    error.get("code", "no code"),
+                )
+            )
         except Exception as exc:
             sys.stderr.write("error: mesh tool %s failed: %r\n" % (tool_def.name, exc))
-            return fail("%s failed inside mesh itself (%s), which is a bug rather "
-                        "than anything you did; tell the human and carry on "
-                        "without it" % (tool_def.name, type(exc).__name__))
+            return fail(
+                "%s failed inside mesh itself (%s), which is a bug rather "
+                "than anything you did; tell the human and carry on "
+                "without it" % (tool_def.name, type(exc).__name__)
+            )
 
     return dataclasses.replace(tool_def, handler=handler)
 
@@ -196,6 +212,8 @@ class MeshTools:
     Built per session rather than at import, because every handler closes over
     the ``ViewerBus`` and the served directory of the run it belongs to.
 
+    ``session_id`` names the conversation, for the one tool that writes it out.
+
     ``mcp_servers`` is the mapping ``ClaudeAgentOptions`` takes. Its key and
     the server's own name are the same constant, deliberately: the key is what
     the model-visible ``mcp__<key>__<tool>`` name is built from, so a key that
@@ -203,18 +221,22 @@ class MeshTools:
     matching nothing and every one of those tools prompting.
     """
 
-    def __init__(self, bus, serve_dir):
+    def __init__(self, bus, serve_dir, session_id=None):
         self.bus = bus
         self.serve_dir = serve_dir
-        built = (model_tools.build(serve_dir)
-                 + viewer_tools.build(bus)
-                 + review_tools.build(bus, serve_dir))
+        self.session_id = session_id
+        built = (
+            model_tools.build(serve_dir)
+            + viewer_tools.build(bus)
+            + review_tools.build(bus, serve_dir, session_id)
+        )
         _verify(built)
         self.tools = tuple(
-            _wrap(tool_def, bus=bus, gated=tool_def.name in PAUSE_GATED)
-            for tool_def in built)
+            _wrap(tool_def, bus=bus, gated=tool_def.name in PAUSE_GATED) for tool_def in built
+        )
         self.server = create_sdk_mcp_server(
-            MESH_SERVER_NAME, version=__version__, tools=list(self.tools))
+            MESH_SERVER_NAME, version=__version__, tools=list(self.tools)
+        )
 
     @property
     def mcp_servers(self):

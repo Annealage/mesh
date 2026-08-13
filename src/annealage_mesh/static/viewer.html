@@ -21,6 +21,7 @@
   <button id="upBtn" title="Toggle which axis is 'up'">Z-up</button>
   <button id="pauseBtn" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view.">❙❙ Pause</button>
   <button id="panelBtn" title="Show/hide panel">☰ Panel</button>
+  <button id="settingsBtn" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed">⚙ Settings</button>
 </div>
 
 <nav id="tabbar"></nav>
@@ -69,6 +70,7 @@
     <header>
       <h1>Chat</h1>
       <span id="agentStatus" class="agentstatus"></span>
+      <button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share">Export</button>
     </header>
     <div id="chatBanner" class="chatbanner" hidden>
       <span id="chatBannerText"></span>
@@ -92,6 +94,8 @@
     </div>
   </aside>
 </div>
+
+<div id="settingsModal" class="modal" hidden></div>
 
 <div id="toast"></div>
 <div id="err"></div>

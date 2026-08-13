@@ -1,9 +1,18 @@
-"""Route handler for chat-originated image uploads.
+"""Route handlers for what the chat pane sends the server: an image, or a
+request to write the conversation out.
 
 Registers, against one served directory:
 
-    POST /upload    accepts one raw image (PNG, JPEG or WEBP) into images/,
-                     named by this process alone
+    POST /upload                  accepts one raw image (PNG, JPEG or WEBP)
+                                   into images/, named by this process alone
+    POST /session/<sid>/export    renders that session's event log into review/
+
+The export route deliberately does not go through the permission broker, while
+the ``export_transcript`` tool the model calls does. That asymmetry is the
+point: a human pressing their own Export button has already decided, and a card
+asking them to approve what they just clicked teaches them to click cards
+without reading. The model asking for the same write has decided nothing on
+the human's behalf, so it asks.
 
 Refuses, in the order checked: an absent or wrong token, or ``t`` given more
 than once (the same ``ws.refusal()`` response ``/ws`` returns, so an
@@ -31,11 +40,14 @@ its extension, never comes from the client; see
 """
 
 import asyncio
+import functools
 import os
+import sys
 
-from . import CHUNK_SIZE
+from .. import paths, sessions
+from ..session import events
+from . import CHUNK_SIZE, read_json_body
 from .ws import _origin_is_allowed, _token_is_allowed, refusal
-from .. import paths
 
 
 class _Refused(Exception):
@@ -49,6 +61,7 @@ class _Refused(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
 
 # The only values the "kind" query parameter may take. Absent means the
 # first entry. Held here, not in paths.py, because it is this route's own
@@ -144,28 +157,48 @@ async def _receive(req, loop, fd, first, content_length):
     try:
         await loop.run_in_executor(None, _write_all, fd, first)
     except OSError as exc:
-        raise _Refused(500, "write failed: %s" % exc)
+        raise _Refused(500, "write failed: %s" % exc) from exc
 
     while total < content_length:
         chunk = await req.stream.read(min(CHUNK_SIZE, content_length - total))
         if not chunk:
-            raise _Refused(400, "body ended after %d of %d bytes"
-                                % (total, content_length))
+            raise _Refused(400, "body ended after %d of %d bytes" % (total, content_length))
         try:
             await loop.run_in_executor(None, _write_all, fd, chunk)
         except OSError as exc:
-            raise _Refused(500, "write failed: %s" % exc)
+            raise _Refused(500, "write failed: %s" % exc) from exc
         total += len(chunk)
 
     try:
         await loop.run_in_executor(None, _finish, fd)
     except OSError as exc:
-        raise _Refused(500, "write failed: %s" % exc)
+        raise _Refused(500, "write failed: %s" % exc) from exc
     return total
 
 
+def _export_options(data):
+    """Return ``(fmt, include, None)`` or ``(None, None, error)`` for an export
+    request body.
+
+    Both fields are optional and both are checked against the renderer's own
+    tuples, with the allowed values named in the refusal: a client that asked
+    for ``"md"`` needs telling that the word is ``"markdown"``, not that its
+    request was invalid.
+    """
+    unknown = sorted(set(data) - {"format", "include"})
+    if unknown:
+        return None, None, "unknown body field: %s" % ", ".join(unknown)
+    fmt = data.get("format", events.TRANSCRIPT_FORMATS[0])
+    include = data.get("include", events.TRANSCRIPT_INCLUDE[0])
+    if fmt not in events.TRANSCRIPT_FORMATS:
+        return None, None, ("format must be one of: %s" % ", ".join(events.TRANSCRIPT_FORMATS))
+    if include not in events.TRANSCRIPT_INCLUDE:
+        return None, None, ("include must be one of: %s" % ", ".join(events.TRANSCRIPT_INCLUDE))
+    return fmt, include, None
+
+
 def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
-    """Register ``POST /upload`` on ``app`` for one served directory."""
+    """Register ``POST /upload`` and ``POST /session/<sid>/export`` on ``app``."""
     serve_dir = paths.resolve_serve_dir(serve_dir)
 
     @app.post("/upload")
@@ -184,11 +217,16 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
 
         content_length = req.content_length
         if content_length <= 0:
-            return {"ok": False, "error": "Content-Length is required and "
-                    "must be greater than zero"}, 411
+            return {
+                "ok": False,
+                "error": "Content-Length is required and must be greater than zero",
+            }, 411
         if content_length > paths.MAX_IMAGE_BYTES:
-            return {"ok": False, "error": "body is %d bytes, over the %d "
-                    "byte image limit" % (content_length, paths.MAX_IMAGE_BYTES)}, 413
+            return {
+                "ok": False,
+                "error": "body is %d bytes, over the %d "
+                "byte image limit" % (content_length, paths.MAX_IMAGE_BYTES),
+            }, 413
 
         loop = asyncio.get_running_loop()
 
@@ -210,16 +248,22 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
             first += chunk
         sniff = paths.sniff_image(first)
         if sniff is None:
-            return {"ok": False, "error": "not a recognised image; only "
-                    "PNG, JPEG and WEBP are accepted"}, 415
+            return {
+                "ok": False,
+                "error": "not a recognised image; only PNG, JPEG and WEBP are accepted",
+            }, 415
         media_type, suffix = sniff
 
         try:
             created = await loop.run_in_executor(
-                None, paths.create_unique_image_file, serve_dir, kind, suffix)
+                None, paths.create_unique_image_file, serve_dir, kind, suffix
+            )
         except FileExistsError:
-            return {"ok": False, "error": "could not find a free name in "
-                    "images/ after %d attempts" % paths.UNIQUE_IMAGE_NAME_ATTEMPTS}, 500
+            return {
+                "ok": False,
+                "error": "could not find a free name in "
+                "images/ after %d attempts" % paths.UNIQUE_IMAGE_NAME_ATTEMPTS,
+            }, 500
         except OSError as exc:
             # A directory this process cannot write into, a full filesystem, a
             # quota. Answered in the same shape as every other refusal here,
@@ -227,9 +271,11 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
             # out of microdot's plain-text 500.
             return {"ok": False, "error": "could not create the file: %s" % exc}, 500
         if created is None:
-            return {"ok": False, "error": "refusing to write: %s/ must be a "
-                    "real directory this process can create a file in"
-                    % paths.IMAGES_DIRNAME}, 500
+            return {
+                "ok": False,
+                "error": "refusing to write: %s/ must be a "
+                "real directory this process can create a file in" % paths.IMAGES_DIRNAME,
+            }, 500
         fd, target = created
 
         # One exit for everything past the open. The stream reads inside
@@ -248,6 +294,58 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
                 return {"ok": False, "error": exc.message}, exc.status
             raise
 
-        return {"ok": True, "path": "images/%s" % target.name,
-                "url": "/asset/%s" % target.name, "bytes": total,
-                "media_type": media_type}, 200
+        return {
+            "ok": True,
+            "path": "images/%s" % target.name,
+            "url": "/asset/%s" % target.name,
+            "bytes": total,
+            "media_type": media_type,
+        }, 200
+
+    @app.post("/session/<sid>/export")
+    async def export_session(req, sid):
+        if not _token_is_allowed(req, token):
+            return refusal()
+        if not _origin_is_allowed(req, allowed_origins):
+            return refusal()
+
+        loop = asyncio.get_running_loop()
+        # Checked before the body is read, and against this project's own
+        # records rather than the filesystem, so an id that names a session
+        # belonging to some other directory is a 404 here rather than a path
+        # this route then tries to read.
+        known = await loop.run_in_executor(None, sessions.get_session_info, serve_dir, sid)
+        if known is None:
+            return {"ok": False, "error": "no session %r in this project" % sid}, 404
+
+        data, error = await read_json_body(req, allow_empty=True)
+        if error is not None:
+            return error
+        if not isinstance(data, dict):
+            return {"ok": False, "error": "body must be a JSON object"}, 400
+        fmt, include, message = _export_options(data)
+        if message is not None:
+            return {"ok": False, "error": message}, 400
+
+        try:
+            target = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    events.export_transcript, serve_dir, sid, fmt=fmt, include=include
+                ),
+            )
+        except OSError as exc:
+            # A review/ that is a symlink or a regular file, a full disk, a
+            # directory this process cannot write into. The reason reaches the
+            # human, since they are the only one who can fix any of them.
+            sys.stderr.write("error: could not export transcript: %s\n" % exc)
+            return {"ok": False, "error": "could not write the transcript: %s" % exc}, 500
+
+        written = await loop.run_in_executor(None, target.stat)
+        return {
+            "ok": True,
+            "path": "%s/%s" % (paths.REVIEW_DIRNAME, target.name),
+            "bytes": written.st_size,
+            "format": fmt,
+            "include": include,
+        }, 200

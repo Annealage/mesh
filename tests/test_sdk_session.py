@@ -31,10 +31,10 @@ from claude_agent_sdk import Transport
 
 from annealage_mesh.session import sdk as sdk_module
 from annealage_mesh.session.base import (
-    AgentStatus,
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentStatus,
     TextDelta,
     ToolResult,
     ToolUse,
@@ -101,7 +101,8 @@ def _no_real_transport(monkeypatch):
     def _forbidden(*args, **kwargs):
         raise AssertionError(
             "a real SubprocessCLITransport was constructed; the fake "
-            "Transport passed to SdkSession was not used")
+            "Transport passed to SdkSession was not used"
+        )
 
     monkeypatch.setattr(subprocess_cli, "SubprocessCLITransport", _forbidden)
 
@@ -139,14 +140,16 @@ class FakeTransport(Transport):
         if obj.get("type") == "control_request":
             subtype = obj["request"].get("subtype")
             if subtype == "initialize":
-                self._queue.put_nowait({
-                    "type": "control_response",
-                    "response": {
-                        "subtype": "success",
-                        "request_id": obj["request_id"],
-                        "response": {},
-                    },
-                })
+                self._queue.put_nowait(
+                    {
+                        "type": "control_response",
+                        "response": {
+                            "subtype": "success",
+                            "request_id": obj["request_id"],
+                            "response": {},
+                        },
+                    }
+                )
 
     async def read_messages(self):
         while True:
@@ -207,8 +210,9 @@ async def _started_session(**kwargs):
     events going to a fresh ``EventRecorder``."""
     transport = kwargs.pop("transport", None) or FakeTransport()
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd="/proj/root", session_id="mesh-sess-1",
-                         transport=transport, **kwargs)
+    session = SdkSession(
+        recorder, cwd="/proj/root", session_id="mesh-sess-1", transport=transport, **kwargs
+    )
     await session.start()
     assert session.agent_status() == AGENT_READY
     return session, transport, recorder
@@ -240,6 +244,7 @@ async def test_options_wired_into_the_real_client():
     keeps a camera move or a part list off the broker, and is silenced here
     rather than left to clutter the run.
     """
+
     class _StubBroker:
         async def ask(self, *args, **kwargs):
             raise AssertionError("not exercised by this test")
@@ -249,7 +254,8 @@ async def test_options_wired_into_the_real_client():
 
     stub_broker = _StubBroker()
     session, transport, _recorder = await _started_session(
-        broker=stub_broker, resume="prior-sdk-session-id")
+        broker=stub_broker, resume="prior-sdk-session-id"
+    )
     try:
         options = session._client.options
 
@@ -301,7 +307,9 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
     disagreed with the server's own name would leave every pre-allowed
     name matching nothing and every one of those tools prompting.
     ``MeshTools`` owns that mapping; this asserts nothing rewrites it on the
-    way through, and that the tool count is the sixteen M6 ships."""
+    way through, and that every tool the registry classifies reaches the
+    session, counted by hand so that adding one without deciding its grade
+    fails here as well as in ``tests/test_tools.py``."""
     from annealage_mesh.tools.registry import MeshTools
 
     class _StubBus:
@@ -311,14 +319,13 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
             raise AssertionError("not exercised by this test")
 
     mesh_tools = MeshTools(_StubBus(), "/proj/root")
-    session, _transport, _recorder = await _started_session(
-        mcp_servers=mesh_tools.mcp_servers)
+    session, _transport, _recorder = await _started_session(mcp_servers=mesh_tools.mcp_servers)
     try:
         servers = session._client.options.mcp_servers
         assert list(servers) == ["mesh"]
         assert servers["mesh"]["type"] == "sdk"
         assert servers["mesh"]["name"] == "mesh"
-        assert len(mesh_tools.tools) == 16
+        assert len(mesh_tools.tools) == 17
     finally:
         await session.close()
 
@@ -342,8 +349,7 @@ async def test_the_tripwire_is_installed_as_a_pre_tool_use_hook_matching_every_t
     applied before ``can_use_tool``, and the sandbox waves some bash through
     without consulting it at all, so a control bound to either would miss
     exactly the calls that matter."""
-    session, _transport, _recorder = await _started_session(
-        trusted_config_digest="accepted-digest")
+    session, _transport, _recorder = await _started_session(trusted_config_digest="accepted-digest")
     try:
         hooks = session._client.options.hooks
         assert list(hooks) == ["PreToolUse"]
@@ -362,8 +368,9 @@ async def test_the_tripwire_says_nothing_while_the_config_is_unchanged(tmp_path)
     from annealage_mesh.session import workspace_trust as wt
 
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
-                         trusted_config_digest=wt.config_digest(tmp_path))
+    session = SdkSession(
+        recorder, cwd=tmp_path, session_id="s", trusted_config_digest=wt.config_digest(tmp_path)
+    )
     result = await session._guard_config({"tool_name": "Bash"}, "tu_1", None)
     assert result == {}
     assert recorder.all == []
@@ -374,11 +381,11 @@ async def test_the_tripwire_denies_every_tool_once_the_config_changes(tmp_path):
     from annealage_mesh.session import workspace_trust as wt
 
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
-                         trusted_config_digest=wt.config_digest(tmp_path))
+    session = SdkSession(
+        recorder, cwd=tmp_path, session_id="s", trusted_config_digest=wt.config_digest(tmp_path)
+    )
     (tmp_path / ".claude").mkdir()
-    (tmp_path / ".claude" / "settings.local.json").write_text(
-        '{"permissions":{"allow":["Bash"]}}')
+    (tmp_path / ".claude" / "settings.local.json").write_text('{"permissions":{"allow":["Bash"]}}')
 
     result = await session._guard_config({"tool_name": "Bash"}, "tu_1", None)
     output = result["hookSpecificOutput"]
@@ -400,8 +407,9 @@ async def test_the_change_is_reported_to_the_human_only_once(tmp_path):
     from annealage_mesh.session import workspace_trust as wt
 
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
-                         trusted_config_digest=wt.config_digest(tmp_path))
+    session = SdkSession(
+        recorder, cwd=tmp_path, session_id="s", trusted_config_digest=wt.config_digest(tmp_path)
+    )
     (tmp_path / ".mcp.json").write_text('{"mcpServers":{"x":{"command":"sh"}}}')
     for _ in range(3):
         result = await session._guard_config({"tool_name": "Write"}, "tu", None)
@@ -416,10 +424,10 @@ async def test_a_digest_that_cannot_be_computed_denies(tmp_path, monkeypatch):
     from annealage_mesh.session import workspace_trust as wt
 
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd=tmp_path, session_id="s",
-                         trusted_config_digest="accepted-digest")
-    monkeypatch.setattr(wt, "config_digest",
-                        lambda root: (_ for _ in ()).throw(OSError("boom")))
+    session = SdkSession(
+        recorder, cwd=tmp_path, session_id="s", trusted_config_digest="accepted-digest"
+    )
+    monkeypatch.setattr(wt, "config_digest", lambda root: (_ for _ in ()).throw(OSError("boom")))
     result = await session._guard_config({"tool_name": "Read"}, "tu_1", None)
     assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -430,15 +438,17 @@ async def test_stream_event_text_delta_becomes_one_text_delta_event():
     becomes exactly one ``TextDelta`` event with that text."""
     session, transport, recorder = await _started_session()
     try:
-        transport.push({
-            "type": "stream_event",
-            "uuid": "u1",
-            "session_id": "sdk-sess-1",
-            "event": {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "Hello there"},
-            },
-        })
+        transport.push(
+            {
+                "type": "stream_event",
+                "uuid": "u1",
+                "session_id": "sdk-sess-1",
+                "event": {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "Hello there"},
+                },
+            }
+        )
         event = await recorder.next()
         assert isinstance(event, TextDelta)
         assert event.text == "Hello there"
@@ -460,36 +470,44 @@ async def test_tool_use_and_its_result_become_tool_use_and_tool_result_events():
     """
     session, transport, recorder = await _started_session()
     try:
-        transport.push({
-            "type": "assistant",
-            "session_id": "sdk-sess-1",
-            "message": {
-                "model": "claude-x",
-                "content": [{
-                    "type": "tool_use",
-                    "id": "tu_1",
-                    "name": "mcp__mesh__capture_view",
-                    "input": {"width": 100},
-                }],
-            },
-        })
+        transport.push(
+            {
+                "type": "assistant",
+                "session_id": "sdk-sess-1",
+                "message": {
+                    "model": "claude-x",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "tu_1",
+                            "name": "mcp__mesh__capture_view",
+                            "input": {"width": 100},
+                        }
+                    ],
+                },
+            }
+        )
         tool_use = await recorder.next()
         assert isinstance(tool_use, ToolUse)
         assert tool_use.tool_use_id == "tu_1"
         assert tool_use.name == "mcp__mesh__capture_view"
         assert tool_use.input == {"width": 100}
 
-        transport.push({
-            "type": "user",
-            "message": {
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": "tu_1",
-                    "content": "captured",
-                    "is_error": False,
-                }],
-            },
-        })
+        transport.push(
+            {
+                "type": "user",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "tu_1",
+                            "content": "captured",
+                            "is_error": False,
+                        }
+                    ],
+                },
+            }
+        )
         tool_result = await recorder.next()
         assert isinstance(tool_result, ToolResult)
         assert tool_result.tool_use_id == "tu_1"
@@ -533,8 +551,7 @@ async def test_submit_turn_sends_the_turn_to_the_real_client():
         assert session.agent_status() == AGENT_READY
         sent = transport.written[-1]
         assert sent["type"] == "user"
-        assert sent["message"]["content"] == [
-            {"type": "text", "text": "please look"}]
+        assert sent["message"]["content"] == [{"type": "text", "text": "please look"}]
     finally:
         await session.close()
 
@@ -552,17 +569,19 @@ async def test_result_message_becomes_turn_end_with_its_cost():
     session, transport, recorder = await _started_session()
     try:
         session._turn = 1
-        transport.push({
-            "type": "result",
-            "subtype": "success",
-            "duration_ms": 1200,
-            "duration_api_ms": 900,
-            "is_error": False,
-            "num_turns": 1,
-            "session_id": "sdk-sess-1",
-            "stop_reason": "end_turn",
-            "total_cost_usd": 0.031,
-        })
+        transport.push(
+            {
+                "type": "result",
+                "subtype": "success",
+                "duration_ms": 1200,
+                "duration_api_ms": 900,
+                "is_error": False,
+                "num_turns": 1,
+                "session_id": "sdk-sess-1",
+                "stop_reason": "end_turn",
+                "total_cost_usd": 0.031,
+            }
+        )
         end = await recorder.next()
         assert isinstance(end, TurnEnd)
         assert end.turn == 1
@@ -581,16 +600,17 @@ def test_sandbox_status_missing_list_comes_from_the_childs_own_words(monkeypatch
     ``_note_stderr`` actually parsed it out of the line the child wrote.
     """
     monkeypatch.setattr(sdk_module, "missing_sandbox_dependencies", lambda: ())
-    session = SdkSession(lambda event: None, cwd="/proj/root",
-                         session_id="mesh-sess-1", sandbox=True)
+    session = SdkSession(
+        lambda event: None, cwd="/proj/root", session_id="mesh-sess-1", sandbox=True
+    )
 
-    assert session.sandbox_status() == SandboxStatus(
-        requested=True, active=True, missing=())
+    assert session.sandbox_status() == SandboxStatus(requested=True, active=True, missing=())
 
     session._note_stderr(
         "Sandbox disabled: sandbox is enabled but dependencies are missing: "
         "socat not installed. Commands will run WITHOUT sandboxing. "
-        "Network and filesystem restrictions will NOT be enforced.")
+        "Network and filesystem restrictions will NOT be enforced."
+    )
 
     status = session.sandbox_status()
     assert status.requested is True
@@ -605,8 +625,9 @@ async def test_connect_failure_becomes_agent_error_not_a_raised_exception():
     server has already started independently and must keep serving the
     viewer regardless of what the agent does (plan section 3.4)."""
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd="/proj/root", session_id="mesh-sess-1",
-                         transport=_FailingConnectTransport())
+    session = SdkSession(
+        recorder, cwd="/proj/root", session_id="mesh-sess-1", transport=_FailingConnectTransport()
+    )
 
     await session.start()  # must not raise
 
@@ -643,15 +664,17 @@ async def test_pump_survives_one_malformed_message():
     session, transport, recorder = await _started_session()
     try:
         transport.push({"type": "assistant", "session_id": "sdk-sess-1"})
-        transport.push({
-            "type": "stream_event",
-            "uuid": "u2",
-            "session_id": "sdk-sess-1",
-            "event": {
-                "type": "content_block_delta",
-                "delta": {"type": "text_delta", "text": "still here"},
-            },
-        })
+        transport.push(
+            {
+                "type": "stream_event",
+                "uuid": "u2",
+                "session_id": "sdk-sess-1",
+                "event": {
+                    "type": "content_block_delta",
+                    "delta": {"type": "text_delta", "text": "still here"},
+                },
+            }
+        )
         event = await recorder.next()
         assert isinstance(event, TextDelta)
         assert event.text == "still here"
@@ -667,8 +690,7 @@ async def test_becoming_ready_is_announced_so_a_hello_snapshot_is_corrected():
     answer is also the last one and a working agent reads as stuck starting up.
     """
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
-                         transport=FakeTransport())
+    session = SdkSession(recorder, cwd="/proj/root", session_id="s", transport=FakeTransport())
     await session.start()
     try:
         statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
@@ -680,8 +702,9 @@ async def test_becoming_ready_is_announced_so_a_hello_snapshot_is_corrected():
 @pytest.mark.asyncio
 async def test_a_failure_to_start_announces_unavailable():
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
-                         transport=_FailingConnectTransport())
+    session = SdkSession(
+        recorder, cwd="/proj/root", session_id="s", transport=_FailingConnectTransport()
+    )
     await session.start()
 
     statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
@@ -693,8 +716,7 @@ async def test_a_failure_to_start_announces_unavailable():
 async def test_an_unchanged_status_is_not_announced_again():
     """The pane's status line is derived state, so a repeat says nothing."""
     recorder = EventRecorder()
-    session = SdkSession(recorder, cwd="/proj/root", session_id="s",
-                         transport=FakeTransport())
+    session = SdkSession(recorder, cwd="/proj/root", session_id="s", transport=FakeTransport())
     await session.start()
     await session.close()
     await session.close()

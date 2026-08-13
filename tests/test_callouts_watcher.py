@@ -99,7 +99,8 @@ async def test_rewriting_identical_bytes_does_not_broadcast(tmp_path):
     _write_callouts(tmp_path, [{"id": 1}])  # same content, new mtime
     assert await watcher.tick(1.0) is False, (
         "a rewrite with identical content is not a change the browser needs to "
-        "hear about; watching mtime rather than content would push here")
+        "hear about; watching mtime rather than content would push here"
+    )
     assert len(registry.frames) == 1
 
 
@@ -126,7 +127,8 @@ async def test_deleting_the_file_is_itself_a_change(tmp_path):
 
     (tmp_path / paths.CALLOUTS_JSON_NAME).unlink()
     assert await watcher.tick(1.0) is True, (
-        "a deleted callouts file leaves the viewer showing pins that are gone")
+        "a deleted callouts file leaves the viewer showing pins that are gone"
+    )
     assert len(registry.frames) == 2
 
 
@@ -162,7 +164,8 @@ async def test_a_file_that_never_parses_is_announced_once_past_max_defer(tmp_pat
     path.write_text("{not json 333")
     assert await watcher.tick(11.5) is True, (
         "a file that keeps changing without ever parsing must still be "
-        "announced once the deferral bound has passed")
+        "announced once the deferral bound has passed"
+    )
     assert len(registry.frames) == 1
 
 
@@ -190,7 +193,8 @@ async def test_the_deferral_clock_resets_once_a_change_settles(tmp_path):
     path.write_text("{partial again")
     assert await watcher.tick(1.0) is False
     assert await watcher.tick(2.5) is False, (
-        "the second deferral window started at 1.0, so 2.5 is still inside it")
+        "the second deferral window started at 1.0, so 2.5 is still inside it"
+    )
     assert await watcher.tick(3.0) is True
     assert len(registry.frames) == 2
 

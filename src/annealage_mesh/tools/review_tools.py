@@ -1,4 +1,5 @@
-"""The five tools that read the human's comments and write the agent's own.
+"""The six tools that read the human's comments, write the agent's own, and
+write a record of the conversation out.
 
 Two of these are the other half of the file contract the published skill
 documents: ``mesh-comments.json`` is what the human's Submit writes and this
@@ -28,6 +29,7 @@ nothing here can merge two independent authors and it does not pretend to.
 import asyncio
 import base64
 import binascii
+import functools
 import json
 import os
 import time
@@ -35,6 +37,7 @@ import time
 from claude_agent_sdk import tool
 
 from .. import paths
+from ..session import events
 from . import fail, ok
 
 # Cap on how many callouts this tool will let the file grow to. Every one is a
@@ -123,34 +126,40 @@ def _next_callout_id(annotations):
 def _add_callout(serve_dir, entry):
     annotations = _read_annotations(serve_dir, paths.CALLOUTS_JSON_NAME)
     if annotations is None:
-        return ("%s exists but does not parse as JSON, so appending to it would "
-                "discard whatever is in it; read it and fix it first"
-                % paths.CALLOUTS_JSON_NAME)
+        return (
+            "%s exists but does not parse as JSON, so appending to it would "
+            "discard whatever is in it; read it and fix it first" % paths.CALLOUTS_JSON_NAME
+        )
     if len(annotations) >= MAX_CALLOUTS:
-        return ("there are already %d callouts, which is this tool's limit; "
-                "delete some with delete_callout before adding more"
-                % len(annotations))
+        return (
+            "there are already %d callouts, which is this tool's limit; "
+            "delete some with delete_callout before adding more" % len(annotations)
+        )
     entry = dict(entry, id=_next_callout_id(annotations))
     written = _write_callouts(serve_dir, list(annotations) + [entry])
     if written is None:
-        return ("refusing to write %s: it is not a plain, single-linked file"
-                % paths.CALLOUTS_JSON_NAME)
+        return (
+            "refusing to write %s: it is not a plain, single-linked file" % paths.CALLOUTS_JSON_NAME
+        )
     return {"added": entry, "count": len(annotations) + 1, "path": str(written)}
 
 
 def _delete_callout(serve_dir, callout_id):
     annotations = _read_annotations(serve_dir, paths.CALLOUTS_JSON_NAME)
     if annotations is None:
-        return ("%s does not parse as JSON, so nothing can be deleted from it"
-                % paths.CALLOUTS_JSON_NAME)
+        return (
+            "%s does not parse as JSON, so nothing can be deleted from it"
+            % paths.CALLOUTS_JSON_NAME
+        )
     kept = [a for a in annotations if a.get("id") != callout_id]
     if len(kept) == len(annotations):
         present = ", ".join(str(a.get("id")) for a in annotations) or "none"
         return "no callout with id %d; the ids present are: %s" % (callout_id, present)
     written = _write_callouts(serve_dir, kept)
     if written is None:
-        return ("refusing to write %s: it is not a plain, single-linked file"
-                % paths.CALLOUTS_JSON_NAME)
+        return (
+            "refusing to write %s: it is not a plain, single-linked file" % paths.CALLOUTS_JSON_NAME
+        )
     return {"deleted": callout_id, "count": len(kept), "path": str(written)}
 
 
@@ -186,8 +195,15 @@ def _write_snapshot(serve_dir, wanted, suffix, data):
     raise FileExistsError(name)
 
 
-def build(bus, serve_dir):
-    """Return the five review tools, bound to ``bus`` and ``serve_dir``."""
+def build(bus, serve_dir, session_id=None):
+    """Return the six review tools, bound to ``bus`` and ``serve_dir``.
+
+    ``session_id`` names the conversation ``export_transcript`` writes out.
+    ``None`` means this tool server belongs to no session, which is what a
+    viewer-only run and a test bus both look like; the tool is still built,
+    because the classification in ``registry.py`` refuses a server whose tools
+    do not match it exactly, and refuses at call time instead.
+    """
 
     @tool(
         "list_comments",
@@ -199,16 +215,20 @@ def build(bus, serve_dir):
     )
     async def list_comments(args):
         loop = asyncio.get_running_loop()
-        record = await loop.run_in_executor(
-            None, _read_record, serve_dir, paths.COMMENTS_JSON_NAME)
+        record = await loop.run_in_executor(None, _read_record, serve_dir, paths.COMMENTS_JSON_NAME)
         annotations = record.get("annotations")
         if not isinstance(annotations, list):
-            return ok(text="the human has not submitted any pin comments yet "
-                           "(%s does not exist, or holds no annotations)"
-                           % paths.COMMENTS_JSON_NAME)
-        return ok({"submitted_at": record.get("submitted_at"),
-                   "count": len(annotations),
-                   "annotations": annotations})
+            return ok(
+                text="the human has not submitted any pin comments yet "
+                "(%s does not exist, or holds no annotations)" % paths.COMMENTS_JSON_NAME
+            )
+        return ok(
+            {
+                "submitted_at": record.get("submitted_at"),
+                "count": len(annotations),
+                "annotations": annotations,
+            }
+        )
 
     @tool(
         "list_callouts",
@@ -221,10 +241,13 @@ def build(bus, serve_dir):
     async def list_callouts(args):
         loop = asyncio.get_running_loop()
         annotations = await loop.run_in_executor(
-            None, _read_annotations, serve_dir, paths.CALLOUTS_JSON_NAME)
+            None, _read_annotations, serve_dir, paths.CALLOUTS_JSON_NAME
+        )
         if annotations is None:
-            return fail("%s exists but does not parse as JSON; read the file to "
-                        "see what is in it" % paths.CALLOUTS_JSON_NAME)
+            return fail(
+                "%s exists but does not parse as JSON; read the file to "
+                "see what is in it" % paths.CALLOUTS_JSON_NAME
+            )
         return ok({"count": len(annotations), "annotations": annotations})
 
     @tool(
@@ -237,17 +260,27 @@ def build(bus, serve_dir):
         {
             "type": "object",
             "properties": {
-                "point": {"type": "array", "items": {"type": "number"},
-                          "minItems": 3, "maxItems": 3,
-                          "description": "where the marker goes, [x, y, z] in model "
-                                         "coordinates, the same space as a pin's point"},
-                "comment": {"type": "string",
-                            "description": "what you are saying about that point"},
-                "part": {"type": "string",
-                         "description": "which part it is on, for the panel's label; "
-                                        "a rel or a label from list_models"},
-                "label": {"type": "string",
-                          "description": "the face direction, e.g. \"+Z\", if it helps"},
+                "point": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "where the marker goes, [x, y, z] in model "
+                    "coordinates, the same space as a pin's point",
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "what you are saying about that point",
+                },
+                "part": {
+                    "type": "string",
+                    "description": "which part it is on, for the panel's label; "
+                    "a rel or a label from list_models",
+                },
+                "label": {
+                    "type": "string",
+                    "description": 'the face direction, e.g. "+Z", if it helps',
+                },
             },
             "required": ["point", "comment"],
         },
@@ -255,17 +288,20 @@ def build(bus, serve_dir):
     async def add_callout(args):
         point = args.get("point")
         if not isinstance(point, (list, tuple)) or len(point) != 3:
-            raise ValueError("point must be an array of exactly three numbers, "
-                             "[x, y, z] in model coordinates")
+            raise ValueError(
+                "point must be an array of exactly three numbers, [x, y, z] in model coordinates"
+            )
         try:
             point = [float(v) for v in point]
         except (TypeError, ValueError):
-            raise ValueError("point must be three numbers, got %r" % (point,))
+            raise ValueError("point must be three numbers, got %r" % (point,)) from None
         comment = args.get("comment")
         if not isinstance(comment, str) or not comment.strip():
-            raise ValueError("comment must say what you mean about that point; "
-                             "a callout with no comment is a marker the human "
-                             "cannot interpret")
+            raise ValueError(
+                "comment must say what you mean about that point; "
+                "a callout with no comment is a marker the human "
+                "cannot interpret"
+            )
         entry = {"author": "agent", "point": point, "comment": comment.strip()}
         for key in ("part", "label"):
             value = args.get(key)
@@ -299,12 +335,17 @@ def build(bus, serve_dir):
         {
             "type": "object",
             "properties": {
-                "name": {"type": "string",
-                         "description": "base file name, without a directory or an "
-                                        "extension; a timestamp is used if omitted"},
-                "width": {"type": "integer", "minimum": 64, "maximum": 1568,
-                          "description": "pixel width to render at; leave out for the "
-                                         "canvas's own size"},
+                "name": {
+                    "type": "string",
+                    "description": "base file name, without a directory or an "
+                    "extension; a timestamp is used if omitted",
+                },
+                "width": {
+                    "type": "integer",
+                    "minimum": 64,
+                    "maximum": 1568,
+                    "description": "pixel width to render at; leave out for the canvas's own size",
+                },
             },
         },
     )
@@ -330,28 +371,111 @@ def build(bus, serve_dir):
         except (binascii.Error, ValueError):
             data = b""
         if not data:
-            return fail("the viewer returned a capture this build could not read, "
-                        "so nothing was written")
+            return fail(
+                "the viewer returned a capture this build could not read, so nothing was written"
+            )
         if len(data) > MAX_SNAPSHOT_BYTES:
-            return fail("the capture is %d bytes, over this tool's %d byte limit; "
-                        "ask for a smaller width" % (len(data), MAX_SNAPSHOT_BYTES))
+            return fail(
+                "the capture is %d bytes, over this tool's %d byte limit; "
+                "ask for a smaller width" % (len(data), MAX_SNAPSHOT_BYTES)
+            )
         suffix = _SNAPSHOT_SUFFIX.get(result.get("format"), ".png")
 
         loop = asyncio.get_running_loop()
         try:
             target = await loop.run_in_executor(
-                None, _write_snapshot, serve_dir, wanted, suffix, data)
+                None, _write_snapshot, serve_dir, wanted, suffix, data
+            )
         except FileExistsError:
-            return fail("%r and the next %d names after it are all taken in %s/; "
-                        "pass a different name"
-                        % (wanted + suffix, _SNAPSHOT_NAME_ATTEMPTS - 1,
-                           paths.IMAGES_DIRNAME))
+            return fail(
+                "%r and the next %d names after it are all taken in %s/; "
+                "pass a different name"
+                % (wanted + suffix, _SNAPSHOT_NAME_ATTEMPTS - 1, paths.IMAGES_DIRNAME)
+            )
         if target is None:
-            return fail("could not write the snapshot: %s/ must be a real "
-                        "directory (not a symlink) and the name must be a plain "
-                        "file name" % paths.IMAGES_DIRNAME)
-        return ok({"path": str(target), "bytes": len(data),
-                   "width": result.get("width"), "height": result.get("height"),
-                   "url": "/asset/%s" % target.name})
+            return fail(
+                "could not write the snapshot: %s/ must be a real "
+                "directory (not a symlink) and the name must be a plain "
+                "file name" % paths.IMAGES_DIRNAME
+            )
+        return ok(
+            {
+                "path": str(target),
+                "bytes": len(data),
+                "width": result.get("width"),
+                "height": result.get("height"),
+                "url": "/asset/%s" % target.name,
+            }
+        )
 
-    return [list_comments, list_callouts, add_callout, delete_callout, snapshot]
+    @tool(
+        "export_transcript",
+        "Write this conversation out as a file in the project's review/ "
+        "directory, so it can be committed, attached to a review or read "
+        "later without the server running. Use it when the human asks for a "
+        "record of what was decided, or before finishing a piece of work that "
+        "someone else will pick up. Choose markdown for something a person "
+        "reads and jsonl for the raw event records.",
+        {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": list(events.TRANSCRIPT_FORMATS),
+                    "description": "markdown for prose, jsonl for the raw "
+                    "event records; markdown if omitted",
+                },
+                "include": {
+                    "type": "string",
+                    "enum": list(events.TRANSCRIPT_INCLUDE),
+                    "description": "text for the conversation alone, full to "
+                    "add tool inputs, tool results, permission "
+                    "decisions and per-turn cost; text if "
+                    "omitted",
+                },
+            },
+        },
+    )
+    async def export_transcript(args):
+        if session_id is None:
+            return fail(
+                "there is no session to export: this viewer is running "
+                "without a conversation attached, so there is no "
+                "transcript. Tell the human rather than retrying."
+            )
+        fmt = args.get("format", events.TRANSCRIPT_FORMATS[0])
+        include = args.get("include", events.TRANSCRIPT_INCLUDE[0])
+        if fmt not in events.TRANSCRIPT_FORMATS:
+            raise ValueError("format must be one of: %s" % ", ".join(events.TRANSCRIPT_FORMATS))
+        if include not in events.TRANSCRIPT_INCLUDE:
+            raise ValueError("include must be one of: %s" % ", ".join(events.TRANSCRIPT_INCLUDE))
+
+        loop = asyncio.get_running_loop()
+        try:
+            target = await loop.run_in_executor(
+                None,
+                functools.partial(
+                    events.export_transcript, serve_dir, session_id, fmt=fmt, include=include
+                ),
+            )
+        except FileExistsError:
+            return fail(
+                "every name this export would use in %s/ is already "
+                "taken; the human will have to clear some out" % paths.REVIEW_DIRNAME
+            )
+        except OSError as exc:
+            return fail(
+                "could not write the transcript (%s); %s/ must be a real "
+                "directory this process can write into, so tell the human "
+                "rather than retrying" % (exc, paths.REVIEW_DIRNAME)
+            )
+        return ok(
+            {
+                "path": "%s/%s" % (paths.REVIEW_DIRNAME, target.name),
+                "bytes": target.stat().st_size,
+                "format": fmt,
+                "include": include,
+            }
+        )
+
+    return [list_comments, list_callouts, add_callout, delete_callout, snapshot, export_transcript]

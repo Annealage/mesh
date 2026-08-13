@@ -16,12 +16,12 @@ import os
 from pathlib import Path
 
 import pytest
+from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
 from annealage_mesh import paths
 from annealage_mesh.app import DEFAULT_PORT, create_app
 from annealage_mesh.http import routes_chat
-from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 
 pytestmark = pytest.mark.asyncio
 
@@ -34,9 +34,12 @@ def make_client(served_dir):
     choosing. A factory rather than a fixture returning one client, so a test
     of the no-token-configured case can ask for ``token=None`` without a
     second fixture."""
+
     def _make(*, token=TOKEN):
         return make_test_client(
-            create_app(served_dir, token=token, host=TEST_HOST, port=DEFAULT_PORT))
+            create_app(served_dir, token=token, host=TEST_HOST, port=DEFAULT_PORT)
+        )
+
     return _make
 
 
@@ -60,6 +63,7 @@ def _webp_bytes(payload=b"pixels"):
 
 
 # --- token gate --------------------------------------------------------------
+
 
 async def test_upload_refused_when_no_token_configured(make_client):
     """A server started with no token must refuse /upload, not treat an absent check as open."""
@@ -94,9 +98,11 @@ async def test_upload_accepted_with_correct_token(make_client):
 
 # --- the kind query parameter is a whitelist, never a filename ---------------
 
+
 @pytest.mark.parametrize("kind", ["../evil", ".hidden", "not-a-real-kind"])
 async def test_upload_kind_whitelist_refuses_traversal_and_dotfile_and_junk(
-        make_client, served_dir, kind):
+    make_client, served_dir, kind
+):
     """kind is checked against a fixed whitelist before any byte is read, so
     neither a traversal string nor a dotfile string ever reaches the name
     generator, and nothing is written for any of them."""
@@ -118,8 +124,7 @@ async def test_upload_refuses_an_unknown_query_parameter(make_client, served_dir
     caller.
     """
     client = make_client()
-    res = await client.post(_upload_url() + "&filename=../../etc/passwd",
-                            body=_png_bytes())
+    res = await client.post(_upload_url() + "&filename=../../etc/passwd", body=_png_bytes())
     assert res.status_code == 400
     assert res.json["ok"] is False
     assert "filename" in res.json["error"]
@@ -136,6 +141,7 @@ async def test_upload_kind_given_twice_refused(make_client):
 
 
 # --- Content-Length checks the non-buffered body now requires ----------------
+
 
 async def test_upload_with_no_content_length_refused_with_json_error(make_client, served_dir):
     """A request with no declared length is refused with a clear JSON error
@@ -155,19 +161,20 @@ async def test_upload_over_max_image_bytes_refused_with_nothing_on_disk(make_cli
     client = make_client()
     oversized = paths.MAX_IMAGE_BYTES + 1
     res = await client.post(
-        _upload_url(), headers={"Content-Length": str(oversized)}, body=_png_bytes())
+        _upload_url(), headers={"Content-Length": str(oversized)}, body=_png_bytes()
+    )
     assert res.status_code == 413
     assert not (served_dir / "images").exists()
 
 
 async def test_upload_over_its_own_image_cap_refused_by_the_route_itself(
-        make_client, served_dir, monkeypatch):
+    make_client, served_dir, monkeypatch
+):
     """/upload's own Content-Length check fires on its own terms, not only
     when it happens to coincide with microdot's process-wide ceiling."""
     monkeypatch.setattr(paths, "MAX_IMAGE_BYTES", 32)
     client = make_client()
-    res = await client.post(
-        _upload_url(), headers={"Content-Length": "1000"}, body=_png_bytes())
+    res = await client.post(_upload_url(), headers={"Content-Length": "1000"}, body=_png_bytes())
     assert res.status_code == 413
     assert res.json["ok"] is False
     assert "byte image limit" in res.json["error"]
@@ -181,8 +188,7 @@ async def test_upload_with_lying_content_length_refused_by_the_counter(make_clie
     removed rather than left behind half-written."""
     client = make_client()
     body = _png_bytes(payload=b"short")
-    res = await client.post(
-        _upload_url(), headers={"Content-Length": "1000"}, body=body)
+    res = await client.post(_upload_url(), headers={"Content-Length": "1000"}, body=body)
     assert res.status_code == 400
     assert res.json["ok"] is False
     assert "%d of 1000 bytes" % len(body) in res.json["error"]
@@ -192,13 +198,19 @@ async def test_upload_with_lying_content_length_refused_by_the_counter(make_clie
 
 # --- sniffing decides the type, never the header or the declared kind --------
 
-@pytest.mark.parametrize("make_bytes,suffix,media_type", [
-    (_png_bytes, ".png", "image/png"),
-    (_jpeg_bytes, ".jpg", "image/jpeg"),
-    (_webp_bytes, ".webp", "image/webp"),
-], ids=["png", "jpeg", "webp"])
+
+@pytest.mark.parametrize(
+    "make_bytes,suffix,media_type",
+    [
+        (_png_bytes, ".png", "image/png"),
+        (_jpeg_bytes, ".jpg", "image/jpeg"),
+        (_webp_bytes, ".webp", "image/webp"),
+    ],
+    ids=["png", "jpeg", "webp"],
+)
 async def test_upload_accepts_each_image_type_named_by_its_own_bytes(
-        make_client, served_dir, make_bytes, suffix, media_type):
+    make_client, served_dir, make_bytes, suffix, media_type
+):
     """Each of the three accepted formats is written with the extension and
     media type its own magic bytes name, is fetchable back through /asset
     with that Content-Type, carries mode 0644, and is named by the server
@@ -229,17 +241,23 @@ async def test_upload_refuses_a_body_whose_bytes_do_not_match_its_claimed_type(m
     bytes decide, so a mislabelled body is refused."""
     client = make_client()
     res = await client.post(
-        _upload_url(), headers={"Content-Type": "image/png"},
-        body=b"not actually a png, just claiming to be one")
+        _upload_url(),
+        headers={"Content-Type": "image/png"},
+        body=b"not actually a png, just claiming to be one",
+    )
     assert res.status_code == 415
     assert res.json["ok"] is False
     assert "PNG" in res.json["error"] and "JPEG" in res.json["error"]
 
 
-@pytest.mark.parametrize("body", [
-    b"<script>alert(document.cookie)</script>",
-    b"<svg onload='alert(1)'><rect/></svg>",
-], ids=["html", "svg"])
+@pytest.mark.parametrize(
+    "body",
+    [
+        b"<script>alert(document.cookie)</script>",
+        b"<svg onload='alert(1)'><rect/></svg>",
+    ],
+    ids=["html", "svg"],
+)
 async def test_upload_refuses_html_or_svg_bodies(make_client, served_dir, body):
     """A body that is actual markup, not an image mislabelled as one, is
     refused the same way, and nothing lands in images/."""
@@ -250,6 +268,7 @@ async def test_upload_refuses_html_or_svg_bodies(make_client, served_dir, body):
 
 
 # --- images/ handling ----------------------------------------------------------
+
 
 async def test_upload_creates_images_directory_when_absent(make_client, served_dir):
     """images/ is created on demand by a first upload, not required to
@@ -262,7 +281,8 @@ async def test_upload_creates_images_directory_when_absent(make_client, served_d
 
 
 async def test_upload_refuses_a_symlinked_images_directory(
-        make_client, served_dir, tmp_path_factory):
+    make_client, served_dir, tmp_path_factory
+):
     """A symlink at images/ is refused outright, matching /asset's own rule,
     rather than being written through to wherever it points."""
     real_images = tmp_path_factory.mktemp("real_images")
@@ -273,13 +293,14 @@ async def test_upload_refuses_a_symlinked_images_directory(
     assert res.status_code == 500
     assert res.json["ok"] is False
     assert res.json["error"] == (
-        "refusing to write: images/ must be a real directory this process can "
-        "create a file in")
+        "refusing to write: images/ must be a real directory this process can create a file in"
+    )
     assert list(real_images.iterdir()) == []
 
 
 async def test_upload_retries_past_a_name_collision_rather_than_overwriting(
-        make_client, served_dir, monkeypatch):
+    make_client, served_dir, monkeypatch
+):
     """A name already taken under images/ makes create_unique_image_file try
     again with a fresh random suffix, producing a second file rather than
     overwriting the first."""
@@ -322,13 +343,13 @@ class _ResetAfter:
         if index == -1:
             line, self._buffer = self._buffer, b""
             return line
-        line, self._buffer = self._buffer[:index + 2], self._buffer[index + 2:]
+        line, self._buffer = self._buffer[: index + 2], self._buffer[index + 2 :]
         return line
 
     async def read(self, n=-1):
         if self._buffer:
             chunk = self._buffer if n in (-1, None) else self._buffer[:n]
-            self._buffer = self._buffer[len(chunk):]
+            self._buffer = self._buffer[len(chunk) :]
             return chunk
         self.reads_after_head += 1
         raise self._exc
@@ -379,10 +400,12 @@ async def _dispatch_aborted_upload(app, served_dir, exc):
     and the failure under test is a body that stops arriving.
     """
     declared = 5000
-    head = (b"POST " + _upload_url().encode() + b" HTTP/1.1\r\n"
-            b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
-            b"Content-Length: " + str(declared).encode() + b"\r\n"
-            b"\r\n" + _png_bytes(b"a" * 100))
+    head = (
+        b"POST " + _upload_url().encode() + b" HTTP/1.1\r\n"
+        b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
+        b"Content-Length: " + str(declared).encode() + b"\r\n"
+        b"\r\n" + _png_bytes(b"a" * 100)
+    )
     reader = _ResetAfter(head, exc)
     req = await Request.create(app, reader, _NullWriter(), ("127.0.0.1", 1234))
     # microdot catches Exception and answers 500; a CancelledError is a
@@ -396,12 +419,16 @@ async def _dispatch_aborted_upload(app, served_dir, exc):
     return reader
 
 
-@pytest.mark.parametrize("exc", [
-    ConnectionResetError("peer went away"),
-    asyncio.CancelledError(),
-])
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ConnectionResetError("peer went away"),
+        asyncio.CancelledError(),
+    ],
+)
 async def test_an_upload_that_dies_mid_body_leaves_no_file_and_no_descriptor(
-        make_client, served_dir, exc):
+    make_client, served_dir, exc
+):
     """A tab closed, a fetch aborted or a link dropped mid-upload raises out of
     the stream read, past every refusal the route decides for itself.
 
@@ -416,8 +443,7 @@ async def test_an_upload_that_dies_mid_body_leaves_no_file_and_no_descriptor(
     reader = await _dispatch_aborted_upload(client.app, served_dir, exc)
 
     assert reader.reads_after_head == 1, "the route never reached the failing read"
-    assert list((served_dir / "images").glob("*")) == [], \
-        "a truncated image was left under images/"
+    assert list((served_dir / "images").glob("*")) == [], "a truncated image was left under images/"
     assert _open_descriptor_count() == before, "the write descriptor was not closed"
 
 
@@ -430,8 +456,9 @@ async def test_upload_refuses_a_cross_origin_post(make_client):
     other origin holding the token could write files into the human's project
     through the one route that writes at all."""
     client = make_client()
-    res = await client.post(_upload_url(), headers={"Origin": "https://evil.example"},
-                            body=_png_bytes())
+    res = await client.post(
+        _upload_url(), headers={"Origin": "https://evil.example"}, body=_png_bytes()
+    )
     assert res.status_code == 403
 
 
@@ -439,9 +466,9 @@ async def test_upload_accepts_the_viewers_own_origin(make_client, served_dir):
     """The check must admit the origin the viewer is actually served from, or
     it would refuse every real upload."""
     client = make_client()
-    res = await client.post(_upload_url(),
-                            headers={"Origin": "http://" + TEST_AUTHORITY},
-                            body=_png_bytes())
+    res = await client.post(
+        _upload_url(), headers={"Origin": "http://" + TEST_AUTHORITY}, body=_png_bytes()
+    )
     assert res.status_code == 200
     assert (served_dir / res.json["path"]).is_file()
 
@@ -450,7 +477,8 @@ async def test_upload_accepts_the_viewers_own_origin(make_client, served_dir):
 
 
 async def test_unrecognised_bytes_are_refused_without_reading_the_whole_body(
-        make_client, served_dir):
+    make_client, served_dir
+):
     """The sniffer looks at twelve bytes and no more, so a body declared at the
     cap whose head is already not an image must be refused on that head.
 
@@ -460,10 +488,12 @@ async def test_unrecognised_bytes_are_refused_without_reading_the_whole_body(
     """
     app = create_app(served_dir, token=TOKEN, host=TEST_HOST, port=DEFAULT_PORT)
     declared = paths.MAX_IMAGE_BYTES
-    head = (b"POST " + _upload_url().encode() + b" HTTP/1.1\r\n"
-            b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
-            b"Content-Length: " + str(declared).encode() + b"\r\n"
-            b"\r\n" + b"<html>not an image at all</html>")
+    head = (
+        b"POST " + _upload_url().encode() + b" HTTP/1.1\r\n"
+        b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
+        b"Content-Length: " + str(declared).encode() + b"\r\n"
+        b"\r\n" + b"<html>not an image at all</html>"
+    )
     # Raises if the route reads past the head, which is the failure under test.
     reader = _ResetAfter(head, AssertionError("read past the sniff window"))
     req = await Request.create(app, reader, _NullWriter(), ("127.0.0.1", 1234))

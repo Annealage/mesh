@@ -102,8 +102,18 @@ def host_is_allowed(req, allowed_hosts):
     return host in allowed_hosts
 
 
-def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
-                event_log, session_info, session=None, bus=None):
+def register_ws(
+    app,
+    *,
+    token,
+    allowed_origins,
+    allowed_hosts,
+    registry,
+    event_log,
+    session_info,
+    session=None,
+    bus=None,
+):
     """Register ``/ws`` on ``app``.
 
     ``token`` of ``None`` means no token was configured for this process, and
@@ -142,14 +152,18 @@ def register_ws(app, *, token, allowed_origins, allowed_hosts, registry,
             # move its resync position backwards, and replay the same events
             # again on its next reconnect. With nothing registered yet, there
             # is no second writer for those frames to race.
-            await ws.send(json.dumps(protocol.build_hello(
-                event_log.current_seq,
-                session_info["id"],
-                session_info.get("sdk_session_id"),
-                session_info["cwd"],
-                session_info.get("agent", "unavailable"),
-                paused=bus.paused if bus is not None else False,
-            )))
+            await ws.send(
+                json.dumps(
+                    protocol.build_hello(
+                        event_log.current_seq,
+                        session_info["id"],
+                        session_info.get("sdk_session_id"),
+                        session_info["cwd"],
+                        session_info.get("agent", "unavailable"),
+                        paused=bus.paused if bus is not None else False,
+                    )
+                )
+            )
             if not await _greet(ws, event_log, token):
                 return Response.already_handled
             conn = await registry.add(ws)
@@ -189,8 +203,13 @@ def _token_is_allowed(req, token):
     """
     if not token:
         return False
-    supplied_values = req.args.getlist("t") if hasattr(req.args, "getlist") \
-        else [req.args["t"]] if "t" in req.args else []
+    supplied_values = (
+        req.args.getlist("t")
+        if hasattr(req.args, "getlist")
+        else [req.args["t"]]
+        if "t" in req.args
+        else []
+    )
     if len(supplied_values) > 1:
         return False
     supplied = supplied_values[0] if supplied_values else ""
@@ -199,8 +218,10 @@ def _token_is_allowed(req, token):
 
 def _constant_time_equal(a, b):
     import hmac
-    return hmac.compare_digest(a.encode("utf-8", "surrogatepass"),
-                               b.encode("utf-8", "surrogatepass"))
+
+    return hmac.compare_digest(
+        a.encode("utf-8", "surrogatepass"), b.encode("utf-8", "surrogatepass")
+    )
 
 
 def _origin_is_allowed(req, allowed_origins):
@@ -251,8 +272,11 @@ async def _greet(ws, event_log, token):
         if frame is _CLOSED:
             return False
         if frame["type"] != "hello":
-            await ws.send(json.dumps(protocol.build_refused(
-                "expected a hello frame first, got %s" % frame["type"])))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused("expected a hello frame first, got %s" % frame["type"])
+                )
+            )
             continue
         # The token is re-checked here even though the query parameter already
         # authenticated the connection. It costs one comparison, and a hello
@@ -260,14 +284,20 @@ async def _greet(ws, event_log, token):
         # confused or hostile client either way.
         if not _constant_time_equal(frame.get("token") or "", token or ""):
             await protocol.close_with_code(
-                ws, protocol.CLOSE_VERSION_MISMATCH, "hello token does not match")
+                ws, protocol.CLOSE_VERSION_MISMATCH, "hello token does not match"
+            )
             return False
         replay = event_log.replay(frame.get("last_seq"))
         for seq, event_wire in replay.events:
             await ws.send(json.dumps(protocol.build_event(seq, event_wire)))
         if replay.truncated:
-            await ws.send(json.dumps(protocol.build_refused(
-                "history before this point is not in the live ring; page it over HTTP")))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused(
+                        "history before this point is not in the live ring; page it over HTTP"
+                    )
+                )
+            )
         return True
 
 
@@ -294,9 +324,11 @@ async def _parse(ws, raw):
         ok, result = protocol.validate_inbound(parsed)
     except protocol.ProtocolVersionMismatch as mismatch:
         await protocol.close_with_code(
-            ws, protocol.CLOSE_VERSION_MISMATCH,
+            ws,
+            protocol.CLOSE_VERSION_MISMATCH,
             "protocol version %s, this server speaks %d"
-            % (mismatch.args[0] if mismatch.args else "?", protocol.PROTOCOL_VERSION))
+            % (mismatch.args[0] if mismatch.args else "?", protocol.PROTOCOL_VERSION),
+        )
         return _CLOSED
     if not ok:
         await ws.send(json.dumps(protocol.build_refused(result)))
@@ -335,8 +367,13 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
         # newer ones. It is treated as interaction, which re-elects this viewer
         # as the primary, and refused with that said plainly.
         await registry.touch(conn)
-        await ws.send(json.dumps(protocol.build_refused(
-            "hello was already answered; reconnect to resync from a last_seq")))
+        await ws.send(
+            json.dumps(
+                protocol.build_refused(
+                    "hello was already answered; reconnect to resync from a last_seq"
+                )
+            )
+        )
         return
     if kind in ("result", "error"):
         registry.resolve_call(conn, frame)
@@ -348,9 +385,13 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
         if bus is None:
             # Viewer-only: there are no mesh tools to pause, so a control that
             # appeared to work would be worse than one that says so.
-            await ws.send(json.dumps(protocol.build_refused(
-                "this server is running viewer-only, so there are no agent tools "
-                "to pause")))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused(
+                        "this server is running viewer-only, so there are no agent tools to pause"
+                    )
+                )
+            )
             return
         await registry.touch(conn)
         if not bus.set_paused(frame["paused"]):
@@ -373,9 +414,13 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
             # browser build works against both modes, and answering with a
             # reason is what stops a chat pane waiting forever on a turn
             # nothing will ever process.
-            await ws.send(json.dumps(protocol.build_refused(
-                "this server is running viewer-only, so %s frames are not served"
-                % kind)))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused(
+                        "this server is running viewer-only, so %s frames are not served" % kind
+                    )
+                )
+            )
             return
         await registry.touch(conn)
         # Handed to the session and not awaited for a result: a turn produces
@@ -389,23 +434,33 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
                 await session.interrupt()
             else:
                 await session.decide_permission(
-                    frame["request_id"], frame["decision"], frame.get("message", ""))
+                    frame["request_id"], frame["decision"], frame.get("message", "")
+                )
         except UnknownRequest:
             # Ordinary, not a failure: two tabs held one card and this is the
             # one that lost, or the request expired before the click landed.
             # Answered with what actually happened rather than with the generic
             # message below, because "already decided" tells the human their
             # click changed nothing, which is the whole point of replying.
-            await ws.send(json.dumps(protocol.build_refused(
-                "that permission request was already decided, by another view or "
-                "by expiring; this decision was not applied")))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused(
+                        "that permission request was already decided, by another view or "
+                        "by expiring; this decision was not applied"
+                    )
+                )
+            )
         except Exception as exc:
             # A session that fails must not take the socket with it: the viewer
             # half of this page keeps working whatever the agent does.
-            sys.stderr.write("warning: session could not handle a %s frame: %r\n"
-                             % (kind, exc))
-            await ws.send(json.dumps(protocol.build_refused(
-                "the agent could not handle that %s frame; see the server output" % kind)))
+            sys.stderr.write("warning: session could not handle a %s frame: %r\n" % (kind, exc))
+            await ws.send(
+                json.dumps(
+                    protocol.build_refused(
+                        "the agent could not handle that %s frame; see the server output" % kind
+                    )
+                )
+            )
         return
     await ws.send(json.dumps(protocol.build_refused("unhandled frame type: %s" % kind)))
 
@@ -439,6 +494,13 @@ async def ping_forever(registry, interval=PING_INTERVAL):
 
 
 __all__ = [
-    "MAX_WS_MESSAGE", "PING_INTERVAL", "WebSocket", "build_registry",
-    "host_is_allowed", "ping_forever", "ping_frame", "refusal", "register_ws",
+    "MAX_WS_MESSAGE",
+    "PING_INTERVAL",
+    "WebSocket",
+    "build_registry",
+    "host_is_allowed",
+    "ping_forever",
+    "ping_frame",
+    "refusal",
+    "register_ws",
 ]

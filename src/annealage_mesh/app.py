@@ -19,7 +19,9 @@ import time
 from microdot import Microdot, Request
 
 from . import __version__, net, paths, protocol, sessions, stl
+from . import settings as settings_module
 from .http.routes_chat import register_chat_routes
+from .http.routes_settings import register_settings_routes
 from .http.routes_viewer import register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import CalloutsChanged, ModelsChanged
@@ -86,8 +88,17 @@ def configure_request_limits():
     Request.max_body_length = 0
 
 
-def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_PORT,
-               extra_origins=(), mesh_session_id=None, build_session=None):
+def create_app(
+    serve_dir,
+    *,
+    token=None,
+    host=net.DEFAULT_HOST,
+    port=DEFAULT_PORT,
+    extra_origins=(),
+    mesh_session_id=None,
+    build_session=None,
+    settings=None,
+):
     """Build a Microdot app serving ``serve_dir``, routes registered, not started.
 
     ``host`` is an address already resolved (``net.resolve_bind`` does the
@@ -106,6 +117,12 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     resumed, per plan section 3.4); it is only ever reported in the
     ``hello`` frame's ``session`` object here, never used to construct an
     agent, since no ``AgentSession`` is built by this function.
+
+    ``settings`` is the ``settings.Resolved`` this run started with, which
+    ``cli.py`` builds because only it knows which flags were given. Passing
+    ``None`` resolves the file and default layers here instead, so a caller
+    with no flags to declare, which is every test, needs to know nothing about
+    settings at all.
     """
     configure_request_limits()
     bind = net.bind_from_address(host)
@@ -125,10 +142,26 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
         # route entirely, so a refused request never reaches a handler.
         if not host_is_allowed(req, allowed_hosts):
             return refusal()
+        # Explicit: microdot treats any returned value as a short-circuit, so
+        # "carry on to the route" is expressed by returning nothing at all.
+        return None
+
+    if settings is None:
+        settings = settings_module.resolve(serve_dir)
+    app.mesh_settings = settings
 
     register_routes(app, serve_dir)
-    register_chat_routes(app, serve_dir, token=token,
-                         allowed_origins=allowed_origins)
+    register_chat_routes(app, serve_dir, token=token, allowed_origins=allowed_origins)
+    register_settings_routes(
+        app,
+        serve_dir,
+        token=token,
+        allowed_origins=allowed_origins,
+        settings=settings,
+        session_id=mesh_session_id,
+        bind=bind.address,
+        port=port,
+    )
 
     # Set after the session exists, since the broker it belongs to is built by
     # the session factory below; a list with one slot rather than a nonlocal so
@@ -146,7 +179,9 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     # conversation, so it gets a ring and nothing on disk.
     event_log = EventLog(
         str(sessions.events_path(serve_dir, mesh_session_id))
-        if mesh_session_id is not None else None)
+        if mesh_session_id is not None
+        else None
+    )
     registry = ViewerRegistry(event_log=event_log, on_presence=_presence)
     # The tool layer's view of the browser, and the holder of the human's pause
     # switch. Built here rather than by the session factory because both halves
@@ -175,18 +210,29 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
     session = None
     if build_session is not None:
         session = build_session(_event_publisher(registry, event_log), bus=bus)
-        presence_listener.append(session.on_viewer_presence)
     app.mesh_session = session
     if session is not None:
+        # Both of these read the session, so both are inside this guard: a
+        # factory returning None is the ordinary viewer-only case, not a
+        # failure, and it must leave an app that serves models with no agent
+        # attached rather than one that could not be built.
+        presence_listener.append(session.on_viewer_presence)
         # The hello frame publishes whatever the session currently knows, so a
         # tab that connects later sees a ready agent rather than the
         # connecting state this dict was built with.
         session_info["agent"] = session.agent_status()
 
-    register_ws(app, token=token, allowed_origins=allowed_origins,
-                allowed_hosts=allowed_hosts, registry=registry,
-                event_log=event_log, session_info=session_info, session=session,
-                bus=bus if session is not None else None)
+    register_ws(
+        app,
+        token=token,
+        allowed_origins=allowed_origins,
+        allowed_hosts=allowed_hosts,
+        registry=registry,
+        event_log=event_log,
+        session_info=session_info,
+        session=session,
+        bus=bus if session is not None else None,
+    )
 
     @app.errorhandler(413)
     async def _payload_too_large(req):
@@ -194,8 +240,10 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
         # is a bare text/plain response; every other failure on /submit
         # returns {"ok": false, "error": ...}, so this keeps that contract
         # for the one failure mode the route handler itself never sees.
-        return {"ok": False, "error": "request body exceeds the %d byte limit"
-                % Request.max_content_length}, 413
+        return {
+            "ok": False,
+            "error": "request body exceeds the %d byte limit" % Request.max_content_length,
+        }, 413
 
     async def _access_log(req, res):
         # One line per request to stderr, independent of stdout (used for
@@ -206,11 +254,13 @@ def create_app(serve_dir, *, token=None, host=net.DEFAULT_HOST, port=DEFAULT_POR
         # could not be parsed, in which case there is nothing to report but
         # the failure.
         if req is None:
-            sys.stderr.write("  ? - \"?\" %s -\n" % res.status_code)
+            sys.stderr.write('  ? - "?" %s -\n' % res.status_code)
             return res
         addr = req.client_addr[0] if req.client_addr else "-"
-        sys.stderr.write("  %s - \"%s %s HTTP/%s\" %s -\n" % (
-            addr, req.method, req.path, req.http_version, res.status_code))
+        sys.stderr.write(
+            '  %s - "%s %s HTTP/%s" %s -\n'
+            % (addr, req.method, req.path, req.http_version, res.status_code)
+        )
         return res
 
     async def _no_store(req, res):
@@ -255,10 +305,12 @@ def _event_publisher(registry, event_log):
     that reached the log but no live socket is recoverable, while the reverse
     is a hole in the history.
     """
+
     def publish(event):
         seq = event_log.append(event)
         frame = protocol.build_event(seq, event.to_wire())
         asyncio.ensure_future(registry.broadcast(frame))
+
     return publish
 
 
@@ -305,8 +357,14 @@ class CalloutsWatcher:
     with the times a test chooses, instead of by sleeping and hoping.
     """
 
-    def __init__(self, serve_dir, registry, event_log,
-                 interval=CALLOUTS_POLL_INTERVAL, max_defer=CALLOUTS_MAX_DEFER):
+    def __init__(
+        self,
+        serve_dir,
+        registry,
+        event_log,
+        interval=CALLOUTS_POLL_INTERVAL,
+        max_defer=CALLOUTS_MAX_DEFER,
+    ):
         self._serve_dir = serve_dir
         self._registry = registry
         self._event_log = event_log
@@ -339,8 +397,7 @@ class CalloutsWatcher:
         """
         loop = asyncio.get_running_loop()
         try:
-            digest, parses = await loop.run_in_executor(
-                None, _callouts_state, self._serve_dir)
+            digest, parses = await loop.run_in_executor(None, _callouts_state, self._serve_dir)
         except OSError:
             # A read that fails outright (a permission change, a directory
             # replacing the file) is left for the next tick rather than
@@ -484,9 +541,15 @@ class ModelsWatcher:
     settled, and a watcher that waits for quiet that never comes never fires.
     """
 
-    def __init__(self, serve_dir, registry, event_log,
-                 interval=CALLOUTS_POLL_INTERVAL, max_defer=CALLOUTS_MAX_DEFER,
-                 invalidate_index=None):
+    def __init__(
+        self,
+        serve_dir,
+        registry,
+        event_log,
+        interval=CALLOUTS_POLL_INTERVAL,
+        max_defer=CALLOUTS_MAX_DEFER,
+        invalidate_index=None,
+    ):
         self._serve_dir = serve_dir
         self._registry = registry
         self._event_log = event_log
@@ -511,7 +574,8 @@ class ModelsWatcher:
         loop = asyncio.get_running_loop()
         try:
             signature = await loop.run_in_executor(
-                None, _models_signature, self._serve_dir, self._announced)
+                None, _models_signature, self._serve_dir, self._announced
+            )
         except OSError:
             # A scan that fails outright is left for the next tick: there is
             # nothing to tell the browser to refetch, and /manifest would report
@@ -527,12 +591,11 @@ class ModelsWatcher:
 
         # Only the models that appeared or changed can be half-written; one that
         # was removed has nothing left to parse.
-        suspect = [rel for rel, stat in signature.items()
-                   if self._announced.get(rel) != stat]
+        suspect = [rel for rel, stat in signature.items() if self._announced.get(rel) != stat]
         if suspect:
             incomplete = await loop.run_in_executor(
-                None, lambda: any(not _model_is_complete(self._serve_dir, rel)
-                                  for rel in suspect))
+                None, lambda: any(not _model_is_complete(self._serve_dir, rel) for rel in suspect)
+            )
             if incomplete:
                 if self._unstable_since is None:
                     self._unstable_since = now
@@ -558,9 +621,17 @@ class ModelsWatcher:
             await self.tick(loop.time())
 
 
-async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=(),
-              build_session=None,
-              mesh_session_id=None):
+async def run(
+    serve_dir,
+    host,
+    port,
+    on_ready=None,
+    token=None,
+    extra_origins=(),
+    build_session=None,
+    mesh_session_id=None,
+    settings=None,
+):
     """Serve ``serve_dir`` on ``host``:``port`` until interrupted.
 
     Binds with ``start_serving=False`` and then explicitly awaits
@@ -589,9 +660,16 @@ async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=()
     bound it returns anyway, since microdot has no way to cut an in-flight
     request off short of dropping the connection.
     """
-    app = create_app(serve_dir, token=token, host=host, port=port,
-                     extra_origins=extra_origins, mesh_session_id=mesh_session_id,
-                     build_session=build_session)
+    app = create_app(
+        serve_dir,
+        token=token,
+        host=host,
+        port=port,
+        extra_origins=extra_origins,
+        mesh_session_id=mesh_session_id,
+        build_session=build_session,
+        settings=settings,
+    )
     # Started after the app is built and before the socket accepts anything, so
     # a browser cannot connect to a session that has not begun connecting. A
     # failure inside start() is reported as an event and never raised, so this
@@ -604,14 +682,20 @@ async def run(serve_dir, host, port, on_ready=None, token=None, extra_origins=()
     # tests that have no running loop to own a background task and no interest
     # in one; a watcher per constructed app would leak a task per test.
     watcher = asyncio.ensure_future(
-        CalloutsWatcher(serve_dir, app.mesh_registry, app.mesh_event_log).run())
+        CalloutsWatcher(serve_dir, app.mesh_registry, app.mesh_event_log).run()
+    )
     # Watched for the same reason as the callouts file, and started the same
     # way: a regenerated model is the agent changing the subject of the
     # conversation, and a viewer showing the previous geometry is showing
     # something that no longer exists.
     models_task = asyncio.ensure_future(
-        ModelsWatcher(serve_dir, app.mesh_registry, app.mesh_event_log,
-                      invalidate_index=app.mesh_invalidate_model_index).run())
+        ModelsWatcher(
+            serve_dir,
+            app.mesh_registry,
+            app.mesh_event_log,
+            invalidate_index=app.mesh_invalidate_model_index,
+        ).run()
+    )
     pinger = asyncio.ensure_future(ping_forever(app.mesh_registry))
     if on_ready is not None:
         result = on_ready()

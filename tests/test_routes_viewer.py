@@ -17,17 +17,18 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
 from annealage_mesh import paths
 from annealage_mesh.app import DEFAULT_PORT, MAX_REQUEST_BODY, create_app
-from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from annealage_mesh.http import routes_viewer
 
 pytestmark = pytest.mark.asyncio
 
 
 # --- the packaged viewer page -----------------------------------------------
+
 
 async def test_index_serves_viewer_html(client):
     # The shell promises three things and nothing about how the app itself
@@ -46,6 +47,7 @@ async def test_index_serves_viewer_html(client):
 
 
 # --- /manifest ---------------------------------------------------------------
+
 
 async def test_manifest_lists_stl(client, served_dir):
     res = await client.get("/manifest")
@@ -110,7 +112,8 @@ async def test_manifest_scan_excludes_a_dotdir_at_any_depth(client, nested_serve
 
 
 async def test_manifest_labels_stay_unique_when_a_basename_repeats_across_directories(
-        client, served_dir):
+    client, served_dir
+):
     # served_dir already has a top-level widget.stl from the base fixture;
     # adding two more under a/ and b/ forces the label algorithm to fall
     # back from the bare stem to a directory-qualified form for all three,
@@ -173,6 +176,7 @@ async def test_manifest_cap_truncates(client, served_dir, monkeypatch):
 
 
 # --- /model/<rel> --------------------------------------------------------------
+
 
 async def test_model_route_serves_exact_bytes(client, served_dir):
     res = await client.get("/model/widget.stl")
@@ -237,6 +241,7 @@ async def test_model_scan_refuses_a_hardlinked_model(client, served_dir, tmp_pat
 
 # --- /<name>.stl compatibility alias ------------------------------------------
 
+
 async def test_stl_alias_serves_exact_bytes(client, served_dir):
     res = await client.get("/widget.stl")
     assert res.status_code == 200
@@ -254,7 +259,8 @@ async def test_stl_alias_refuses_unlisted_name(client):
 
 
 async def test_stl_alias_404s_on_an_ambiguous_basename_but_rel_still_resolves_both(
-        client, served_dir):
+    client, served_dir
+):
     (served_dir / "a").mkdir()
     (served_dir / "b").mkdir()
     (served_dir / "a" / "part.stl").write_bytes(b"solid a\nendsolid a\n")
@@ -272,6 +278,7 @@ async def test_stl_alias_404s_on_an_ambiguous_basename_but_rel_still_resolves_bo
 
 
 # --- /asset/<rel> --------------------------------------------------------------
+
 
 async def test_asset_route_serves_from_images(client, served_dir):
     images = served_dir / "images"
@@ -298,6 +305,7 @@ async def test_asset_route_refuses_file_outside_images(client, served_dir):
 
 
 # --- /static/<path:rel> ---------------------------------------------------------
+
 
 async def test_static_serves_every_file_the_real_tree_contains_with_the_right_content_type(client):
     # Enumerates the package's actual static/ tree rather than a hardcoded
@@ -339,6 +347,7 @@ def static_client_factory(tmp_path, monkeypatch):
     static/ tree. Returns ``(client, static_dir)`` so a test can mutate a
     file after the client already exists, for the rescan-and-retry case.
     """
+
     def make(build):
         static_dir = tmp_path / "fake_static"
         static_dir.mkdir()
@@ -346,13 +355,14 @@ def static_client_factory(tmp_path, monkeypatch):
         monkeypatch.setattr(routes_viewer, "STATIC_DIR", static_dir)
         served = tmp_path / "served"
         served.mkdir()
-        return make_test_client(
-            create_app(served, host=TEST_HOST, port=DEFAULT_PORT)), static_dir
+        return make_test_client(create_app(served, host=TEST_HOST, port=DEFAULT_PORT)), static_dir
+
     return make
 
 
 async def test_index_404s_with_the_static_not_found_wording_when_viewer_html_is_absent(
-        static_client_factory):
+    static_client_factory,
+):
     # "/" and "/index.html" resolve viewer.html through the static index like
     # any other packaged asset, rather than through a special-cased existence
     # check, so a static/ tree missing it must fail exactly the way any other
@@ -361,6 +371,7 @@ async def test_index_404s_with_the_static_not_found_wording_when_viewer_html_is_
     def build(static_dir):
         (static_dir / "css").mkdir()
         (static_dir / "css" / "app.css").write_text("body {}")
+
     client, _ = static_client_factory(build)
 
     for path in ("/", "/index.html"):
@@ -372,17 +383,18 @@ async def test_index_404s_with_the_static_not_found_wording_when_viewer_html_is_
 async def test_static_refuses_traversal_shapes(static_client_factory):
     def build(static_dir):
         (static_dir / "viewer.html").write_text("<html></html>")
+
     client, static_dir = static_client_factory(build)
 
     secret = static_dir.parent / "secret.txt"
     secret.write_text("TOPSECRET-STATIC-TRAVERSAL")
 
     payloads = [
-        "/static/../secret.txt",                  # ".." traversal
-        "/static/%2e%2e/secret.txt",               # percent-encoded traversal
-        "/static/%252e%252e%2fsecret.txt",         # doubly percent-encoded
-        "/static/..%2fsecret.txt",                 # percent-encoded separator
-        "/static//../secret.txt",                  # doubled slash
+        "/static/../secret.txt",  # ".." traversal
+        "/static/%2e%2e/secret.txt",  # percent-encoded traversal
+        "/static/%252e%252e%2fsecret.txt",  # doubly percent-encoded
+        "/static/..%2fsecret.txt",  # percent-encoded separator
+        "/static//../secret.txt",  # doubled slash
     ]
     for path in payloads:
         res = await client.get(path)
@@ -396,6 +408,7 @@ async def test_static_refuses_a_symlink(static_client_factory):
         real = static_dir / "real.js"
         real.write_text("console.log('real');")
         (static_dir / "evil.js").symlink_to(real)
+
     client, _ = static_client_factory(build)
 
     res = await client.get("/static/evil.js")
@@ -410,6 +423,7 @@ async def test_static_refuses_a_disallowed_extension(static_client_factory):
         (static_dir / "viewer.html").write_text("<html></html>")
         (static_dir / "notes.bak").write_text("not servable")
         (static_dir / "source.map").write_text("not servable either")
+
     client, _ = static_client_factory(build)
 
     for name in ("notes.bak", "source.map"):
@@ -425,6 +439,7 @@ async def test_static_serves_a_replaced_file_after_one_rescan_and_retry(static_c
         (static_dir / "viewer.html").write_text("<html></html>")
         (static_dir / "js").mkdir()
         (static_dir / "js" / "app.js").write_text("console.log('old');")
+
     client, static_dir = static_client_factory(build)
 
     res1 = await client.get("/static/js/app.js")
@@ -447,6 +462,7 @@ async def test_static_serves_a_replaced_file_after_one_rescan_and_retry(static_c
 # reloading client can be told "unchanged" instead, while "no-cache" keeps the
 # browser asking rather than reusing a cached module without checking. Model
 # bytes deliberately get neither.
+
 
 async def test_static_get_carries_a_validator_and_asks_the_client_to_revalidate(client):
     res = await client.get("/static/js/main.js")
@@ -475,15 +491,13 @@ async def test_static_returns_304_for_a_wildcard_validator(client):
 
 async def test_static_ignores_a_validator_from_a_different_file(client):
     other = await client.get("/static/css/app.css")
-    res = await client.get("/static/js/main.js",
-                           headers={"If-None-Match": other.headers["ETag"]})
+    res = await client.get("/static/js/main.js", headers={"If-None-Match": other.headers["ETag"]})
     assert res.status_code == 200
     assert res.headers["ETag"] != other.headers["ETag"]
     assert res.body
 
 
-async def test_static_validator_changes_when_the_file_is_edited_in_place(
-        static_client_factory):
+async def test_static_validator_changes_when_the_file_is_edited_in_place(static_client_factory):
     # Same inode, new content. The validator is computed from a fresh stat of
     # the file being served, not from what the cached index scan recorded, so
     # an in-place edit must not be affirmed as unchanged.
@@ -491,6 +505,7 @@ async def test_static_validator_changes_when_the_file_is_edited_in_place(
         (static_dir / "viewer.html").write_text("<html></html>")
         (static_dir / "js").mkdir()
         (static_dir / "js" / "app.js").write_text("console.log('one');")
+
     client, static_dir = static_client_factory(build)
     target = static_dir / "js" / "app.js"
 
@@ -509,7 +524,8 @@ async def test_static_validator_changes_when_the_file_is_edited_in_place(
 
 
 async def test_static_does_not_affirm_a_validator_for_a_name_become_a_symlink(
-        static_client_factory):
+    static_client_factory,
+):
     # A conditional request must not become a way to have a symlink's target
     # validated: lstat sees the link itself, which is not a regular file, so
     # no 304 is issued and the request falls through to the open path that
@@ -517,6 +533,7 @@ async def test_static_does_not_affirm_a_validator_for_a_name_become_a_symlink(
     def build(static_dir):
         (static_dir / "viewer.html").write_text("<html></html>")
         (static_dir / "app.js").write_text("console.log('real');")
+
     client, static_dir = static_client_factory(build)
 
     first = await client.get("/static/app.js")
@@ -552,6 +569,7 @@ async def test_model_bytes_are_never_revalidatable(client):
 
 # --- /callouts, /callouts.json --------------------------------------------------
 
+
 async def test_callouts_empty_when_absent(client):
     res = await client.get("/callouts")
     assert res.status_code == 200
@@ -559,8 +577,18 @@ async def test_callouts_empty_when_absent(client):
 
 
 async def test_callouts_served_when_present(client, served_dir):
-    payload = {"annotations": [{"id": 1, "author": "agent", "part": "widget",
-                                 "label": "+Z", "point": [1, 2, 3], "comment": "hi"}]}
+    payload = {
+        "annotations": [
+            {
+                "id": 1,
+                "author": "agent",
+                "part": "widget",
+                "label": "+Z",
+                "point": [1, 2, 3],
+                "comment": "hi",
+            }
+        ]
+    }
     (served_dir / "mesh-callouts.json").write_text(json.dumps(payload))
 
     res = await client.get("/callouts")
@@ -574,9 +602,19 @@ async def test_callouts_served_when_present(client, served_dir):
 
 # --- POST /submit --------------------------------------------------------------
 
+
 async def test_submit_writes_comments(client, served_dir):
-    pins = [{"id": 1, "part": "widget", "label": "+X", "point": [1.0, 2.0, 3.0],
-             "normal": [1.0, 0.0, 0.0], "faceIndex": 4, "comment": "looks thin here"}]
+    pins = [
+        {
+            "id": 1,
+            "part": "widget",
+            "label": "+X",
+            "point": [1.0, 2.0, 3.0],
+            "normal": [1.0, 0.0, 0.0],
+            "faceIndex": 4,
+            "comment": "looks thin here",
+        }
+    ]
 
     res = await client.post("/submit", body=pins)
     assert res.status_code == 200
@@ -612,6 +650,7 @@ async def test_submit_non_array_400(client):
 # --- disclosure hole closed: nothing but manifest-listed models and -----------
 # --- images/-scoped assets is reachable, from any route, by any path shape ---
 
+
 async def test_secret_text_file_not_reachable_by_any_route(client, served_dir):
     (served_dir / "secret.txt").write_text("do not leak")
 
@@ -641,11 +680,11 @@ async def test_model_route_immune_to_traversal_shapes(client, served_dir):
     sibling_secret.write_bytes(b"solid leak\nendsolid leak\n")
 
     payloads = [
-        "/model/../sibling-secret.stl",           # ".." traversal
-        "/model/%2e%2e%2fsibling-secret.stl",     # URL-encoded traversal
-        "/model//../sibling-secret.stl",          # doubled slash
-        "/model/..\\sibling-secret.stl",          # backslash
-        "/model//" + str(sibling_secret),          # absolute path
+        "/model/../sibling-secret.stl",  # ".." traversal
+        "/model/%2e%2e%2fsibling-secret.stl",  # URL-encoded traversal
+        "/model//../sibling-secret.stl",  # doubled slash
+        "/model/..\\sibling-secret.stl",  # backslash
+        "/model//" + str(sibling_secret),  # absolute path
     ]
     for path in payloads:
         res = await client.get(path)
@@ -663,10 +702,10 @@ async def test_asset_route_refuses_every_traversal_shape(client, served_dir):
     (served_dir / "secret.txt").write_text("do not leak")
 
     payloads = [
-        "/asset/../secret.txt",                 # ".." traversal
-        "/asset/%2e%2e/secret.txt",             # URL-encoded traversal
-        "/asset//../secret.txt",                # doubled slash
-        "/asset/..\\secret.txt",                # backslash
+        "/asset/../secret.txt",  # ".." traversal
+        "/asset/%2e%2e/secret.txt",  # URL-encoded traversal
+        "/asset//../secret.txt",  # doubled slash
+        "/asset/..\\secret.txt",  # backslash
         "/asset//" + str(served_dir / "secret.txt"),  # absolute path
     ]
     for path in payloads:
@@ -675,7 +714,9 @@ async def test_asset_route_refuses_every_traversal_shape(client, served_dir):
         assert b"do not leak" not in (res.body or b"")
 
 
-async def test_stl_alias_and_manifest_exclude_symlink_outside_directory(client, served_dir, tmp_path_factory):
+async def test_stl_alias_and_manifest_exclude_symlink_outside_directory(
+    client, served_dir, tmp_path_factory
+):
     outside_dir = tmp_path_factory.mktemp("outside")
     outside_secret = outside_dir / "outside-secret.stl"
     outside_secret.write_bytes(b"solid outside\nendsolid outside\n")
@@ -707,6 +748,7 @@ async def test_asset_route_refuses_symlink_outside_directory(client, served_dir,
 
 # --- HEAD parity with GET ------------------------------------------------------
 
+
 async def test_head_matches_get_for_manifest(client):
     get_res = await client.get("/manifest")
     head_res = await client.request("HEAD", "/manifest")
@@ -727,6 +769,7 @@ async def test_head_matches_get_for_model_file(client, served_dir):
 
 
 # --- case-insensitive .stl alias -----------------------------------------------
+
 
 async def test_stl_alias_matches_uppercase_extension(client, served_dir):
     (served_dir / "WIDGET.STL").write_bytes(b"solid upper\nendsolid upper\n")
@@ -750,6 +793,7 @@ async def test_stl_alias_matches_mixed_case_extension(client, served_dir):
 
 # --- every manifest entry is fetchable ----------------------------------------
 
+
 async def test_every_manifest_entry_is_fetchable_by_its_rel(client, served_dir):
     # The manifest is the viewer's only source of what to fetch, so every
     # entry it lists must answer at /model/<rel>. rel is the one field the
@@ -771,6 +815,7 @@ async def test_every_manifest_entry_is_fetchable_by_its_rel(client, served_dir):
 
 
 # --- symlink exclusion beyond the containment check -----------------------------
+
 
 async def test_symlink_into_dotdir_target_excluded_despite_stl_looking_name(client, served_dir):
     git_dir = served_dir / ".git"
@@ -804,6 +849,7 @@ async def test_symlink_to_non_model_target_excluded_despite_stl_looking_name(cli
 
 # --- percent-decoded model and asset paths --------------------------------------
 
+
 async def test_model_route_decodes_space_and_non_ascii_filenames(client, served_dir):
     (served_dir / "my part.stl").write_bytes(b"solid sp\nendsolid sp\n")
     (served_dir / "caf\u00e9-pi\u00e8ce.stl").write_bytes(b"solid nb\nendsolid nb\n")
@@ -827,7 +873,8 @@ async def test_model_route_decodes_space_and_non_ascii_filenames(client, served_
 
 
 async def test_model_route_preserves_a_literal_plus_rather_than_decoding_it_to_a_space(
-        client, served_dir):
+    client, served_dir
+):
     # js/models.js encodes each rel segment with encodeURIComponent, which
     # escapes "+" to "%2B" precisely so it survives as a literal character;
     # the route must decode with urllib.parse.unquote (percent-escapes only)
@@ -849,8 +896,7 @@ async def test_model_route_preserves_a_literal_plus_rather_than_decoding_it_to_a
     assert res.body == b"solid plus\nendsolid plus\n"
 
 
-async def test_model_route_decodes_a_hash_encoded_per_segment_in_a_nested_rel(
-        client, served_dir):
+async def test_model_route_decodes_a_hash_encoded_per_segment_in_a_nested_rel(client, served_dir):
     # urlFor() in js/models.js encodes each path segment independently
     # (rel.split("/").map(encodeURIComponent).join("/")) rather than encoding
     # the whole rel as one string, so a "#" inside a filename is escaped to
@@ -881,6 +927,7 @@ async def test_asset_route_decodes_space_in_filename(client, served_dir):
 
 # --- images/ as a symlink -------------------------------------------------------
 
+
 async def test_asset_route_refuses_a_symlinked_images_directory(client, served_dir):
     # A symlink at images/ cannot be made safe by checking where it points,
     # because containment is satisfied by the served directory itself: an
@@ -909,7 +956,8 @@ async def test_asset_route_refuses_images_symlinked_to_the_served_dir(client, se
 
 
 async def test_asset_route_refuses_images_symlink_outside_served_dir(
-        client, served_dir, tmp_path_factory):
+    client, served_dir, tmp_path_factory
+):
     # An images/ symlink whose target is outside the served directory (a
     # shape that arrives inside a zip, a tarball or a git clone, not only
     # by an operator's own hand) must not turn every /asset request into a
@@ -924,6 +972,7 @@ async def test_asset_route_refuses_images_symlink_outside_served_dir(
 
 
 # --- /asset content-type restriction and dotdir exclusion ----------------------
+
 
 async def test_asset_route_serves_non_image_extensions_as_octet_stream(client, served_dir):
     # images/ can contain whatever a reviewed bundle happened to ship. A
@@ -959,6 +1008,7 @@ async def test_responses_carry_nosniff_header(client):
 
 # --- file_response 404s do not disclose the resolved path or existence ---------
 
+
 async def test_asset_404_does_not_disclose_resolved_path_or_existence(client, served_dir):
     # An absent name and a present-but-unreadable one must produce the same
     # template ("not found: <the name the client asked for>"), so neither
@@ -985,8 +1035,10 @@ async def test_asset_404_does_not_disclose_resolved_path_or_existence(client, se
 
 # --- model-index caching keeps the scan off the event loop and shared ----------
 
+
 async def test_manifest_and_model_fetches_share_one_scan_within_the_cache_window(
-        client, served_dir, monkeypatch):
+    client, served_dir, monkeypatch
+):
     calls = []
     real_scan = paths.scan_models
 
@@ -1004,7 +1056,8 @@ async def test_manifest_and_model_fetches_share_one_scan_within_the_cache_window
 
 
 async def test_concurrent_requests_during_a_cold_window_share_one_scan(
-        client, served_dir, monkeypatch):
+    client, served_dir, monkeypatch
+):
     # A burst of requests arriving while the cache is cold (startup, or just
     # after the TTL expires) must not each launch their own recursive walk;
     # they should all await the one scan already in flight. A short sleep
@@ -1040,16 +1093,20 @@ async def test_manifest_rescans_after_the_cache_window_expires(client, served_di
 
 # --- POST /submit body size ------------------------------------------------------
 
+
 def _pin(i):
     return {
-        "id": i, "part": "widget", "label": "+X",
-        "point": [1.0, 2.0, 3.0], "normal": [1.0, 0.0, 0.0],
-        "faceIndex": i, "comment": "pin number %d, long enough to add up" % i,
+        "id": i,
+        "part": "widget",
+        "label": "+X",
+        "point": [1.0, 2.0, 3.0],
+        "normal": [1.0, 0.0, 0.0],
+        "faceIndex": i,
+        "comment": "pin number %d, long enough to add up" % i,
     }
 
 
-async def test_submit_accepts_a_review_over_microdots_default_body_limit(
-        client, served_dir):
+async def test_submit_accepts_a_review_over_microdots_default_body_limit(client, served_dir):
     pins = [_pin(i) for i in range(200)]
     assert len(json.dumps(pins).encode("utf-8")) > 16384
 
@@ -1071,7 +1128,8 @@ async def test_submit_over_max_request_body_returns_413_with_json_error(client):
 
 
 async def test_submit_rejects_non_object_array_elements_without_destroying_prior_data(
-        client, served_dir):
+    client, served_dir
+):
     good_pins = [_pin(1), _pin(2), _pin(3)]
     res = await client.post("/submit", body=good_pins)
     assert res.status_code == 200
@@ -1087,8 +1145,10 @@ async def test_submit_rejects_non_object_array_elements_without_destroying_prior
 
 # --- fixed-name exchange files refuse a symlink, a hardlink or a FIFO ----------
 
+
 async def test_callouts_refuses_a_symlink_to_outside_the_served_directory(
-        client, served_dir, tmp_path_factory):
+    client, served_dir, tmp_path_factory
+):
     """A symlink at mesh-callouts.json pointing outside the served directory is refused, not followed."""
     outside_dir = tmp_path_factory.mktemp("outside")
     victim = outside_dir / "victim.json"
@@ -1103,7 +1163,8 @@ async def test_callouts_refuses_a_symlink_to_outside_the_served_directory(
 
 
 async def test_callouts_refuses_a_hardlink_to_outside_the_served_directory(
-        client, served_dir, tmp_path_factory):
+    client, served_dir, tmp_path_factory
+):
     """A hardlink at mesh-callouts.json to a file outside the served directory is refused."""
     outside_dir = tmp_path_factory.mktemp("outside")
     victim = outside_dir / "victim.json"
@@ -1122,7 +1183,8 @@ async def test_callouts_refuses_a_hardlink_to_outside_the_served_directory(
 
 @pytest.mark.parametrize("name", [paths.COMMENTS_JSON_NAME, paths.COMMENTS_LOG_NAME])
 async def test_submit_refuses_a_symlink_at_either_comments_file(
-        client, served_dir, tmp_path_factory, name):
+    client, served_dir, tmp_path_factory, name
+):
     """POST /submit refuses to follow a symlink planted at either comments file name."""
     outside_dir = tmp_path_factory.mktemp("outside")
     victim = outside_dir / "victim.txt"
@@ -1135,8 +1197,7 @@ async def test_submit_refuses_a_symlink_at_either_comments_file(
     assert victim.read_text() == "TOPSECRET-COMMENTS-SYMLINK"
 
 
-async def test_submit_refuses_a_hardlink_at_the_comments_log(
-        client, served_dir, tmp_path_factory):
+async def test_submit_refuses_a_hardlink_at_the_comments_log(client, served_dir, tmp_path_factory):
     """POST /submit refuses to write through a hardlink planted at mesh-comments.log."""
     outside_dir = tmp_path_factory.mktemp("outside")
     victim = outside_dir / "victim.log"
@@ -1166,13 +1227,13 @@ async def test_submit_refuses_a_fifo_at_the_comments_log_without_hanging(client,
 
 # --- concurrent submissions ------------------------------------------------------
 
+
 async def test_concurrent_submissions_leave_well_formed_files_and_no_temp_droppings(
-        client, served_dir):
+    client, served_dir
+):
     """Concurrent POST /submit calls each leave one intact log line and no leftover temp file."""
     n = 12
-    results = await asyncio.gather(*[
-        client.post("/submit", body=[_pin(i)]) for i in range(n)
-    ])
+    results = await asyncio.gather(*[client.post("/submit", body=[_pin(i)]) for i in range(n)])
     assert all(res.status_code == 200 for res in results)
     assert {res.json["count"] for res in results} == {1}
 
@@ -1197,6 +1258,7 @@ async def test_submit_writes_comments_json_not_mode_0600(client, served_dir):
     assert mode != 0o600
     assert mode == routes_viewer._RECORD_FILE_MODE
 
+
 async def test_submit_refuses_a_request_that_declares_no_length(client):
     """A body read from the stream needs a length to read up to, and reading
     without one would wait on a socket that never ends.
@@ -1209,8 +1271,10 @@ async def test_submit_refuses_a_request_that_declares_no_length(client):
     """
     app = client.app
     for header in (b"", b"Content-Length: 0\r\n"):
-        head = (b"POST /submit HTTP/1.1\r\n"
-                b"Host: " + TEST_AUTHORITY.encode() + b"\r\n" + header + b"\r\n")
+        head = (
+            b"POST /submit HTTP/1.1\r\n"
+            b"Host: " + TEST_AUTHORITY.encode() + b"\r\n" + header + b"\r\n"
+        )
         reader = _NeverReads(head)
         req = await Request.create(app, reader, _NullWriter(), ("127.0.0.1", 1234))
         res = await app.dispatch_request(req)
@@ -1223,9 +1287,11 @@ async def test_submit_refuses_a_body_shorter_than_it_declared(client, served_dir
     got: a truncated JSON array is not a smaller submission, and writing one
     would replace a good record with a partial one."""
     body = b'[{"id": 1}]'
-    head = (b"POST /submit HTTP/1.1\r\n"
-            b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
-            b"Content-Length: 4000\r\n\r\n" + body)
+    head = (
+        b"POST /submit HTTP/1.1\r\n"
+        b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
+        b"Content-Length: 4000\r\n\r\n" + body
+    )
     reader = _NeverReads(head)
     req = await Request.create(client.app, reader, _NullWriter(), ("127.0.0.1", 1234))
     res = await client.app.dispatch_request(req)
@@ -1253,13 +1319,13 @@ class _NeverReads:
         if index == -1:
             line, self._buffer = self._buffer, b""
             return line
-        line, self._buffer = self._buffer[:index + 2], self._buffer[index + 2:]
+        line, self._buffer = self._buffer[: index + 2], self._buffer[index + 2 :]
         return line
 
     async def read(self, n=-1):
         if self._buffer:
             chunk = self._buffer if n in (-1, None) else self._buffer[:n]
-            self._buffer = self._buffer[len(chunk):]
+            self._buffer = self._buffer[len(chunk) :]
             return chunk
         self.reads += 1
         return b""

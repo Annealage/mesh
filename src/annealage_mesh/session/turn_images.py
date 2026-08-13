@@ -33,7 +33,6 @@ from typing import Any, Tuple
 
 from .. import paths
 
-
 # Per-turn cap on how many image_path blocks are expanded. store.js's own
 # MAX_CHAT_ATTACHMENTS is 4, so a turn built by the shipped composer never
 # reaches this; it is what still refuses a turn frame assembled by hand over
@@ -106,12 +105,14 @@ def _images_rel(path: Any) -> str:
     if not isinstance(path, str) or not path.startswith(_IMAGES_PREFIX):
         raise _ImageRejected(
             "an attachment was not an images/<name> reference and was "
-            "dropped: %s" % (_show_path(path),))
-    rel = path[len(_IMAGES_PREFIX):]
+            "dropped: %s" % (_show_path(path),)
+        )
+    rel = path[len(_IMAGES_PREFIX) :]
     if not rel or "/" in rel:
         raise _ImageRejected(
             "%s does not name a single file directly under images/ and was "
-            "dropped" % (_show_path(path),))
+            "dropped" % (_show_path(path),)
+        )
     return rel
 
 
@@ -148,18 +149,21 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
     resolved = paths.resolve_asset(serve_dir, rel)
     if resolved is None:
         raise _ImageRejected(
-            "%s does not resolve inside images/ and was dropped" % (_show_path(path),))
+            "%s does not resolve inside images/ and was dropped" % (_show_path(path),)
+        )
     target, identity = resolved
     try:
         fd = os.open(str(target), os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     except OSError as exc:
         raise _ImageRejected(
-            "%s could not be read (%s) and was dropped" % (_show_path(path), exc))
+            "%s could not be read (%s) and was dropped" % (_show_path(path), exc)
+        ) from exc
     try:
         st = os.fstat(fd)
         if (st.st_dev, st.st_ino) != identity:
             raise _ImageRejected(
-                "%s changed while it was being attached and was dropped" % (_show_path(path),))
+                "%s changed while it was being attached and was dropped" % (_show_path(path),)
+            )
         if st.st_size > paths.MAX_INLINE_IMAGE_BYTES:
             # Neither an error nor a drop. The file is on disk, is served by
             # /asset and is named to the model in this very note, so only the
@@ -170,7 +174,8 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
                 "%s is %d bytes, over the %d byte limit for an image sent "
                 "inline, so it was not attached as a picture. It is on disk at "
                 "that path and can be read with the Read tool."
-                % (_show_path(path), st.st_size, paths.MAX_INLINE_IMAGE_BYTES))
+                % (_show_path(path), st.st_size, paths.MAX_INLINE_IMAGE_BYTES)
+            )
         chunks = []
         remaining = st.st_size
         while remaining > 0:
@@ -182,14 +187,15 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
         data = b"".join(chunks)
     except OSError as exc:
         raise _ImageRejected(
-            "%s could not be read (%s) and was dropped" % (_show_path(path), exc))
+            "%s could not be read (%s) and was dropped" % (_show_path(path), exc)
+        ) from exc
     finally:
         os.close(fd)
     sniff = paths.sniff_image(data)
     if sniff is None:
         raise _ImageRejected(
-            "%s is not a recognised image (PNG, JPEG or WEBP) and was dropped"
-            % (_show_path(path),))
+            "%s is not a recognised image (PNG, JPEG or WEBP) and was dropped" % (_show_path(path),)
+        )
     media_type, _suffix = sniff
     return media_type, data
 
@@ -199,8 +205,14 @@ def _image_pair(path: str, media_type: str, data: bytes) -> list:
     text naming the path the model can hand to its own tools afterwards. See
     this section's header comment for why neither block is sent alone."""
     return [
-        {"type": "image", "source": {"type": "base64", "media_type": media_type,
-                                      "data": base64.b64encode(data).decode("ascii")}},
+        {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": media_type,
+                "data": base64.b64encode(data).decode("ascii"),
+            },
+        },
         {"type": "text", "text": "attached image: %s" % path},
     ]
 
@@ -223,9 +235,11 @@ def expand_turn_blocks(blocks: list, serve_dir: str) -> list:
     changed, since there is nothing here for this function to do.
     """
     images = [b for b in blocks if isinstance(b, dict) and b.get("type") == "image_path"]
-    texts = [b for b in blocks
-             if not (isinstance(b, dict) and b.get("type") == "image_path")
-             and not _is_blank_text(b)]
+    texts = [
+        b
+        for b in blocks
+        if not (isinstance(b, dict) and b.get("type") == "image_path") and not _is_blank_text(b)
+    ]
 
     considered = images[:MAX_TURN_IMAGES]
     overflow = images[MAX_TURN_IMAGES:]
@@ -240,21 +254,37 @@ def expand_turn_blocks(blocks: list, serve_dir: str) -> list:
             expanded.append({"type": "text", "text": str(exc)})
             continue
         if len(data) > budget:
-            expanded.append({"type": "text", "text": (
-                "%s was not attached: this turn's %d byte image budget is "
-                "already spent" % (path, MAX_TURN_IMAGE_BYTES))})
+            expanded.append(
+                {
+                    "type": "text",
+                    "text": (
+                        "%s was not attached: this turn's %d byte image budget is "
+                        "already spent" % (path, MAX_TURN_IMAGE_BYTES)
+                    ),
+                }
+            )
             continue
         budget -= len(data)
         expanded.extend(_image_pair(path, media_type, data))
 
     if overflow:
-        named = ", ".join(_show_path(b.get("path"))
-                          for b in overflow[:_PATHS_NAMED_IN_NOTE])
+        named = ", ".join(_show_path(b.get("path")) for b in overflow[:_PATHS_NAMED_IN_NOTE])
         rest = len(overflow) - min(len(overflow), _PATHS_NAMED_IN_NOTE)
-        expanded.append({"type": "text", "text": (
-            "%d more attachment(s) were dropped, over this turn's %d-attachment "
-            "limit: %s%s" % (len(overflow), MAX_TURN_IMAGES, named,
-                             ", and %d more" % rest if rest else ""))})
+        expanded.append(
+            {
+                "type": "text",
+                "text": (
+                    "%d more attachment(s) were dropped, over this turn's %d-attachment "
+                    "limit: %s%s"
+                    % (
+                        len(overflow),
+                        MAX_TURN_IMAGES,
+                        named,
+                        ", and %d more" % rest if rest else "",
+                    )
+                ),
+            }
+        )
 
     out = expanded + texts
     # An empty content array is refused by the API exactly as an empty text
@@ -276,5 +306,8 @@ def _is_blank_text(block: Any) -> bool:
     typed message as exactly that shape, and a hand-assembled ``turn`` frame
     can too, which is why the check is here rather than only in the browser.
     """
-    return (isinstance(block, dict) and block.get("type") == "text"
-            and not str(block.get("text") or "").strip())
+    return (
+        isinstance(block, dict)
+        and block.get("type") == "text"
+        and not str(block.get("text") or "").strip()
+    )
