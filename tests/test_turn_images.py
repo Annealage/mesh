@@ -1,7 +1,6 @@
-"""Tests for the ``image_path`` turn expansion in ``session/sdk.py``, the dual
-delivery plan section 2's verified fact 6 requires, driving the real
-``ClaudeSDKClient`` through a fake ``Transport`` the same way
-``tests/test_sdk_session.py`` does (fact 11).
+"""Tests for ``session/turn_images.py``, the dual delivery plan section 2's
+verified fact 6 requires, driven through ``SdkSession`` and a fake
+``Transport`` the same way ``tests/test_sdk_session.py`` does (fact 11).
 
 ``SdkSession.submit_turn`` is the one place a turn's blocks leave this
 process; every assertion here reads ``transport.written``, the JSON line the
@@ -24,7 +23,7 @@ import pytest
 from claude_agent_sdk import Transport
 
 from annealage_mesh import paths
-from annealage_mesh.session import sdk as sdk_module
+from annealage_mesh.session import turn_images
 from annealage_mesh.session.base import AGENT_READY, AgentError
 from annealage_mesh.session.sdk import SdkSession
 
@@ -143,6 +142,53 @@ def _write_image(serve_dir, name, data):
     images_dir.mkdir(exist_ok=True)
     (images_dir / name).write_bytes(data)
     return "images/%s" % name
+
+
+# --- expand_turn_blocks called directly --------------------------------------
+#
+# The rest of this file goes through SdkSession and a fake Transport, which is
+# what proves the expansion's result is actually what leaves the process. These
+# few call it straight, because the reordering and the refusals are decisions
+# about a list of dicts and need no client, no options and no transport to
+# assert; a seam that can be tested without those is the reason this code sits
+# in a module of its own. They are still written ``async def``, like every other
+# test in a file carrying this module's asyncio mark: the mark applies to every
+# test here, and on a synchronous one it does nothing except warn, so writing
+# one would leave the file half claiming something it does not mean.
+
+
+async def test_expansion_is_a_pure_function_of_blocks_and_a_directory(tmp_path):
+    rel = _write_image(tmp_path, "pic.png", _png_bytes())
+    out = turn_images.expand_turn_blocks(
+        [{"type": "text", "text": "before"}, {"type": "image_path", "path": rel}],
+        str(tmp_path))
+    assert [b["type"] for b in out] == ["image", "text", "text"]
+    assert out[1]["text"] == "attached image: %s" % rel
+    assert out[2]["text"] == "before"
+
+
+async def test_a_text_only_list_comes_back_unchanged(tmp_path):
+    blocks = [{"type": "text", "text": "no pictures here"}]
+    assert turn_images.expand_turn_blocks(blocks, str(tmp_path)) == blocks
+
+
+@pytest.mark.parametrize("path", [
+    "mesh-comments.json",
+    "/etc/passwd",
+    "images/../../etc/passwd",
+    "images/",
+    "images/sub/pic.png",
+    None,
+    12,
+])
+async def test_a_path_that_is_not_a_single_name_under_images_never_becomes_an_image(
+        tmp_path, path):
+    """Every one of these is refused on the string alone or by resolve_asset,
+    and each becomes a note rather than an image, so a caller cannot turn an
+    attachment reference into a read of something else."""
+    out = turn_images.expand_turn_blocks([{"type": "image_path", "path": path}],
+                                         str(tmp_path))
+    assert all(b["type"] == "text" for b in out), out
 
 
 # --- the pairing and its ordering (requirements 1 and 2) ---------------------
@@ -281,42 +327,13 @@ async def test_default_caps_match_their_documented_values():
     their comments justify them by.
 
     The inline cap is the one that matters most and is the least obvious: it
-    comes from what the model transport and the API accept, not from what may
-    be stored, so tying it to the upload cap (which is larger on purpose) would
+    comes from what the API accepts in one inline block, not from what may be
+    stored, so tying it to the upload cap (which is larger on purpose) would
     silently reintroduce a turn the API refuses.
     """
-    assert sdk_module.MAX_TURN_IMAGES == 4
-    assert sdk_module.MAX_TURN_IMAGE_BYTES == 2 * paths.MAX_INLINE_IMAGE_BYTES
+    assert turn_images.MAX_TURN_IMAGES == 4
+    assert turn_images.MAX_TURN_IMAGE_BYTES == 2 * paths.MAX_INLINE_IMAGE_BYTES
     assert paths.MAX_INLINE_IMAGE_BYTES < paths.MAX_IMAGE_BYTES
-
-
-async def test_the_transport_buffer_covers_a_full_turn_of_base64():
-    """The SDK transport refuses to read a line longer than its buffer, and the
-    CLI echoes each user message back whole, so the buffer has to exceed a
-    turn's own inlined bytes once base64 has inflated them by four thirds.
-
-    Under it, an ordinary attachment makes every echoed line unparseable, the
-    pump counts consecutive parse failures, and the session ends. This is
-    asserted as a relationship rather than a number so that raising either cap
-    without the other fails here rather than in a live session.
-    """
-    base64_size = sdk_module.MAX_TURN_IMAGE_BYTES * 4 // 3
-    # Twice the payload is what a real record measured, so the margin has to be
-    # more than that rather than more than the base64 size alone.
-    assert sdk_module.TRANSPORT_BUFFER_BYTES > 2 * base64_size
-    from claude_agent_sdk._internal.transport import subprocess_cli
-    assert sdk_module.TRANSPORT_BUFFER_BYTES > subprocess_cli._DEFAULT_MAX_BUFFER_SIZE
-
-
-async def test_the_session_hands_that_buffer_to_the_sdk(tmp_path):
-    """Set on the options the client is built with, since a constant nothing
-    passes to the SDK leaves the default in force."""
-    session, _transport, _recorder = await _started_session(tmp_path)
-    try:
-        options = session._build_options()
-        assert options.max_buffer_size == sdk_module.TRANSPORT_BUFFER_BYTES
-    finally:
-        await session.close()
 
 
 async def test_an_image_over_the_inline_cap_is_named_rather_than_inlined(tmp_path):
@@ -413,15 +430,15 @@ async def test_the_overflow_note_is_bounded_by_what_it_names(tmp_path):
         content = _last_turn_content(transport)
         rendered = json.dumps(content)
         assert len(rendered) < 20000, len(rendered)
-        assert "and %d more" % (400 - sdk_module.MAX_TURN_IMAGES
-                                - sdk_module._PATHS_NAMED_IN_NOTE) in rendered
+        assert "and %d more" % (400 - turn_images.MAX_TURN_IMAGES
+                                - turn_images._PATHS_NAMED_IN_NOTE) in rendered
     finally:
         await session.close()
 
 
 async def test_the_attachment_count_cap_drops_the_extras_with_one_note(tmp_path):
     rels = [_write_image(tmp_path, "img%d.png" % i, _png_bytes(str(i).encode()))
-            for i in range(sdk_module.MAX_TURN_IMAGES + 1)]
+            for i in range(turn_images.MAX_TURN_IMAGES + 1)]
     session, transport, _recorder = await _started_session(tmp_path)
     try:
         await session.submit_turn(
@@ -429,7 +446,7 @@ async def test_the_attachment_count_cap_drops_the_extras_with_one_note(tmp_path)
             + [{"type": "text", "text": "all of these"}])
         content = _last_turn_content(transport)
         image_blocks = [b for b in content if b["type"] == "image"]
-        assert len(image_blocks) == sdk_module.MAX_TURN_IMAGES
+        assert len(image_blocks) == turn_images.MAX_TURN_IMAGES
 
         # The dropped attachment is named in a trailing note, ahead of the
         # human's own text (images-group-first still holds for the note).
@@ -448,7 +465,7 @@ async def test_the_total_byte_cap_drops_an_attachment_that_would_exceed_it(
     # code path exercised (a running total checked in encounter order) does
     # not depend on the constant's real-world size, which is pinned
     # separately above.
-    monkeypatch.setattr(sdk_module, "MAX_TURN_IMAGE_BYTES", 20)
+    monkeypatch.setattr(turn_images, "MAX_TURN_IMAGE_BYTES", 20)
     rel_a = _write_image(tmp_path, "a.png", _png_bytes(b""))  # 12 bytes
     rel_b = _write_image(tmp_path, "b.png", _png_bytes(b""))  # 12 bytes
     session, transport, _recorder = await _started_session(tmp_path)

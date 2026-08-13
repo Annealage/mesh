@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 from microdot import Request
-from microdot.test_client import TestClient
 
 from annealage_mesh import paths
 from annealage_mesh.app import DEFAULT_PORT, MAX_REQUEST_BODY, create_app

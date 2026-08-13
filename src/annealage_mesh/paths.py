@@ -179,11 +179,10 @@ MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 # Cap on one image copied *into a turn* as an inline base64 block, which is a
 # different and much tighter question than what may be stored under images/.
-# Two ceilings bind it, both outside this process: the Messages API refuses an
-# inline image whose base64 payload runs past roughly 5 MB, and the agent SDK's
-# subprocess transport refuses to read a line longer than its own buffer, which
-# session/sdk.py sizes from this constant. Base64 inflates by four thirds, so
-# 3.5 MiB decoded leaves room under both for the JSON around it.
+# The ceiling that binds is outside this process: the Messages API refuses an
+# inline image whose base64 payload runs past roughly 5 MB, and refusing it
+# fails the whole request rather than that one block. Base64 inflates by four
+# thirds, so 3.5 MiB decoded leaves room under that for the JSON around it.
 #
 # A file above this is still stored, still served by /asset and still named to
 # the model in the turn's text; only the inline copy is withheld, because a

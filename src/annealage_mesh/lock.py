@@ -14,7 +14,6 @@ running instead of a bare refusal with no next step.
 
 from __future__ import annotations
 
-import dataclasses
 import errno
 import json
 import os
