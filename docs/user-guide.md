@@ -10,11 +10,15 @@ This is the full walkthrough for using Mesh to build and review a 3D-printable p
 - [Placing pins](#placing-pins)
 - [Working with the agent](#working-with-the-agent)
 - [Attaching pictures, and sketching on the view](#attaching-pictures-and-sketching-on-the-view)
+- [Settings, and where a value came from](#settings-and-where-a-value-came-from)
+- [Exporting a transcript](#exporting-a-transcript)
+- [Setting a folder up, and checking your machine](#setting-a-folder-up-and-checking-your-machine)
 - [What the agent can do to the viewer](#what-the-agent-can-do-to-the-viewer)
 - [Pausing the agent's view control](#pausing-the-agents-view-control)
 - [Approving what the agent does](#approving-what-the-agent-does)
 - [Sessions](#sessions)
 - [Reviewing from a phone](#reviewing-from-a-phone)
+- [Reaching it through tailscale serve](#reaching-it-through-tailscale-serve)
 - [Trusting a folder's Claude configuration](#trusting-a-folders-claude-configuration)
 - [Files in your directory](#files-in-your-directory)
 - [Every flag](#every-flag)
@@ -119,6 +123,47 @@ Two things worth knowing about sketching. The camera is held still while you dra
 
 A sketch is a picture, not coordinates. If you need the agent to have exact model coordinates, place a pin.
 
+## Settings, and where a value came from
+
+The gear in the topbar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
+
+Every field says where its current value came from, because there are four places it could be and knowing which one is the difference between fixing it in a second and hunting for it. Highest wins:
+
+1. A command-line flag, which applies to this run only.
+2. This project's `.mesh/config.toml`, which is committed and shared with whoever else works in the folder.
+3. Your own `settings.toml`, which lives outside the project (on Linux, `~/.config/annealage-mesh/settings.toml`) and applies to every project you open.
+4. The built-in default.
+
+Editing a field writes it to the layer that key belongs to, which is not a choice the window offers because the key already decides it. The three agent fields, model, effort and permission mode, go to the project's `.mesh/config.toml`: they are properties of the work rather than of you, and a part that needs a particular model needs it for whoever opens the folder next. Host, port, whether a browser opens and the two viewer preferences go to your own `settings.toml`, since they are properties of your machine and your habits. Anything that cannot change without a restart, which is host, port, the browser-opening and all three agent fields, says "takes effect next run" instead of pretending otherwise. There is deliberately no live rebind; moving a listening socket out from under open connections is not worth the complexity when restarting costs a second.
+
+If you save a new port, the field afterwards shows the port you saved and the note underneath tells you which one the running server is still on. Two facts, both true, neither hidden.
+
+Two things are never written to a config file, whatever you do: the per-run token, which is regenerated at every start, and `permission_mode: bypassPermissions`. The second is a deliberate refusal rather than an oversight. Persisting "never ask me again" for an agent that holds a shell turns one careless moment into a standing hole, so it is not offered in the window and is rejected with an error if it is found in either file.
+
+`annealage-mesh --settings` prints the same information in the terminal and exits, naming the file behind each value.
+
+## Exporting a transcript
+
+Nothing conversational is written to a shareable file unless you ask. The event log under `.mesh/sessions/<id>/` is what scrollback, reconnects and `-c` all read, and it stays gitignored because it churns with every token.
+
+"Export" in the chat header writes the conversation to `review/transcript-<timestamp>.md` and tells you the path. `review/` is created the first time you export and not before. Two exports in the same second do not overwrite each other.
+
+The agent has the same ability as a tool, and unlike its viewer tools this one asks first, because an exported transcript can carry whatever was said about the hardware, absolute paths and what each turn cost. Your own button asks nobody: you pressed it.
+
+## Setting a folder up, and checking your machine
+
+`annealage-mesh <dir>` sets a folder up before it starts serving, and says what it created. What it makes: `models/` and `images/`, a `.gitignore` that ignores `.mesh/` except the shareable `config.toml`, a `CLAUDE.md` stub describing the folder's contract for an agent working in it, and a git repository with one commit if git is installed and the folder is not already in one. It is idempotent, so the second run creates nothing, and it never overwrites a `CLAUDE.md` you wrote yourself.
+
+Nothing is ever committed after that first commit. A tool that quietly commits your working folder takes away your ability to stage your own work.
+
+    annealage-mesh init ./part          # set it up and stop, no server
+    annealage-mesh init ./part --no-git  # skip git entirely
+    annealage-mesh init ./part --force   # regenerate .gitignore and CLAUDE.md
+
+If git is installed but has no `user.email`, the repository is created and the commit is skipped, and it tells you that rather than inventing an identity.
+
+`annealage-mesh doctor ./part` prints what this machine has and what this project looks like: Python, the `claude` CLI's path and version and whether it came bundled with the SDK or off your `PATH`, git, whether the sandbox dependencies are present, which settings files exist, and whether a lock is held on the folder. It starts no server and takes no lock, so it is safe to run against a directory that already has one running. It is the same set of facts the Diagnostics block shows, from the same code.
+
 ## What the agent can do to the viewer
 
 The agent has tools for the viewer itself, not just for the folder, so "show me the underside of that boss" is something it can carry out rather than instruct you to do. Sixteen of them, in three grades by what a mistake would cost.
@@ -190,6 +235,19 @@ That resolves this host's tailnet address and binds only that, which is why it i
 
 You can also bind an address directly, including `0.0.0.0` for every interface. Mesh does not stop you and does not hide it behind a warning flag, but understand what changes: on a non-loopback bind the per-run token is no longer defence in depth, it is the control, and anyone who has the URL has the agent.
 
+## Reaching it through tailscale serve
+
+`--host tailscale` binds your tailnet address directly, which is the simplest way to look at a part from your phone. `tailscale serve` is the other way, and it needs one extra flag.
+
+`tailscale serve` terminates TLS itself and proxies to a local port, so the browser's `Origin` is `https://<machine>.<tailnet>.ts.net` while the server is bound to loopback and knows nothing about that name. Both the `Origin` check and the `Host` check would refuse it, correctly, because from the server's point of view it is a request from a name it never heard of.
+
+Tell it the name:
+
+    annealage-mesh ./part --origin https://your-machine.your-tailnet.ts.net &
+    tailscale serve --bg --https=443 http://127.0.0.1:8765
+
+Then open the `https://` URL, with the token fragment from the startup banner appended. `--origin` is repeatable if more than one name fronts it.
+
 ## Trusting a folder's Claude configuration
 
 A directory can carry files the `claude` CLI obeys: `.claude/settings.json`, `.claude/settings.local.json`, scripts under `.claude/hooks/`, and `.mcp.json`. Those can grant tool permissions without asking you, and they can declare hooks, which are shell commands, one kind of which runs when the session opens, before any prompt is sent. Downloading and unpacking someone else's model archive is an ordinary thing to do, so a folder is not automatically trusted.
@@ -235,12 +293,25 @@ Only `.stl` files are served, and only ones that are regular files inside the se
 | `--token TOKEN` | Use this token instead of a generated one. |
 | `--no-open` | Do not open a browser. |
 | `--model MODEL` | Model for the agent. Defaults to whatever your `claude` CLI is set to. |
+| `--effort LEVEL` | `low`, `medium`, `high`, `xhigh` or `max`. How much thinking per turn. |
 | `--permission-mode MODE` | `default`, `acceptEdits` or `plan`. `bypassPermissions` is not offered. |
-| `--no-agent` | Viewer only. No agent, no lock, several may run against one directory. |
+| `--no-agent` | Viewer only, the same thing the `view` subcommand does. |
+| `--no-git` | Do not run `git init` and do not make the scaffold commit. |
+| `--settings` | Print every setting with the layer it came from, then exit. |
 | `--trust-project-config` | Accept this directory's Claude configuration. |
 | `-c`, `--continue` | Continue the most recent session for this directory. |
 | `-r [SID]`, `--resume [SID]` | Resume `SID`; with no id, list sessions and exit. |
 | `--version` | Print the version and exit. |
+
+And the three subcommands, each taking the same `dir` positional:
+
+| Command | Meaning |
+| --- | --- |
+| `view [DIR]` | Viewer only: no agent, no scaffolding, no git, no lock. Several may run against one directory. |
+| `init [DIR]` | Scaffold plus git, then exit. Takes `--no-git` and `--force`. |
+| `doctor [DIR]` | Print what this machine has and what this project looks like, then exit. |
+
+A subcommand is only recognised as the first argument, so a directory of models called `view` is still servable as `./view`. When `CLAUDECODE` is set in the environment, which is the case in any shell Claude Code starts, the bare form flips to viewer-only and prints a note saying so, rather than starting an agent inside an agent.
 
 ## When something is wrong
 

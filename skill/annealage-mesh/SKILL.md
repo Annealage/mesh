@@ -5,20 +5,20 @@ description: Use when reviewing or iterating on a 3D-print or CAD model (STL fil
 
 # Annealage Mesh — located pin-comment review for STL models
 
-`annealage-mesh` serves a local three.js viewer over a directory of STL files. The human clicks points on the model to drop pin-comments; you (the agent) can also drop "callouts" at specific coordinates that show up as pins the human sees live, in the same viewer. Comments and callouts are exchanged as JSON files in the served directory, so no realtime channel between you and the browser is needed.
+`annealage-mesh view` serves a local three.js viewer over a directory of STL files. (The bare `annealage-mesh <dir>` form starts its own chat pane and agent session in that folder; `view` is the subcommand to use from inside a session you are already running, and the one this skill uses throughout.) The human clicks points on the model to drop pin-comments; you (the agent) can also drop "callouts" at specific coordinates that show up as pins the human sees live, in the same viewer. Comments and callouts are exchanged as JSON files in the served directory, so no realtime channel between you and the browser is needed.
 
 ## Starting the server
 
 Run it in the background against the directory holding the STL(s) you want reviewed (e.g. a `build/` output directory):
 
 ```
-uvx --from git+https://github.com/Annealage/mesh annealage-mesh <dir> --no-open &
+uvx --from git+https://github.com/Annealage/mesh annealage-mesh view <dir> --no-open &
 ```
 
 or, if the package is already installed (or once it's on PyPI, `uvx annealage-mesh <dir>`):
 
 ```
-annealage-mesh <dir> --no-open &
+annealage-mesh view <dir> --no-open &
 ```
 
 Useful flags: `--port PORT` (default 8765), `--host HOST` (default `127.0.0.1`, this machine only; pass `tailscale` to bind the host's tailnet address, or an explicit address including `0.0.0.0`), `--no-open` (skip auto-opening a browser — usually correct when launched from an agent session). Then tell the human the URL printed on startup (e.g. `http://localhost:8765/`) and what to do: switch to "Add pin" mode, click points on the model, type comments, hit Submit.

@@ -4,7 +4,7 @@ Annealage Mesh is a little web tool for building 3D-printable parts with an agen
 
 Ask for a part and the agent writes the CAD script in that folder, runs it, and the STL turns up in the viewer. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script.
 
-![Annealage Mesh: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](docs/mesh-three-pane.png)
+![Annealage Mesh: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](https://raw.githubusercontent.com/Annealage/mesh/v2.0.0/docs/mesh-three-pane.png)
 
 ## Why
 
@@ -16,13 +16,13 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 ## Install
 
-Python 3.10+, with two runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot), which is pure Python, and the Claude Agent SDK, which is how the chat pane talks to Claude Code. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
+Python 3.10+. Four runtime dependencies, and only one of them is large: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find where your settings file belongs on your OS, [tomli](https://github.com/hukkin/tomli) to read that file on Python 3.10 (3.11 and up have `tomllib` built in), and the Claude Agent SDK, which is how the chat pane talks to Claude Code. The SDK bundles the Claude Code CLI, so installing this pulls about 90 MB; the other three are pure Python and tiny. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
 
 On Linux you'll also want `bubblewrap` and `socat`:
 
     apt install bubblewrap socat
 
-That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running you an uncontained one. macOS has its own sandbox built into the OS so there's nothing to install there. If you'd rather not bother, `--no-agent` gives you the viewer on its own and needs neither.
+That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running you an uncontained one. macOS has its own sandbox built into the OS so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer on its own and needs neither.
 
 Run it straight from GitHub, nothing to install, via uv:
 
@@ -42,7 +42,15 @@ Point it at a folder:
 
     annealage-mesh ./build
 
-It starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
+It sets the folder up if it isn't already (a `models/` and `images/` directory, a `CLAUDE.md` stub, a `.gitignore`, and `git init` with one commit if git is installed), starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
+
+There are three subcommands for when you want less than all of that:
+
+    annealage-mesh view ./build     # the viewer alone: no agent, no scaffold, no git
+    annealage-mesh init ./build     # set the folder up and stop
+    annealage-mesh doctor ./build   # what's installed, what's configured, then stop
+
+If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./view` and it's read as the directory. Running inside Claude Code already? The bare form flips to viewer-only and says so, so you don't get an agent inside an agent.
 
 - Drag to orbit, scroll / pinch to zoom, right-drag or two-finger to pan.
 - Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.
@@ -53,6 +61,8 @@ It starts a local server, prints the URL with a per-run token in it, and opens y
 - Need a distance between two features? Pick any two placed pins (yours or the agent's) in the "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
 - Attach a picture to a message with the paperclip, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
 - Hit "Sketch" to draw straight on the 3D view, circle the wall that's wrong, and send that as the picture. Quicker than a pin when the shape of the problem is the point.
+- "Export" in the chat header writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask it for a record of what you decided.
+- The gear opens Settings: port, host, model, effort, and a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, the same facts `doctor` prints, which is what you want when you're looking at this on a phone with no terminal.
 
 It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan / zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
 
@@ -65,7 +75,9 @@ A few files turn up in the served folder:
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
 - `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (cyan, read-only). This is how an agent points back at the model.
 - `images/` - pictures you attached, sketches you drew, and screenshots the agent saved. Meant to be committed.
-- `.mesh/` - session transcripts, any allow-always decisions you made, and a lock file so two servers can't fight over one folder.
+- `.mesh/` - session event logs, this project's own config, any allow-always decisions you made, and a lock file so two servers can't fight over one folder. All of it gitignored except `config.toml`, which is shareable and holds no secret.
+- `review/` - transcripts you exported. Created the first time you export one, not before.
+- `CLAUDE.md` - a stub describing the folder's contract, generated once if you don't already have one. Never overwritten.
 
 ## What it'll ask you about
 
@@ -73,7 +85,7 @@ The agent's shell runs sandboxed, so a command that stays inside the project fol
 
 Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the three that leave something behind after you close the page: writing a callout, deleting one, and saving a screenshot into the folder.
 
-![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](docs/mesh-approval.png)
+![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](https://raw.githubusercontent.com/Annealage/mesh/v2.0.0/docs/mesh-approval.png)
 
 Two things worth knowing about the containment. It stops writes and network, not reads, so a sandboxed shell can still read anything your user can. And the model can't drop the sandbox for a command by asking, which it does try if you let it.
 
