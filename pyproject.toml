@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "annealage-mesh"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Build 3D-printable parts with an agent: a local 3D viewer beside a chat pane, where regenerated models appear live and feedback is pinned to exact coordinates"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -15,11 +15,10 @@ authors = [
 ]
 keywords = ["3d-printing", "stl", "review", "annotation", "three.js", "cad"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
     "Intended Audience :: Developers",
     "Intended Audience :: Manufacturing",
-    "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
     "Programming Language :: Python :: 3.10",
@@ -46,6 +45,15 @@ classifiers = [
 dependencies = [
     "microdot>=2.6,<3",
     "claude-agent-sdk>=0.2.136,<0.3",
+    # settings.py locates the one user-wide settings.toml with this rather
+    # than hand-rolling the platform's config-directory convention
+    # (XDG_CONFIG_HOME on Linux, Application Support on macOS, %APPDATA% on
+    # Windows) a second time.
+    "platformdirs>=4,<5",
+    # tomllib is the standard library's TOML reader from Python 3.11 onward.
+    # tomli is the package it was vendored from, so the two parse identically;
+    # this only backfills the gap on 3.10, which this project still supports.
+    "tomli>=2;python_version<\"3.11\"",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +72,25 @@ annealage-mesh = "annealage_mesh.cli:main"
 [project.urls]
 Homepage = "https://github.com/Annealage/mesh"
 Repository = "https://github.com/Annealage/mesh"
+
+# The version is the git tag, resolved at build time, so there is no literal to
+# keep in step with anything: `__init__.py` reads it back out of the installed
+# package's own metadata. Two consequences worth knowing. A build needs the tags
+# present, so CI checks out with fetch-depth: 0; and a build from an unpacked
+# sdist, which is what `uv build` does for the wheel, has no .git and resolves
+# the version from the sdist's PKG-INFO instead.
+[tool.hatch.version]
+source = "vcs"
+# A checkout with no tags at all, which a shallow clone or a source tarball
+# produces, would otherwise fail the build outright.
+fallback-version = "0.0.0"
+
+[tool.hatch.version.raw-options]
+# PyPI rejects a local version segment, and the default scheme appends one
+# (+g<sha>) to any commit that is not exactly a tag. A release is built on the
+# tag and so carries none either way; this makes an off-tag build uploadable
+# rather than silently unpublishable.
+local_scheme = "no-local-version"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/annealage_mesh"]
@@ -94,3 +121,58 @@ include = [
 # from an sdist missing them, would silently drop them again.
 [tool.hatch.build]
 artifacts = ["src/annealage_mesh/static/**"]
+
+# Ruff is the linter and the formatter for this project. Its F rules are
+# pyflakes, which is the check this codebase is written against; every other
+# family below is selected deliberately rather than left to whatever a future
+# ruff release decides to default to, since the default set has grown before.
+[tool.ruff]
+# The code is written to roughly 80 columns by hand; 100 is the width that keeps
+# the formatter from rewrapping prose-heavy refusal messages that are laid out
+# to be read, while still catching a genuinely runaway line.
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes: what this project already enforced
+    "E", "W", # pycodestyle, less E501: see the ignore list
+    "I",      # import order
+    "B",      # bugbear: mutable defaults, loop-variable capture, raise-from
+    "ASYNC",  # blocking calls inside async functions
+    "C4",     # comprehension rewrites
+    "RET",    # return-path simplifications
+    "PIE",    # small redundancies
+    "PERF",   # obvious O(n) mistakes in loops
+]
+# `UP` is deliberately absent. It wants 300-odd rewrites of `%` formatting into
+# f-strings and every `Optional[X]` into `X | None`; both are the house style
+# here, and a rule family that has to be half-ignored to be adopted is a rule
+# family that is not being enforced.
+ignore = [
+    # `ruff format` is the authority on line length for code, and it has already
+    # wrapped everything it can. What E501 is left reporting is prose inside
+    # docstrings that the formatter deliberately does not touch, so enforcing it
+    # would mean rewrapping paragraphs rather than fixing lines.
+    "E501",
+    # try/except/pass with a comment explaining what is being swallowed and why
+    # is this codebase's idiom for a best-effort cleanup; contextlib.suppress
+    # would move that comment away from the call it explains.
+    "SIM105",
+    # The three PERF rules that are micro-optimisation advice rather than
+    # mistake-finding, and that here would each make the code worse: two of the
+    # loops they flag mutate a dict that already exists, which no comprehension
+    # can do; the rest are guard-clause loops that read better than the
+    # comprehension equivalent; and the one try inside a loop is there precisely
+    # so that one unparseable message cannot end a conversation. PERF102, which
+    # catches iterating a dict's items when only the values are used, stays on.
+    "PERF203",
+    "PERF401",
+    "PERF403",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately open files without a context manager to hold a descriptor
+# across an assertion, and call blocking file APIs inside async tests, where
+# there is no event loop to starve but the test's own.
+"tests/*" = ["ASYNC230", "ASYNC240"]

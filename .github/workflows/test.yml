@@ -3,6 +3,9 @@ name: test
 on:
   push:
   pull_request:
+  # Called by publish.yml, so a release cannot upload an artifact built from a
+  # commit whose suite was never run.
+  workflow_call:
 
 jobs:
   test:
@@ -12,9 +15,17 @@ jobs:
       # pass, which is the whole reason for testing three of them.
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.12", "3.13"]
+        # Every version the classifiers claim. 3.10 is not a formality: it is
+        # the one leg that exercises the `tomli` backport, since `tomllib` is
+        # stdlib from 3.11 onward.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The version comes from the git tag (hatch-vcs), and the default
+          # shallow checkout fetches none, which would build every install in
+          # this job as a 0.0.0 fallback.
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
@@ -58,6 +69,19 @@ jobs:
           set -e
           test "$rc" = "2" || { echo "expected exit 2, got $rc"; exit 1; }
 
+  # Lint and formatting, as one short job rather than a step inside the matrix:
+  # the answer cannot differ per Python version, so running it four times would
+  # only slow the matrix down.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: ruff check
+        run: uvx ruff check src tests
+      - name: ruff format
+        run: uvx ruff format --check src tests
+
   # Separate from the matrix above: this needs a chromium download, which is
   # larger than every other test dependency combined, so it runs once on one
   # Python rather than three times. It is the only job that exercises the front
@@ -66,6 +90,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v5
         with:
