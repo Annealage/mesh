@@ -16,7 +16,19 @@ It's bidirectional too, which turned out to be the good bit. The agent can write
 
 ## Install
 
-Python 3.10+. Four runtime dependencies, and only one of them is large: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find where your settings file belongs on your OS, [tomli](https://github.com/hukkin/tomli) to read that file on Python 3.10 (3.11 and up have `tomllib` built in), and the Claude Agent SDK, which is how the chat pane talks to Claude Code. The SDK bundles the Claude Code CLI, so installing this pulls about 90 MB; the other three are pure Python and tiny. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
+It's on PyPI as [annealage-mesh](https://pypi.org/project/annealage-mesh/), so with [uv](https://github.com/astral-sh/uv) there's nothing to install at all:
+
+    uvx annealage-mesh ./path/to/part
+
+Or keep it around as a tool:
+
+    uv tool install annealage-mesh
+    # or
+    pipx install annealage-mesh
+
+To run the unreleased `main` instead, point uv at the repo:
+
+    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/part
 
 On Linux you'll also want `bubblewrap` and `socat`:
 
@@ -24,17 +36,7 @@ On Linux you'll also want `bubblewrap` and `socat`:
 
 That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running you an uncontained one. macOS has its own sandbox built into the OS so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer on its own and needs neither.
 
-Run it straight from GitHub, nothing to install, via uv:
-
-    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/part
-
-Or install it as a tool:
-
-    uv tool install git+https://github.com/Annealage/mesh
-    # or
-    pipx install git+https://github.com/Annealage/mesh
-
-Once it's up on PyPI that shortens to `uvx annealage-mesh ./part`.
+Python 3.10+. Four runtime dependencies, and only one of them is large: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find where your settings file belongs on your OS, [tomli](https://github.com/hukkin/tomli) to read that file on Python 3.10 (3.11 and up have `tomllib` built in), and the Claude Agent SDK, which is how the chat pane talks to Claude Code. The SDK bundles the Claude Code CLI, so installing this pulls about 90 MB; the other three are pure Python and tiny. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
 
 ## Usage
 
