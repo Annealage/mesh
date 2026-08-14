@@ -271,6 +271,8 @@ Read the files, then accept them with `--trust-project-config`. Acceptance is re
 
 The same digest is checked before every tool call, so if that configuration changes while the session is running, every subsequent call is refused and the chat pane tells you. Restart to review the change.
 
+Git configuration is part of this too, but only when it can act. A repository's `.git/config` can name commands git itself runs, an alias starting with `!` being the obvious one, and `.git/hooks/` holds scripts it runs directly; both fire the moment the agent runs an ordinary `git status`, and git runs outside the sandbox deliberately so it can work on your repository. Mesh asks about those only when the config names a command or the hooks directory holds an executable script, because nearly every folder you point it at is a git repository and asking about all of them would just teach you to say yes. An ordinary config from `git init` or `git clone` is never asked about, and neither is adding a remote later.
+
 `CLAUDE.md` is deliberately not part of this. It cannot execute, and every tool call it might provoke still faces the sandbox and your approval. Gating it would prompt about nearly every real project and teach you to accept without reading, which costs more than it buys.
 
 ## Files in your directory

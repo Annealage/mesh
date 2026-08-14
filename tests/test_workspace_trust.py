@@ -242,7 +242,7 @@ def test_agent_mode_refuses_a_directory_whose_config_was_never_accepted(
     err = capsys.readouterr().err
     assert "settings.json" in err
     assert "--trust-project-config" in err
-    assert "--no-agent" in err
+    assert "annealage-mesh view" in err
 
 
 def test_the_refusal_names_every_guarded_file_present(tmp_path, monkeypatch, capsys):
@@ -304,3 +304,179 @@ def test_a_settings_file_added_after_acceptance_asks_again(tmp_path, monkeypatch
     _settings(tmp_path, "settings.local.json")
     code, _ = _run_cli(monkeypatch, [str(tmp_path), "--no-open"])
     assert code == 2
+
+
+# ---------------------------------------------------------------------------
+# Git configuration, which is guarded only when it can execute
+# ---------------------------------------------------------------------------
+
+
+def _repo(root, config_text="", hooks=()):
+    """A directory shaped like a git repository, without running git.
+
+    Built by hand so these tests neither need git installed nor depend on which
+    version wrote the config.
+    """
+    git = root / ".git"
+    (git / "hooks").mkdir(parents=True)
+    (git / "config").write_text(config_text, encoding="utf-8")
+    for name, executable in hooks:
+        hook = git / "hooks" / name
+        hook.write_text("#!/bin/sh\necho hook\n", encoding="utf-8")
+        if executable:
+            hook.chmod(0o755)
+    return root
+
+
+ORDINARY_CONFIG = """\
+[core]
+\trepositoryformatversion = 0
+\tfilemode = true
+\tbare = false
+\tlogallrefupdates = true
+[remote "origin"]
+\turl = git@github.com:someone/part.git
+\tfetch = +refs/heads/*:refs/remotes/origin/*
+[branch "main"]
+\tremote = origin
+\tmerge = refs/heads/main
+[submodule "vendor"]
+\tpath = vendor/thing
+"""
+
+
+def test_an_ordinary_repository_is_not_guarded(tmp_path):
+    """The case that decides whether this control is usable at all. Nearly every
+    real project is a git repository, so if a config written by git init or git
+    clone were guarded, the gate would fire on almost every folder and teach the
+    human to accept without reading. Note `submodule.vendor.path` in the fixture:
+    a path, and not one that executes."""
+    _repo(tmp_path, ORDINARY_CONFIG)
+    assert wt.guarded_paths(tmp_path) == wt.GUARDED_PATHS
+    assert wt.present(tmp_path) == ()
+    assert wt.config_digest(tmp_path) == wt.EMPTY_DIGEST
+
+
+def test_a_repository_with_no_config_at_all_is_not_guarded(tmp_path):
+    (tmp_path / ".git").mkdir()
+    assert wt.present(tmp_path) == ()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        '[core]\n\tfsmonitor = "touch /tmp/pwned"\n',
+        "[core]\n\tpager = evil\n",
+        "[core]\n\thooksPath = ./nasty-hooks\n",
+        "[core]\n\tsshCommand = evil\n",
+        '[alias]\n\tst = "!touch /tmp/pwned"\n',
+        '[filter "lfs"]\n\tclean = evil\n',
+        '[diff "bin"]\n\ttextconv = evil\n',
+        '[merge "custom"]\n\tdriver = evil\n',
+        "[include]\n\tpath = ../elsewhere/config\n",
+        '[includeIf "gitdir:~/"]\n\tpath = ../elsewhere/config\n',
+        "[credential]\n\thelper = evil\n",
+        "[gpg]\n\tprogram = evil\n",
+        "[sequence]\n\teditor = evil\n",
+        "[init]\n\ttemplateDir = ./templates\n",
+        '[difftool "x"]\n\tcmd = evil\n',
+        "[uploadpack]\n\tpackObjectsHook = evil\n",
+    ],
+)
+def test_a_config_naming_a_command_is_guarded(tmp_path, config):
+    _repo(tmp_path, ORDINARY_CONFIG + config)
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path)
+    assert tmp_path / ".git" / "config" in wt.present(tmp_path)
+    assert wt.config_digest(tmp_path) != wt.EMPTY_DIGEST
+
+
+def test_the_key_check_is_case_insensitive(tmp_path):
+    """Git treats config key names case-insensitively, so a check that did not
+    would be defeated by capitalising a letter."""
+    _repo(tmp_path, "[CORE]\n\tFSMonitor = evil\n")
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path)
+
+
+def test_a_valueless_key_still_counts_as_set(tmp_path):
+    _repo(tmp_path, "[core]\n\tfsmonitor\n")
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path)
+
+
+def test_a_commented_out_command_is_not_guarded(tmp_path):
+    """Comments are not configuration. Getting this wrong would guard on the
+    documentation people leave in their own config files."""
+    _repo(tmp_path, ORDINARY_CONFIG + "# fsmonitor = something\n; pager = other\n")
+    assert wt.present(tmp_path) == ()
+
+
+def test_an_unreadable_config_is_guarded(tmp_path):
+    """A file this cannot inspect is one whose contents are unknown, and unknown
+    has to mean gated rather than waved through."""
+    _repo(tmp_path, ORDINARY_CONFIG)
+    config = tmp_path / ".git" / "config"
+    config.chmod(0o000)
+    try:
+        assert wt.git_config_executes(config) is True
+    finally:
+        config.chmod(0o644)
+
+
+def test_an_executable_hook_is_guarded(tmp_path):
+    """A clone carries no hooks, so this is the unpacked-archive case: whatever
+    the archive's author put in .git/hooks runs on the agent's next commit."""
+    _repo(tmp_path, ORDINARY_CONFIG, hooks=[("pre-commit", True)])
+    assert wt.GIT_HOOKS_REL in wt.guarded_paths(tmp_path)
+    assert tmp_path / ".git" / "hooks" in wt.present(tmp_path)
+
+
+def test_the_sample_hooks_git_ships_are_not_guarded(tmp_path):
+    """Every freshly initialised repository has these, and git ignores them by
+    name; counting them would guard every repository there is."""
+    _repo(tmp_path, ORDINARY_CONFIG, hooks=[("pre-commit.sample", True)])
+    assert wt.present(tmp_path) == ()
+
+
+def test_a_non_executable_hook_is_not_guarded(tmp_path):
+    _repo(tmp_path, ORDINARY_CONFIG, hooks=[("pre-commit", False)])
+    assert wt.present(tmp_path) == ()
+
+
+def test_adding_a_command_to_a_config_changes_the_digest(tmp_path):
+    """What the in-session tripwire rests on: a config that becomes executable
+    mid-run must not compare equal to the one that was accepted."""
+    _repo(tmp_path, ORDINARY_CONFIG)
+    before = wt.config_digest(tmp_path)
+    (tmp_path / ".git" / "config").write_text(
+        ORDINARY_CONFIG + '[alias]\n\tst = "!touch /tmp/pwned"\n', encoding="utf-8"
+    )
+    assert wt.config_digest(tmp_path) != before
+
+
+def test_ordinary_git_work_does_not_change_the_digest(tmp_path):
+    """The other half, and the reason the guard is conditional: the agent adding
+    a remote is ordinary work, and a tripwire that denied every tool call after
+    it would make the control unusable."""
+    _repo(tmp_path, ORDINARY_CONFIG)
+    before = wt.config_digest(tmp_path)
+    (tmp_path / ".git" / "config").write_text(
+        ORDINARY_CONFIG + '[remote "upstream"]\n\turl = git@example.com:other/part.git\n',
+        encoding="utf-8",
+    )
+    assert wt.config_digest(tmp_path) == before
+
+
+def test_the_refusal_explains_git_when_a_git_entry_is_listed(tmp_path):
+    _repo(tmp_path, '[alias]\n\tst = "!touch /tmp/pwned"\n')
+    message = wt.refusal_message(tmp_path, wt.present(tmp_path))
+    assert "git" in message
+    assert "outside the sandbox" in message
+    # The Claude explanation is left out when no Claude entry is listed, since a
+    # reader told about session-start hooks would go looking in the wrong file.
+    assert "session-start hook" not in message
+
+
+def test_the_refusal_explains_claude_config_when_that_is_what_is_listed(tmp_path):
+    (tmp_path / ".mcp.json").write_text("{}", encoding="utf-8")
+    message = wt.refusal_message(tmp_path, wt.present(tmp_path))
+    assert "session-start hook" in message
+    assert "core.fsmonitor" not in message
