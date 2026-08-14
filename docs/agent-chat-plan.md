@@ -579,6 +579,12 @@ The guard is therefore conditional, which is what makes it usable. Nearly every 
 
 The same conditional keeps the in-session tripwire quiet during ordinary work, which is the property that would otherwise make the control unusable: the agent adding a remote does not change the digest, while the agent adding an alias does. Both directions are asserted. `.git/hooks` is guarded only for files that are executable and not the `.sample` set git ships, since a clone carries no hooks at all and the case that matters is a repository unpacked from an archive.
 
+**A Content-Security-Policy, with `default-src 'none'` as the point of it.** Everything the viewer loads is same-origin and vendored, so the policy names each kind of fetch the page may make and refuses the rest: a source introduced later fails visibly rather than working quietly. The page's one inline script, the import map, is allowed by **hash** rather than by `'unsafe-inline'`, which would also allow whatever an injection managed to place in the markup. The hash is computed at startup from the packaged file that will actually be served, so editing the import map cannot leave a policy that blocks the page it is meant to allow, and a viewer file that cannot be read yields a policy allowing no inline script at all rather than falling back to allowing every one. The single inline `style` attribute in `viewer.html` moved into the stylesheet so `style-src` needs no exception either.
+
+`img-src` allows `data:` because the sketch overlay composites strokes over a canvas snapshot through an `Image` whose src is a data URL; `connect-src` allows the WebSocket schemes because `/ws` is the transport. `frame-ancestors 'none'` and `base-uri 'none'` are not about this page's own fetches: they stop the viewer being framed by another origin and stop injected markup relocating every relative URL on it. `Referrer-Policy: no-referrer` goes with them, since the URL carries the per-run token.
+
+What made this verifiable is that Playwright enforces CSP like any browser, so the fifty browser tests are the check that the policy does not break the viewer. Two of them failed on `unsafe-eval`, and both were the harness rather than the application: `page.wait_for_function` given a bare expression string evaluates it with `eval`, while the arrow-function form is compiled. The predicates were rewritten and the policy left alone, which is the right way round; a control weakened to suit a test harness protects nothing.
+
 ## 5. Decisions locked
 
 Do not relitigate these without a stated reason.
@@ -618,7 +624,6 @@ Do not relitigate these without a stated reason.
 ## 6. Deferred
 
 - Stroke unprojection to 3D coordinates, after M7 ships image-only sketches.
-- `Content-Security-Policy`, easier once assets are vendored.
 - Per-user authentication for the LAN case, beyond the per-run token. `tailscale serve` covers the remote case better in the meantime.
 - Closing the rest of the credential gap. The narrow refusal is built (see the record in section 4), and what it does not cover is a shell command that reaches a denied path indirectly, through a variable, a glob, an encoding, or by changing directory first. Closing that means intercepting at a layer that sees resolved paths rather than command text, which on Linux means the sandbox's own filesystem policy rather than a hook. Wanted; not attempted, because the honest partial control is worth more than a claimed complete one.
 - `--fork`, mapping to `fork_session=True`, for branching a resumed session.

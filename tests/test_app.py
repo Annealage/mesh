@@ -198,3 +198,82 @@ async def test_a_session_factory_that_returns_none_builds_a_working_app(tmp_path
     assert app.mesh_session is None
     res = await make_test_client(app).get("/manifest")
     assert res.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# The content security policy
+# ---------------------------------------------------------------------------
+
+
+async def test_every_response_carries_the_policy(tmp_path):
+    """Set as an after_request hook rather than on the one HTML route, so a
+    response added later cannot arrive without it."""
+    (tmp_path / "widget.stl").write_bytes(b"solid widget\nendsolid widget\n")
+    client = make_test_client(app_module.create_app(tmp_path, token="tok"))
+
+    for path in ("/", "/manifest", "/callouts"):
+        res = await client.get(path)
+        policy = res.headers.get("Content-Security-Policy")
+        assert policy, path
+        assert "default-src 'none'" in policy
+        assert res.headers.get("Referrer-Policy") == "no-referrer"
+
+
+async def test_the_policy_names_the_import_map_by_hash_not_by_unsafe_inline(tmp_path):
+    """The page has exactly one inline script, so it is allowed by content
+    rather than by category. 'unsafe-inline' would also allow any script an
+    injection managed to place in the markup."""
+    from annealage_mesh.http.routes_viewer import VIEWER_HTML
+
+    policy = app_module.content_security_policy(VIEWER_HTML)
+    hashes = app_module.inline_script_hashes(VIEWER_HTML)
+    assert len(hashes) == 1
+    assert hashes[0] in policy
+    assert "unsafe-inline" not in policy
+    assert "unsafe-eval" not in policy
+
+
+async def test_the_hash_is_computed_from_the_file_that_is_served(tmp_path):
+    """Computed at startup rather than written down, so editing the import map
+    cannot leave a policy that blocks the page it is meant to allow."""
+    html = tmp_path / "viewer.html"
+    html.write_text(
+        '<html><head><script type="importmap">{"imports":{}}</script></head>'
+        '<body><script type="module" src="/static/js/main.js"></script></body></html>',
+        encoding="utf-8",
+    )
+    first = app_module.inline_script_hashes(html)
+    assert len(first) == 1, "the sourced script has no body and contributes no hash"
+
+    html.write_text(
+        '<html><head><script type="importmap">{"imports":{"three":"/x.js"}}</script>'
+        "</head><body></body></html>",
+        encoding="utf-8",
+    )
+    assert app_module.inline_script_hashes(html) != first
+
+
+async def test_a_missing_viewer_yields_a_policy_that_allows_no_inline_script(tmp_path):
+    """Failing closed: a policy that could not read the page refuses its inline
+    script rather than falling back to allowing every inline script."""
+    policy = app_module.content_security_policy(tmp_path / "absent.html")
+    assert "script-src 'self'" in policy
+    assert "sha256-" not in policy
+    assert "unsafe-inline" not in policy
+
+
+async def test_the_policy_allows_what_the_viewer_actually_needs(tmp_path):
+    """Each of these is in the policy because something in the page needs it,
+    and a change that drops one would break the viewer in a way only the browser
+    suite would otherwise catch."""
+    from annealage_mesh.http.routes_viewer import VIEWER_HTML
+
+    policy = app_module.content_security_policy(VIEWER_HTML)
+    # The sketch overlay composites strokes over a canvas snapshot through an
+    # Image whose src is a data URL.
+    assert "img-src 'self' data:" in policy
+    # /ws is the transport.
+    assert "connect-src 'self' ws: wss:" in policy
+    # Nothing frames this page, and nothing rewrites its relative URLs.
+    assert "frame-ancestors 'none'" in policy
+    assert "base-uri 'none'" in policy

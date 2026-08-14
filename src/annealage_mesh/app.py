@@ -8,11 +8,13 @@ until interrupted and closes the listener before returning.
 """
 
 import asyncio
+import base64
 import hashlib
 import inspect
 import json
 import os
 import pathlib
+import re
 import sys
 import time
 
@@ -22,7 +24,7 @@ from . import __version__, net, paths, protocol, sessions, stl
 from . import settings as settings_module
 from .http.routes_chat import register_chat_routes
 from .http.routes_settings import register_settings_routes
-from .http.routes_viewer import register_routes
+from .http.routes_viewer import VIEWER_HTML, register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import CalloutsChanged, ModelsChanged
 from .session.events import EventLog
@@ -88,6 +90,53 @@ def configure_request_limits():
     Request.max_body_length = 0
 
 
+def inline_script_hashes(html_path):
+    """Base64 sha256 hashes of every inline ``<script>`` body in ``html_path``.
+
+    Computed from the packaged file at startup rather than written down as a
+    constant, so editing the import map cannot leave a policy that blocks the
+    page it is meant to allow. A file that cannot be read yields nothing, which
+    produces a policy that refuses the inline script: failing closed is right
+    here, and ``cli.py`` has already refused to start if the viewer is missing.
+    """
+    try:
+        html = html_path.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    hashes = []
+    for match in re.finditer(r"<script\b[^>]*>(.*?)</script>", html, re.DOTALL):
+        body = match.group(1)
+        if not body.strip():
+            continue
+        digest = hashlib.sha256(body.encode("utf-8")).digest()
+        hashes.append("'sha256-%s'" % base64.b64encode(digest).decode("ascii"))
+    return tuple(hashes)
+
+
+def content_security_policy(html_path):
+    """The one policy every response carries.
+
+    ``default-src 'none'`` is the point of it: every kind of fetch this page can
+    make has to be named, so a source introduced later fails visibly rather than
+    working quietly. The rest is the smallest set that lets the viewer work, and
+    each entry has a reason at its use site in ``create_app``.
+    """
+    script_src = " ".join(("'self'",) + inline_script_hashes(html_path))
+    return "; ".join(
+        (
+            "default-src 'none'",
+            "script-src %s" % script_src,
+            "style-src 'self'",
+            "img-src 'self' data:",
+            "connect-src 'self' ws: wss:",
+            "font-src 'self'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            "frame-ancestors 'none'",
+        )
+    )
+
+
 def create_app(
     serve_dir,
     *,
@@ -125,6 +174,7 @@ def create_app(
     settings at all.
     """
     configure_request_limits()
+    csp_value = content_security_policy(VIEWER_HTML)
     bind = net.bind_from_address(host)
     allowed_origins = net.allowed_origins(bind, port, extra_origins)
     allowed_hosts = net.allowed_hosts(bind, port)
@@ -263,6 +313,33 @@ def create_app(
         )
         return res
 
+    async def _security_headers(req, res):
+        # A policy rather than a default, because this origin holds an agent
+        # with a shell and serves files out of a directory whose contents came
+        # from somewhere else. `default-src 'none'` means every fetch a page can
+        # make has to be named below, so a source added later fails loudly here
+        # rather than working quietly.
+        #
+        # `script-src` carries a hash rather than 'unsafe-inline' because the
+        # page has exactly one inline script, the import map, and it is packaged
+        # rather than generated: the hash is computed at startup from the file
+        # that will actually be served, so the two cannot drift.
+        #
+        # `img-src` allows `data:` because the sketch overlay composites strokes
+        # over a canvas snapshot through an Image whose src is a data URL, and
+        # `connect-src` allows the WebSocket scheme because /ws is the transport.
+        # Everything else is same-origin. `frame-ancestors` and `base-uri` are
+        # not about this page's own fetches: they stop the viewer being framed
+        # by another origin and stop injected markup relocating every relative
+        # URL on the page.
+        if "Content-Security-Policy" not in res.headers:
+            res.headers["Content-Security-Policy"] = csp_value
+        if "Referrer-Policy" not in res.headers:
+            # The URL carries the per-run token in its fragment, which is never
+            # sent anywhere; this covers the path and query as well.
+            res.headers["Referrer-Policy"] = "no-referrer"
+        return res
+
     async def _no_store(req, res):
         # Every response here is either live data (manifest, callouts) or a
         # file that may change between requests (a model regenerated on
@@ -287,6 +364,8 @@ def create_app(
     app.after_error_request(_access_log)
     app.after_request(_no_store)
     app.after_error_request(_no_store)
+    app.after_request(_security_headers)
+    app.after_error_request(_security_headers)
 
     return app
 

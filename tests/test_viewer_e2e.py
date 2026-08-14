@@ -519,14 +519,14 @@ def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
         assert not page.is_visible("#side")
 
         page.click("#tabbar button[data-tab='review']")
-        page.wait_for_function("document.querySelector('#side').style.display !== 'none'")
+        page.wait_for_function("() => document.querySelector('#side').style.display !== 'none'")
         assert not page.is_visible("#app")
         assert page.is_visible("#side")
 
         frame_while_hidden = page.evaluate("window.mesh.renderer.info.render.frame")
 
         page.click("#tabbar button[data-tab='model']")
-        page.wait_for_function("document.querySelector('#app').style.display !== 'none'")
+        page.wait_for_function("() => document.querySelector('#app').style.display !== 'none'")
         page.wait_for_function(
             "(f) => window.mesh.renderer.info.render.frame > f", arg=frame_while_hidden
         )
@@ -559,7 +559,7 @@ def test_wide_viewport_no_tabbar_and_panel_toggle_resizes_canvas(browser, mesh_s
             page.evaluate("getComputedStyle(document.querySelector('#tabbar')).display") == "none"
         )
 
-        page.wait_for_function("window.mesh.renderer.domElement.width > 0")
+        page.wait_for_function("() => window.mesh.renderer.domElement.width > 0")
         open_width = page.evaluate("window.mesh.renderer.domElement.width")
 
         page.click("#panelBtn")
@@ -587,14 +587,14 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         _wait_both_meshes_loaded(page)
 
         page.click("#modeBtn")
-        page.wait_for_function("window.mesh.store.getState().mode === 'annotate'")
+        page.wait_for_function("() => window.mesh.store.getState().mode === 'annotate'")
 
         assert page.locator("#pins .empty").count() == 1, (
             "an empty pin list should say so, exactly once"
         )
 
         page.click("#app canvas")
-        page.wait_for_function("window.mesh.store.getState().pins.length === 1")
+        page.wait_for_function("() => window.mesh.store.getState().pins.length === 1")
 
         # The empty-state message is owned by js/pins.js alone. A second copy
         # written into viewer.html would be an element nothing removes, still
@@ -616,7 +616,7 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         )
 
         page.click("#submit")
-        page.wait_for_function("document.getElementById('toast').className === 'ok'")
+        page.wait_for_function("() => document.getElementById('toast').className === 'ok'")
 
         comments_path = mesh_server.serve_dir / "mesh-comments.json"
         deadline = time.time() + 5.0
@@ -1202,10 +1202,19 @@ def test_a_part_the_agent_generates_appears_without_a_reload(browser, chat_serve
         (server.serve_dir / "alpha.stl").write_bytes(
             _cube_stl_bytes(center=(0.0, 0.0, 0.0), half=6.0)
         )
+        # Written out rather than reusing `widest` through eval: the page is
+        # served under a Content-Security-Policy that forbids `unsafe-eval`,
+        # which is a property of the application worth keeping, so the test
+        # carries the duplication instead of the policy carrying an exception.
         page.wait_for_function(
-            "(fn) => { const f = eval(fn); const mx = f('alpha.stl');"
-            "  return mx !== null && Math.abs(mx - 6.0) < 0.001; }",
-            arg=widest,
+            """() => {
+                const m = window.mesh.meshes['alpha.stl'];
+                if (!m) return false;
+                const p = m.geometry.attributes.position.array;
+                let mx = -Infinity;
+                for (let i = 0; i < p.length; i += 3) mx = Math.max(mx, p[i]);
+                return Math.abs(mx - 6.0) < 0.001;
+            }""",
             timeout=15000,
         )
 
@@ -1436,7 +1445,7 @@ def test_interrupt_button_ends_a_turn(browser, chat_server):
 
         page.fill("#chatInput", "keep exploring the model for defects")
         page.click("#chatSend")
-        page.wait_for_function("!document.getElementById('chatInterrupt').disabled")
+        page.wait_for_function("() => !document.getElementById('chatInterrupt').disabled")
 
         page.click("#chatInterrupt")
 
