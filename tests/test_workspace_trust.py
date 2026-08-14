@@ -480,3 +480,125 @@ def test_the_refusal_explains_claude_config_when_that_is_what_is_listed(tmp_path
     message = wt.refusal_message(tmp_path, wt.present(tmp_path))
     assert "session-start hook" in message
     assert "core.fsmonitor" not in message
+
+
+# ---------------------------------------------------------------------------
+# Git config includes, which git follows and so does the digest
+# ---------------------------------------------------------------------------
+
+
+def test_a_config_whose_only_content_is_an_include_of_a_command_is_guarded(tmp_path):
+    """The indirection this closes: the including file names no command itself,
+    so a check that read only that file would wave it through while git went on
+    to read the one that does."""
+    _repo(tmp_path, "[include]\n\tpath = ../elsewhere/extra\n")
+    extra = tmp_path / "elsewhere" / "extra"
+    extra.parent.mkdir(parents=True, exist_ok=True)
+    extra.write_text('[alias]\n\tst = "!touch /tmp/pwned"\n', encoding="utf-8")
+
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path)
+
+
+def test_editing_an_included_file_changes_the_digest(tmp_path):
+    """The gap this closes. The include key alone made the config guarded, but
+    the included file's content was not part of what was accepted, so editing it
+    changed what git runs while the digest stayed equal."""
+    _repo(tmp_path, ORDINARY_CONFIG + "[include]\n\tpath = ../elsewhere/extra\n")
+    extra = tmp_path / "elsewhere" / "extra"
+    extra.parent.mkdir(parents=True, exist_ok=True)
+    extra.write_text("[core]\n\tpager = harmless\n", encoding="utf-8")
+    before = wt.config_digest(tmp_path)
+
+    extra.write_text('[core]\n\tpager = "touch /tmp/pwned"\n', encoding="utf-8")
+    assert wt.config_digest(tmp_path) != before
+
+
+def test_repointing_an_include_at_an_identical_file_changes_the_digest(tmp_path):
+    """Named by resolved path as well as content, so swapping which file is
+    included is a change even when the two hold the same bytes; what git reads
+    next time is a different file."""
+    _repo(tmp_path, ORDINARY_CONFIG + "[include]\n\tpath = ../elsewhere/one\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(parents=True, exist_ok=True)
+    body = "[core]\n\tpager = evil\n"
+    (elsewhere / "one").write_text(body, encoding="utf-8")
+    (elsewhere / "two").write_text(body, encoding="utf-8")
+    before = wt.config_digest(tmp_path)
+
+    (tmp_path / ".git" / "config").write_text(
+        ORDINARY_CONFIG + "[include]\n\tpath = ../elsewhere/two\n", encoding="utf-8"
+    )
+    assert wt.config_digest(tmp_path) != before
+
+
+def test_an_includeif_is_followed_without_evaluating_its_condition(tmp_path):
+    """Reproducing git's own predicates (gitdir, onbranch, hasconfig) against the
+    state of the moment would mean being wrong in the permissive direction
+    sometimes, which is not watching a file git reads. Watching one git ignores
+    costs only a digest that changes more often."""
+    _repo(tmp_path, '[includeIf "gitdir:/somewhere/else/"]\n\tpath = ../elsewhere/cond\n')
+    cond = tmp_path / "elsewhere" / "cond"
+    cond.parent.mkdir(parents=True, exist_ok=True)
+    cond.write_text("[core]\n\tfsmonitor = evil\n", encoding="utf-8")
+
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path)
+    chain = wt.config_chain(tmp_path / ".git" / "config")
+    assert any(part.name == "cond" for part in chain)
+
+
+def test_a_home_relative_include_is_resolved(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "extra").write_text("[core]\n\tpager = evil\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    _repo(tmp_path / "proj", "[include]\n\tpath = ~/extra\n")
+
+    assert wt.GIT_CONFIG_REL in wt.guarded_paths(tmp_path / "proj")
+
+
+def test_an_include_cycle_terminates(tmp_path):
+    """Two configs including each other, which is a shape a hostile archive can
+    ship precisely because a naive follower loops on it."""
+    _repo(tmp_path, "[include]\n\tpath = ../elsewhere/a\n")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir(parents=True, exist_ok=True)
+    (elsewhere / "a").write_text("[include]\n\tpath = b\n", encoding="utf-8")
+    (elsewhere / "b").write_text("[include]\n\tpath = a\n", encoding="utf-8")
+
+    chain = wt.config_chain(tmp_path / ".git" / "config")
+    assert len(chain) == 3
+    assert wt.config_digest(tmp_path) is not None
+
+
+def test_a_self_including_config_terminates(tmp_path):
+    _repo(tmp_path, "[include]\n\tpath = config\n")
+    assert wt.config_chain(tmp_path / ".git" / "config") == (tmp_path / ".git" / "config",)
+
+
+def test_an_include_chain_is_bounded(tmp_path):
+    """Bounded at git's own limit, so this sees what git sees: a chain longer
+    than git follows is one git refuses too."""
+    _repo(tmp_path, "[include]\n\tpath = ../chain/link0\n")
+    chain_dir = tmp_path / "chain"
+    chain_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(25):
+        (chain_dir / ("link%d" % index)).write_text(
+            "[include]\n\tpath = link%d\n" % (index + 1), encoding="utf-8"
+        )
+
+    assert len(wt.config_chain(tmp_path / ".git" / "config")) <= wt._MAX_INCLUDE_DEPTH + 1
+
+
+def test_a_missing_include_target_is_still_guarded_and_still_watched(tmp_path):
+    """Git ignores an include naming a file that is not there, so nothing runs
+    today. It is guarded anyway, and the absent path stays in the digest, because
+    the file appearing later is precisely how a config that looked harmless at
+    startup starts running something: the tripwire then sees the change."""
+    _repo(tmp_path, ORDINARY_CONFIG + "[include]\n\tpath = ../nothing/here\n")
+    before = wt.config_digest(tmp_path)
+    assert before != wt.EMPTY_DIGEST
+
+    target = tmp_path / "nothing" / "here"
+    target.parent.mkdir(parents=True)
+    target.write_text("[core]\n\tfsmonitor = evil\n", encoding="utf-8")
+    assert wt.config_digest(tmp_path) != before

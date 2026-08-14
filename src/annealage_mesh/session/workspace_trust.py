@@ -100,6 +100,11 @@ _GIT_EXECUTABLE_SUFFIXES = (
     ".process",
 )
 
+# How far a chain of git config includes is followed. Git's own limit is ten,
+# and matching it means this sees exactly what git would: a chain longer than
+# git follows is one git refuses too.
+_MAX_INCLUDE_DEPTH = 10
+
 # Hook files git ships as inert examples. They are not executable as shipped and
 # git ignores them by name, so counting them would make every freshly initialised
 # repository look like it carried hooks.
@@ -120,18 +125,92 @@ _TRUST_FILE = "trusted-projects"
 
 
 def git_config_executes(path: Path) -> bool:
-    """Whether the git config at ``path`` names anything git would run.
+    """Whether the git config at ``path``, or anything it includes, names
+    something git would run.
 
-    Parsed for key names alone; the values are never inspected, because the
-    question is whether a command is configured at all rather than what it says.
-    An unreadable file counts as executing: a config this cannot inspect is one
-    whose contents are unknown, and unknown has to mean gated.
+    Parsed for key names alone; the values are never inspected, except for the
+    include directives themselves, because the question is whether a command is
+    configured at all rather than what it says. An unreadable file counts as
+    executing: a config this cannot inspect is one whose contents are unknown,
+    and unknown has to mean gated.
+
+    Includes are followed because git follows them: a config whose only content
+    is ``[include] path = ../elsewhere`` configures whatever that file
+    configures.
     """
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return True
-    return any(_key_executes(key) for key in _git_config_keys(text))
+    for member in config_chain(path):
+        try:
+            text = member.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return True
+        if any(_key_executes(key) for key in _git_config_keys(text)):
+            return True
+    return False
+
+
+def _include_targets(text: str, base_dir: Path) -> Tuple[Path, ...]:
+    """Every path an ``include`` or ``includeIf`` directive in ``text`` names.
+
+    ``includeIf`` conditions are not evaluated. Deciding whether one applies
+    means reproducing git's own predicate logic (``gitdir``, ``onbranch``,
+    ``hasconfig``) against the state of the moment, and being wrong in the
+    permissive direction would mean not watching a file git does read. Watching
+    a file git ignores costs nothing but a digest that changes more often.
+
+    Relative paths resolve against the including file's directory, and ``~``
+    against the user's home, which is what git does.
+    """
+    targets = []
+    section = ""
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line[0] in "#;":
+            continue
+        if line.startswith("["):
+            header = line[1 : line.find("]") if "]" in line else len(line)]
+            section = header.split(None, 1)[0].strip().strip('"').casefold()
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if section not in ("include", "includeif") or key.strip().casefold() != "path":
+            continue
+        raw_path = value.strip().strip('"')
+        if not raw_path:
+            continue
+        expanded = Path(os.path.expanduser(raw_path))
+        targets.append(expanded if expanded.is_absolute() else base_dir / expanded)
+    return tuple(targets)
+
+
+def config_chain(path: Path) -> Tuple[Path, ...]:
+    """``path`` followed by every config it pulls in, breadth first.
+
+    Bounded by ``_MAX_INCLUDE_DEPTH`` and by a seen set, so a config that
+    includes itself, or two that include each other, terminate rather than
+    looping. Paths are resolved before being compared, so two spellings of one
+    file count once.
+    """
+    start = Path(path)
+    chain = [start]
+    seen = {os.path.realpath(start)}
+    frontier = [(start, 0)]
+    while frontier:
+        current, depth = frontier.pop(0)
+        if depth >= _MAX_INCLUDE_DEPTH:
+            continue
+        try:
+            text = current.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for target in _include_targets(text, current.parent):
+            resolved = os.path.realpath(target)
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            chain.append(target)
+            frontier.append((target, depth + 1))
+    return tuple(chain)
 
 
 def _key_executes(key: str) -> bool:
@@ -280,6 +359,14 @@ def _entries(path: Path, rel: str) -> Iterable[Tuple[str, bytes]]:
     if path.is_dir():
         for child in sorted(p for p in path.rglob("*") if p.is_file()):
             yield "%s/%s" % (rel, child.relative_to(path).as_posix()), _read(child)
+        return
+    if rel == GIT_CONFIG_REL:
+        # Every config in the include chain, named by the resolved path rather
+        # than by a relative name: an included file usually sits outside the
+        # served directory, and re-pointing an include at a different file has
+        # to compare unequal even when both files hold the same bytes.
+        for member in config_chain(path):
+            yield "%s <- %s" % (rel, os.path.realpath(member)), _read(member)
         return
     yield rel, _read(path)
 
