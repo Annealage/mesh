@@ -196,6 +196,12 @@ The split is by consequence, not by tool:
 
 **Asks first.** Editing or writing a file through the agent's own file tools, anything reaching the network, any command the sandbox cannot confine, and the three viewer tools that leave a file behind. You get a card naming the tool and showing its full arguments, with a multi-line command or file content laid out as text rather than crammed into one JSON line, because this is the thing you are being asked to read.
 
+**Refused outright, with nobody asked.** Any tool call that names a credential path: `~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.gnupg`, `~/.netrc`, `~/.docker/config.json`, `~/.config/gh`, and mesh's own `~/.claude/.credentials.json`. There is no card for these and no way to allow one from the chat pane, because a prompt is the wrong control for something no CAD work ever needs: the only thing a card would achieve is teaching you to approve it.
+
+The refusal covers reads and writes alike, since a write into `~/.ssh/authorized_keys` is worse than a read of a key. For the file tools it is exact, resolving the path first, so a symlink planted in the project that points at `~/.ssh` is refused too. For a shell command it is text matching, so `cat ~/.ssh/id_ed25519` is refused while a path assembled from a variable or a glob is not. That asymmetry is deliberate and worth knowing rather than assuming away: the sandbox does not restrict reads either, so a determined agent with a shell can still reach these files. What this stops is the accident and the direct attempt, which is most of what actually happens.
+
+If you need the agent to have a credential, put it somewhere else deliberately, or paste what it needs into the chat. Do not move the list.
+
 Three buttons:
 
 - **Allow**, this one call.

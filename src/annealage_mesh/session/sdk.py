@@ -71,7 +71,7 @@ from claude_agent_sdk import (
 )
 
 from ..tools import registry
-from . import turn_images, workspace_trust
+from . import secret_paths, turn_images, workspace_trust
 from .base import (
     AGENT_CONNECTING,
     AGENT_READY,
@@ -409,10 +409,16 @@ class SdkSession:
         }
         if self._sandbox_requested:
             kwargs["sandbox"] = dict(SANDBOX_SETTINGS)
+        # The credential refusal is unconditional, and the configuration
+        # tripwire joins it only when there is an accepted digest to compare
+        # against. Both are PreToolUse because that is the only event upstream
+        # of a settings allow rule and of the sandbox's auto-approval, but they
+        # answer different questions and must not share a precondition: a
+        # session built without a digest is still holding a shell.
+        pre_tool_use = [self._guard_secret_paths]
         if self._trusted_config_digest is not None:
-            kwargs["hooks"] = {
-                "PreToolUse": [HookMatcher(matcher=None, hooks=[self._guard_config])],
-            }
+            pre_tool_use.insert(0, self._guard_config)
+        kwargs["hooks"] = {"PreToolUse": [HookMatcher(matcher=None, hooks=pre_tool_use)]}
         if self._broker is not None:
             kwargs["can_use_tool"] = self._broker.ask
         if self._model:
@@ -491,6 +497,43 @@ class SdkSession:
                     "modify .claude/ or .mcp.json. Tell the human what you were trying "
                     "to do and that mesh must be restarted to review the change."
                 ),
+            },
+        }
+
+    async def _guard_secret_paths(self, hook_input, tool_use_id, context) -> dict:
+        """Refuse a call that reaches for this machine's credentials.
+
+        Installed in the same ``PreToolUse`` matcher as the configuration
+        tripwire and kept separate from it, because the two answer different
+        questions: that one asks whether the served directory still is what the
+        human accepted, this one asks what a single call is reaching for. Either
+        can deny on its own.
+
+        The reasoning for the list, and the honest limit of what the ``Bash``
+        half of it covers, is in ``session/secret_paths.py``. A failure to
+        decide denies, for the same reason the digest check does: a control that
+        cannot tell whether a call is safe has to assume it is not.
+        """
+        try:
+            reason = secret_paths.refusal(
+                hook_input.get("tool_name", ""),
+                hook_input.get("tool_input") or {},
+                self.cwd,
+            )
+        except Exception as exc:
+            sys.stderr.write("warning: could not check the call's paths: %r\n" % (exc,))
+            reason = (
+                "Refused: mesh could not determine whether that call reaches a "
+                "credential path, so it refused rather than guessing. Tell the "
+                "human; this is a bug in mesh rather than anything you did."
+            )
+        if reason is None:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
             },
         }
 

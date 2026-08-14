@@ -333,11 +333,19 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
 @pytest.mark.asyncio
 @pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
 async def test_no_tripwire_hook_without_an_accepted_digest():
-    """A session given no accepted digest installs no hook, so a caller that
-    never ran the gate does not get a control that would deny every call."""
+    """A session given no accepted digest carries no configuration tripwire, so a
+    caller that never ran the gate does not get a control that would deny every
+    call for want of a digest to compare against. The credential refusal beside
+    it is unconditional and stays."""
     session, _transport, _recorder = await _started_session()
     try:
-        assert not session._client.options.hooks
+        # Hooks are installed either way, because the credential refusal is
+        # unconditional; what a session with no accepted digest must not carry
+        # is the configuration tripwire, which would have nothing to compare a
+        # digest against.
+        matchers = session._client.options.hooks["PreToolUse"]
+        assert matchers[0].hooks == [session._guard_secret_paths]
+        assert session._guard_config not in matchers[0].hooks
     finally:
         await session.close()
 
@@ -356,7 +364,7 @@ async def test_the_tripwire_is_installed_as_a_pre_tool_use_hook_matching_every_t
         matchers = hooks["PreToolUse"]
         assert len(matchers) == 1
         assert matchers[0].matcher is None
-        assert matchers[0].hooks == [session._guard_config]
+        assert matchers[0].hooks == [session._guard_config, session._guard_secret_paths]
     finally:
         await session.close()
 
@@ -723,3 +731,84 @@ async def test_an_unchanged_status_is_not_announced_again():
 
     statuses = [e.status for e in recorder.all if isinstance(e, AgentStatus)]
     assert statuses == [AGENT_READY, AGENT_UNAVAILABLE]
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_secret_path_hook_denies_a_read_of_a_credential_directory(tmp_path, monkeypatch):
+    """The credential refusal reaches the model through the same hook event as
+    the configuration tripwire, which is the only point upstream of both a
+    settings allow rule and the sandbox's own auto-approval (fact 25)."""
+    home = tmp_path / "home"
+    (home / ".ssh").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    session, _transport, _recorder = await _started_session()
+    try:
+        result = await session._guard_secret_paths(
+            {"tool_name": "Read", "tool_input": {"file_path": str(home / ".ssh" / "id_rsa")}},
+            "tu_1",
+            None,
+        )
+        decision = result["hookSpecificOutput"]
+        assert decision["hookEventName"] == "PreToolUse"
+        assert decision["permissionDecision"] == "deny"
+        assert "credential" in decision["permissionDecisionReason"]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_secret_path_hook_expresses_no_opinion_on_ordinary_work(tmp_path, monkeypatch):
+    """An empty answer leaves the permission flow exactly as it would be without
+    the hook, which is what keeps contained bash running unprompted."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    session, _transport, _recorder = await _started_session()
+    try:
+        assert (
+            await session._guard_secret_paths(
+                {"tool_name": "Bash", "tool_input": {"command": "python build.py"}}, "tu_1", None
+            )
+            == {}
+        )
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_secret_path_hook_denies_when_it_cannot_decide(monkeypatch):
+    """A control that cannot tell whether a call is safe has to assume it is
+    not, the same way the digest check does."""
+    from annealage_mesh.session import secret_paths
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("no home directory")
+
+    monkeypatch.setattr(secret_paths, "refusal", explode)
+    session, _transport, _recorder = await _started_session()
+    try:
+        result = await session._guard_secret_paths(
+            {"tool_name": "Read", "tool_input": {"file_path": "part.stl"}}, "tu_1", None
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "bug in mesh" in result["hookSpecificOutput"]["permissionDecisionReason"]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.filterwarnings("ignore::claude_agent_sdk.CanUseToolShadowedWarning")
+async def test_the_secret_path_hook_is_installed_even_with_no_accepted_digest(
+    tmp_path, monkeypatch
+):
+    """The two hooks answer different questions, so the credential refusal must
+    not depend on the served directory having had configuration to accept: a
+    folder with no .claude/ at all is the ordinary case."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    session, _transport, _recorder = await _started_session()
+    try:
+        matchers = session._client.options.hooks["PreToolUse"]
+        assert matchers[0].hooks == [session._guard_secret_paths]
+    finally:
+        await session.close()
