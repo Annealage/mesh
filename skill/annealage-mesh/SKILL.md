@@ -72,7 +72,7 @@ To point the human at a specific location (e.g. after you change geometry, or to
 }
 ```
 
-The viewer polls this file (~1.5s) and renders these as cyan pins, distinct from the human's orange pins, without a page reload. `point` and `comment` are the load-bearing fields; the rest are display niceties. Rewrite the whole file each time; the server doesn't merge/append it.
+The server watches this file and pushes the change to the open viewer, which renders these as cyan pins, distinct from the human's orange pins, without a page reload. (A viewer whose socket has dropped falls back to polling it about every 1.5s, so the callouts still arrive either way.) `point` and `comment` are the load-bearing fields; the rest are display niceties. Rewrite the whole file each time; the server doesn't merge/append it.
 
 ## Installing this skill
 
@@ -80,6 +80,6 @@ Copy `skill/annealage-mesh/` into `~/.claude/skills/` (or a plugin's skills dire
 
 ## Notes
 
-- The server auto-discovers `*.stl` in `<dir>` on each `/manifest` request, so you don't need to restart it after regenerating STLs, just tell the human to refresh.
+- The server watches the directory, so a regenerated STL appears in the open viewer by itself. You do not need to restart it and you do not need to ask the human to refresh; regenerate the file and it is on their screen.
 - Coordinates are whatever units/axes the STL was authored in; there is no conversion. If the model is Y-up, tell the human to use the viewer's "Z-up / Y-up" toggle.
 - Four runtime dependencies, three of them tiny and pure Python (microdot, platformdirs, and tomli on Python 3.10 only). The fourth is the Claude Agent SDK, which bundles the Claude Code CLI and so makes the first install roughly a 90 MB download. Later starts are fast; the first one is not.

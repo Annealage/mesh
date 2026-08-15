@@ -76,7 +76,14 @@ const DECISION_SENT = Object.freeze({
 // this, exactly like one somebody answered.
 const OUTCOME_TEXT = Object.freeze({
   allow: "was allowed",
-  allow_always: "was allowed for the rest of this session",
+  // Not "for this session": `_remember` writes the grant to
+  // .mesh/permissions.toml and `_load_grants` reads it back when the broker is
+  // constructed, so it holds for every later run in this directory too. The
+  // grant is also per-tool rather than per-argument, so a card showing one
+  // file's contents grants that tool for any path. This string is the only
+  // description the human necessarily reads at the moment they decide, so it
+  // says what the grant actually does.
+  allow_always: "will be allowed from now on, for that tool, in this project",
   deny: "was denied",
   timeout: "expired before it was answered",
   no_viewer: "was cancelled when every view disconnected",
@@ -513,7 +520,8 @@ export function initChat({ send }) {
     allowBtn.textContent = "Allow";
     const allowAlwaysBtn = document.createElement("button");
     allowAlwaysBtn.type = "button";
-    allowAlwaysBtn.textContent = "Always allow";
+    // "Always" rather than "for this session", matching what the grant does.
+    allowAlwaysBtn.textContent = "Always allow (this project)";
     const reasonEl = document.createElement("textarea");
     reasonEl.className = "preason";
     reasonEl.placeholder = "Reason (sent to the agent if you deny)";
