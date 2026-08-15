@@ -50,6 +50,7 @@ from urllib.parse import unquote
 
 from .. import paths
 from . import CHUNK_SIZE, Response, file_response, not_modified
+from .ws import _origin_is_allowed, _token_is_allowed, refusal
 
 # Mode for a submission file this process creates. An existing file's own
 # mode is preserved instead; see _write_comments.
@@ -226,7 +227,7 @@ async def _serve_indexed(
     return "not found: %s" % request_key, 404
 
 
-def register_routes(app, serve_dir):
+def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_token=False):
     """Register the viewer routes on ``app`` for one served directory.
 
     A fresh set of closures per call, so independent apps (independent
@@ -235,6 +236,26 @@ def register_routes(app, serve_dir):
     the static index, though its target directory is the same for every
     app, still gets its own cache per call rather than a module-level one
     shared across them.
+
+    ``token`` and ``allowed_origins`` gate ``POST /submit``, which is the one
+    route here that writes into the human's project. The two are applied
+    differently and deliberately.
+
+    The ``Origin`` check applies in **every** mode. ``mesh-comments.json`` is
+    the documented human-to-agent channel and ``SKILL.md`` tells an agent to
+    re-read it, so text written there reaches an agent holding a shell; a page
+    the human happens to have open in another tab must not be able to put text
+    in it. A POST carrying a plain body is a CORS-simple request, so no
+    preflight stands in front of it and the browser's refusal to let the page
+    read the reply is no protection at all when the write itself is the payload.
+    A browser attaches ``Origin`` to a cross-origin POST, including a form
+    submission, and a page cannot suppress it.
+
+    ``require_token`` is set for agent mode alone (plan section 3.10). Viewer-only
+    mode leaves the token off this route because the published skill flow tells
+    the human to open the bare ``http://localhost:8765/`` and press Submit, and
+    breaking that is not worth what the token adds on top of the ``Origin``
+    check for a run with no agent attached to it.
     """
     serve_dir = paths.resolve_serve_dir(serve_dir)
     comments_json = paths.comments_path(serve_dir)
@@ -401,6 +422,12 @@ def register_routes(app, serve_dir):
 
     @app.post("/submit")
     async def submit(req):
+        # Before the body is read, and in the same order /upload uses, so
+        # neither check tells an unauthenticated caller which one it failed.
+        if require_token and not _token_is_allowed(req, token):
+            return refusal()
+        if not _origin_is_allowed(req, allowed_origins):
+            return refusal()
         # The body is never buffered (app.py sets max_body_length to 0), so
         # it is read off req.stream here rather than through req.body. The
         # length check comes first and unconditionally: reading the stream

@@ -24,6 +24,7 @@
 
 import * as THREE from "three";
 import { store } from "./store.js";
+import { authToken } from "./ws.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
 import { buildMetaRows, toast } from "./ui.js";
 import { isNarrow } from "./layout.js";
@@ -288,7 +289,13 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       comment: p.comment,
     }));
     try {
-      const res = await fetch("/submit", {
+      // The token goes on this request because agent mode requires it here:
+      // what Submit writes is the channel the agent reads, so it is gated like
+      // /upload. Viewer-only mode does not require it and ignores it, so one
+      // call works in both modes.
+      const token = authToken();
+      const url = token ? "/submit?t=" + encodeURIComponent(token) : "/submit";
+      const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

@@ -2549,3 +2549,32 @@ def test_export_button_is_disabled_when_there_is_no_conversation(mesh_server, br
         assert "no conversation" in page.get_attribute("#chatExport", "title")
     finally:
         page.close()
+
+
+def test_submit_works_in_agent_mode_where_the_route_requires_the_token(settings_server, browser):
+    """The regression this guards. `/submit` is token-gated in agent mode because
+    what it writes is the channel the agent reads, and the browser has to send
+    the token for the human's own Submit button to keep working. Every other
+    submit test in this file runs against a server with no session id, which is
+    viewer mode, where the token is not required: they would all pass with the
+    button broken for every real agent-mode run.
+    """
+    server, served = settings_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+
+        page.click("#modeBtn")
+        page.wait_for_function("() => window.mesh.store.getState().mode === 'annotate'")
+        page.click("#app canvas")
+        page.wait_for_function("() => window.mesh.store.getState().pins.length === 1")
+
+        page.click("#submit")
+        page.wait_for_function("() => document.getElementById('toast').className === 'ok'")
+
+        written = served / "mesh-comments.json"
+        assert written.is_file(), "the human's own submit must reach disk in agent mode"
+        assert json.loads(written.read_text(encoding="utf-8"))["count"] == 1
+    finally:
+        page.close()

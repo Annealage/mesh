@@ -200,7 +200,16 @@ def create_app(
         settings = settings_module.resolve(serve_dir)
     app.mesh_settings = settings
 
-    register_routes(app, serve_dir)
+    # `mesh_session_id` is set for agent mode and None for viewer-only, which is
+    # the same distinction the event log above is built on, so it is what tells
+    # /submit whether to require the token.
+    register_routes(
+        app,
+        serve_dir,
+        token=token,
+        allowed_origins=allowed_origins,
+        require_token=mesh_session_id is not None,
+    )
     register_chat_routes(app, serve_dir, token=token, allowed_origins=allowed_origins)
     register_settings_routes(
         app,
