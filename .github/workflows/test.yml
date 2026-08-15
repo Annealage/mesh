@@ -37,9 +37,11 @@ jobs:
           # and restored before resolution. A miss costs what today costs; a hit
           # takes the SDK download out of the run entirely.
           enable-cache: true
+          # pyproject.toml alone: this project does not track a lockfile, so
+          # naming uv.lock here would key the cache on a file that is never
+          # present.
           cache-dependency-glob: |
             pyproject.toml
-            uv.lock
 
       - name: run tests
         run: uv run --extra dev pytest -q
@@ -97,9 +99,11 @@ jobs:
         with:
           python-version: "3.12"
           enable-cache: true
+          # pyproject.toml alone: this project does not track a lockfile, so
+          # naming uv.lock here would key the cache on a file that is never
+          # present.
           cache-dependency-glob: |
             pyproject.toml
-            uv.lock
 
       - name: install chromium
         run: uv run --extra dev --extra e2e playwright install --with-deps chromium

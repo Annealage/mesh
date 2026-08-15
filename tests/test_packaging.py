@@ -95,3 +95,27 @@ def test_sdist_and_wheel_ship_a_static_file_under_a_gitignored_directory_name(tm
         probe_dir.rmdir()
     assert any(n.endswith("src/annealage_mesh/static/lib/probe.js") for n in sdist_names)
     assert "annealage_mesh/static/lib/probe.js" in wheel_names
+
+
+def test_the_version_is_whatever_the_installed_metadata_says():
+    """`__version__` is read from the installed package's own metadata rather
+    than written down, and hatch-vcs derives that from the git tag at build
+    time. This pins the one thing that could silently drift: a fallback path
+    that reported something other than what was installed, which would make the
+    banner, `--version`, the Server header and the diagnostics block all lie in
+    the same way at once.
+    """
+    from importlib.metadata import version
+
+    import annealage_mesh
+
+    assert annealage_mesh.__version__ == version("annealage-mesh")
+
+
+def test_the_version_is_not_the_unknown_fallback_in_a_normal_install():
+    """The fallback exists for running straight from a checkout with nothing
+    installed. Reaching it in the test environment would mean the package under
+    test is not the package being imported."""
+    import annealage_mesh
+
+    assert annealage_mesh.__version__ != "0.0.0+unknown"
