@@ -62,6 +62,8 @@ import re
 import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 from . import __version__, lock, net, paths, sessions, settings
@@ -74,6 +76,11 @@ _VERSION_TIMEOUT_S = 5
 
 _VERSION_RE = re.compile(r"\d+(?:\.\d+){1,3}")
 
+# Generous enough for a slow local model server to answer a bare HEAD/GET on
+# its own port without a real model call, short enough that a dead endpoint
+# does not make `doctor`/`GET /settings` visibly hang.
+_OMP_REACHABILITY_TIMEOUT_S = 3
+
 
 def collect(
     project_dir=None,
@@ -82,8 +89,10 @@ def collect(
     bind=None,
     port=None,
     backend=None,
+    local_base_url=None,
     run=subprocess.run,
     which=shutil.which,
+    urlopen=urllib.request.urlopen,
 ):
     """Gather diagnostic facts, JSON-able, about this machine and, when
     ``project_dir`` is given, this project.
@@ -96,18 +105,21 @@ def collect(
     with no running server passes none of the three, and the fields are
     ``None``.
 
-    ``backend`` gates the ``codex_cli`` fact: it is present only when
-    ``backend == "codex"``, so a ``claude``-backend run (or a standalone
-    ``doctor`` invocation that never resolved a backend at all) never pays
-    for locating the bundled Codex runtime, which needs the optional
-    ``openai-codex-cli-bin`` package a ``claude``-only install may not have.
-    ``claude_cli`` carries no equivalent gate: it predates the multi-backend
-    project and this ticket does not change that.
+    ``backend`` gates the ``codex_cli`` and ``omp_cli`` facts: each is
+    present only for its own backend, so a ``claude``-backend run (or a
+    standalone ``doctor`` invocation that never resolved a backend at all)
+    never pays for locating the bundled Codex runtime or probing a local
+    endpoint neither backend uses. ``claude_cli`` carries no equivalent
+    gate: it predates the multi-backend project and this ticket does not
+    change that. ``local_base_url`` is only read when ``backend == "local"``;
+    a caller resolving diagnostics for another backend need not pass it.
 
     ``run`` and ``which`` are the same seam ``net.py`` and ``project.py``
     use for their own subprocess calls, so a test can pin exactly what
     "git is missing" or "claude hangs" looks like without touching a real
-    binary.
+    binary. ``urlopen`` is the equivalent seam for the local backend's
+    endpoint-reachability probe, which is a network call rather than a
+    subprocess one.
     """
     facts = {
         "python": {
@@ -133,6 +145,8 @@ def collect(
     }
     if backend == "codex":
         facts["codex_cli"] = _codex_cli_info(run=run, which=which)
+    if backend == "local":
+        facts["omp_cli"] = _omp_info(local_base_url, which=which, run=run, urlopen=urlopen)
     return facts
 
 
@@ -212,6 +226,74 @@ def _codex_cli_info(*, run, which):
     except Exception:
         return {"path": None, "version": None, "source": "missing"}
     return {"path": path, "version": _tool_version(path, run=run), "source": "bundled"}
+
+
+def _omp_info(local_base_url, *, run, which, urlopen):
+    """``{"path", "version", "source", "python_client_installed",
+    "endpoint"}`` for the local backend, mirroring ``_codex_cli_info``'s
+    shape with two additions: unlike Claude/Codex, whose only failure mode
+    is "the binary is missing", the local backend can fail in three
+    independent ways worth telling apart -- the ``omp`` CLI missing, the
+    ``omp_rpc`` Python client not installed, or a real `omp` pointed at a
+    dead endpoint (no Ollama/llama.cpp running yet) -- so this reports all
+    three rather than the binary alone.
+
+    ``path``/``version``/``source`` are sourced from a ``which()`` lookup,
+    unlike ``_codex_cli_info``: ``omp`` is a separately-installed CLI this
+    project never bundles (`session/omp.py` spawns whatever ``omp``
+    resolves to on ``PATH``), so there is no bundled path to prefer the way
+    the Claude/Codex SDKs' own wheels provide one.
+    """
+    found = _safe_which(which, "omp")
+    if found:
+        info = {"path": found, "version": _tool_version(found, run=run), "source": "path"}
+    else:
+        info = {"path": None, "version": None, "source": "missing"}
+    info["python_client_installed"] = _omp_rpc_importable()
+    info["endpoint"] = _local_endpoint_info(local_base_url, urlopen=urlopen)
+    return info
+
+
+def _omp_rpc_importable():
+    """Whether the ``omp_rpc`` Python package (``session/omp.py``'s only
+    non-stdlib import) is installed, checked with ``find_spec`` rather than
+    a real import -- the same side-effect-free lookup
+    ``_bundled_claude_path`` uses -- so a doctor invocation with no local
+    backend ever configured never pays for importing it. It has no PyPI
+    release yet (see `session/omp.py`'s own module docstring), so a
+    "missing" result is reported alongside the pip command that installs
+    its real source, not a package extra.
+    """
+    try:
+        return importlib.util.find_spec("omp_rpc") is not None
+    except Exception:
+        return False
+
+
+def _local_endpoint_info(base_url, *, urlopen):
+    """Whether ``base_url`` answers at all, without a real model call: a
+    ``HEAD`` request with a short timeout is enough to learn "something is
+    listening here", which is the one fact worth reporting before blaming
+    the model call itself. Any HTTP-level response, even an error status
+    such as 404 or 405 for a server that does not implement ``HEAD``, still
+    counts as reachable: the point is a live listener, not a specific route.
+    """
+    if not base_url:
+        return {"configured": False, "reachable": False, "status": None, "error": "local_base_url is not set"}
+    request = urllib.request.Request(base_url, method="HEAD")
+    try:
+        with urlopen(request, timeout=_OMP_REACHABILITY_TIMEOUT_S) as response:
+            status = getattr(response, "status", None)
+            return {"configured": True, "reachable": True, "status": status, "error": None}
+    except urllib.error.HTTPError as exc:
+        return {"configured": True, "reachable": True, "status": exc.code, "error": None}
+    except Exception as exc:
+        return {
+            "configured": True,
+            "reachable": False,
+            "status": None,
+            "error": "%s: %s" % (type(exc).__name__, exc),
+        }
 
 
 def _detect_git(*, run, which):

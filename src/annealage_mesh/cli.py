@@ -380,6 +380,32 @@ def diagnostics_report(facts):
                 % (codex_cli["version"] or "version not reported", codex_cli["path"])
             )
 
+    omp_cli = facts.get("omp_cli")
+    if omp_cli is not None:
+        if omp_cli["source"] == "missing":
+            lines.append(
+                "  omp CLI          : NOT FOUND. Agent mode cannot run; install "
+                "it (see https://omp.sh/)"
+            )
+        else:
+            lines.append(
+                "  omp CLI          : %s  (%s)"
+                % (omp_cli["version"] or "version not reported", omp_cli["path"])
+            )
+        if not omp_cli["python_client_installed"]:
+            lines.append(
+                "  omp_rpc package  : NOT FOUND. Not yet on PyPI; install its real "
+                'source with `pip install "omp-rpc @ '
+                'git+https://github.com/can1357/oh-my-pi.git#subdirectory=python/omp-rpc"`'
+            )
+        endpoint = omp_cli["endpoint"]
+        if not endpoint["configured"]:
+            lines.append("  local endpoint   : not configured; set local_base_url")
+        elif endpoint["reachable"]:
+            lines.append("  local endpoint   : reachable")
+        else:
+            lines.append("  local endpoint   : NOT REACHABLE (%s)" % endpoint["error"])
+
     git = facts["git"]
     lines.append(
         "  git              : %s"
@@ -532,14 +558,18 @@ def doctor_command(argv):
     if serve_dir is None:
         sys.stderr.write("error: %s\n" % message)
         return 2
+    backend = None
+    local_base_url = None
     try:
-        backend = settings_module.resolve(serve_dir)["backend"]
+        resolved = settings_module.resolve(serve_dir)
+        backend = resolved["backend"]
+        local_base_url = resolved["local_base_url"]
     except settings_module.SettingsError:
         # A doctor invocation must still report everything else it can when
-        # the settings files themselves are what is broken; codex_cli is
-        # simply omitted rather than the whole command failing.
-        backend = None
-    facts = diagnostics.collect(serve_dir, backend=backend)
+        # the settings files themselves are what is broken; codex_cli/omp_cli
+        # are simply omitted rather than the whole command failing.
+        pass
+    facts = diagnostics.collect(serve_dir, backend=backend, local_base_url=local_base_url)
     sys.stdout.write("\n".join(diagnostics_report(facts)) + "\n")
     return 0
 
@@ -766,22 +796,16 @@ def main(argv=None):
         anything that only wants the CLI's argument parsing, never pays for
         importing the SDK.
 
-        Branches on ``resolved_settings["backend"]``: ``claude`` and ``codex``
-        build a real session today; ``local`` raises ``NotImplementedError``
-        rather than returning a stand-in session object, so a stub backend can
-        never reach ``describe_agent_posture`` or ``on_ready`` and have either
-        render a posture or status for a session that does not exist; ``main``
-        catches the raise and turns it into a clean error exit instead of a
-        raw traceback. ``openai_codex``/``session.codex`` are imported only
-        inside the ``codex`` branch, so a ``claude``-backend run never pays
-        for that optional dependency.
+        Branches on ``resolved_settings["backend"]``: all three build a real
+        session. ``openai_codex``/``session.codex`` are imported only inside
+        the ``codex`` branch, and ``omp_rpc``/``session.omp`` only inside the
+        ``local`` branch, so a ``claude``-backend run never pays for either
+        optional dependency.
         """
         if mode != "agent":
             return None
         backend = resolved_settings["backend"]
-        if backend == "local":
-            raise NotImplementedError("backend=local is not yet implemented")
-        if backend not in ("claude", "codex"):
+        if backend not in ("claude", "codex", "local"):
             raise AssertionError("unreachable: settings.py validates backend's choices")
 
         from .session.permissions import PermissionBroker
@@ -829,6 +853,33 @@ def main(argv=None):
                 mcp_host=bind.address,
                 mcp_port=port,
                 mcp_token=token,
+            )
+            built_session.append(session)
+            return session
+
+        if backend == "local":
+            # Imported only in this branch, per the module docstring's own
+            # "keep the claude backend free of an unnecessary dependency
+            # import" intent: omp_rpc is an optional extra (the `local`
+            # extra in pyproject.toml), and a claude-backend run must not
+            # require it to be installed.
+            from .session.omp import OmpSession
+
+            session = OmpSession(
+                on_event,
+                cwd=serve_dir,
+                session_id=mesh_sid,
+                broker=broker,
+                model=resolved_settings["model"],
+                base_url=resolved_settings["local_base_url"],
+                api_key=resolved_settings["local_api_key"],
+                # Mirrors SdkSession's mcp_servers=bus.mesh_tools.mcp_servers:
+                # a snapshot taken once, at construction, rather than a live
+                # reference to the tool server this run already built.
+                tool_table=bus.mesh_tools.tool_table(),
+                on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
+                    serve_dir, mesh_sid, sdk_id
+                ),
             )
             built_session.append(session)
             return session
@@ -924,9 +975,6 @@ def main(argv=None):
         )
     except KeyboardInterrupt:
         pass
-    except NotImplementedError as exc:
-        sys.stderr.write("error: %s\n" % exc)
-        return 2
     finally:
         # Released on every exit from the server loop, including a signal:
         # a lock still held after this process is gone would refuse every
