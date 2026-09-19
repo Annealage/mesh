@@ -272,7 +272,7 @@ remembered-grant workaround in work item 4, since it is the one place this
 driver's behavior diverges from the broker's own persistence model). Looped
 until clean. Ticket: `planning/tickets/phase4_omp-session.md`.
 
-## Phase 5 - Live model selection
+## Phase 5 - Live model selection [COMPLETE - see `20260919_phase5-progress.md`]
 
 Goal: the webui can change the active model for a running session, on any
 backend, without restarting mesh; the CLI-configured `model` setting is only
