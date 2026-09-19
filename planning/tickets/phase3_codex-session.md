@@ -4,6 +4,7 @@ Phase: 3
 Depends on: Phase 1 (permission-broker `Decision` type), Phase 2 (`backend`
 setting, `build_session` branch point)
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-19 at HEAD 2a9fce9 - Phase 1 changed session/permissions.py's ask() to return Decision (as this ticket already assumed); Phase 2 restructured cli.py's build_session (now branches on backend before any import, stub raises NotImplementedError - anchor below updated). Also: Q1 investigated further and DECIDED, revealing a bigger finding (Q5) that changes the Approach sketch substantially - see 20260919_codex-approval-handler-finding.md. Design constraints and Approach sketch below rewritten accordingly; Open questions trimmed to what remains genuinely open.
 
 ## Context
 
@@ -27,8 +28,13 @@ of this driver if that schema takes longer to confirm.
 ## Scope
 
 In scope: `session/codex.py`'s `CodexSession` class implementing the full
-`AgentSession` Protocol against `openai_codex.AsyncCodex`; OAuth surfacing;
-sandbox posture; the approval-handler adapter; resolving Q1.
+`AgentSession` Protocol against `openai_codex.client.CodexClient` directly
+(**not** `Codex`/`AsyncCodex`/`AsyncCodexClient` - see
+`20260919_codex-approval-handler-finding.md`: the public wrappers have no
+way to set `approval_handler` at all, and silently auto-accept every
+command-execution approval without one); OAuth surfacing; sandbox posture;
+the approval-handler adapter; the executor-thread bridge every blocking
+`CodexClient` call needs.
 
 Out of scope: tool exposure (`phase3_codex-tool-mcp-bridge.md`); live model
 switching (`phase5_live-model-selection.md` - this ticket only needs
@@ -57,13 +63,18 @@ per `roadmap.md`, listed below).
 - `settings.py:183-224` - `model`/`effort` keys, now backend-generic; this
   session's constructor takes both as `Optional[str]` the same way
   `SdkSession` does (`session/sdk.py:189-190`).
-- `cli.py:724-773` (post-Phase-2) - the `backend == "codex"` branch in
-  `build_session` replaces its Phase-2 `NotImplementedError` stub with the
-  real construction call, mirroring the `SdkSession(...)` call's keyword
-  shape (`cwd`, `session_id`, `broker`, `model`, `effort`,
-  `on_sdk_session_id`, `trusted_config_digest` as applicable - `permission_mode`
-  is Claude-only per the settled design decision in `roadmap.md` and has no
-  Codex equivalent to pass).
+- `cli.py`'s `build_session` (post-Phase-2; restructured, no longer at the
+  original ~724-773 anchor - re-locate it by name before editing) - the
+  `backend == "codex"` branch currently does
+  `raise NotImplementedError("backend=codex is not yet implemented")`
+  *before* any Claude-SDK import. Replace that raise with the real
+  construction call, importing `openai_codex`/`session.codex` only inside
+  this branch (matching the Phase-2 progress report's stated intent: keep
+  the `claude` backend free of an unnecessary dependency import). Mirror
+  `SdkSession(...)`'s keyword shape (`cwd`, `session_id`, `broker`, `model`,
+  `effort`, `on_sdk_session_id`, `trusted_config_digest` as applicable -
+  `permission_mode` is Claude-only per the settled design decision in
+  `roadmap.md` and has no Codex equivalent to pass).
 - `diagnostics.py:78-183` - `collect()`/`_claude_cli_info`. Add
   `_codex_cli_info(*, run, which)` following the same `{"path", "version",
   "source"}` shape, but sourced from `codex.account()`/the pinned
@@ -87,17 +98,34 @@ per `roadmap.md`, listed below).
   away.
 - Every write-class tool call (per `tools/registry.py`'s `WRITE_CLASS`
   classification) must reach the human via the approval-handler adapter.
-  This is the property Q1 threatens and this ticket must resolve before
-  shipping: `ApprovalMode.auto_review`'s docstring says "High-level approval
-  behavior for **escalated** permission requests", which reads as
-  auto-approve-most / escalate-some rather than always-ask. Confirm against a
-  real running `codex app-server` (not just source reading) whether setting
-  `thread_start`/`thread_resume`'s raw `config={...}` override to force
-  `ApprovalsReviewer.user` (bypassing the curated `ApprovalMode` enum
-  entirely) makes every `item/commandExecution/requestApproval` and
-  `item/fileChange/requestApproval` reach `approval_handler`. If it does not,
-  this ticket is blocked pending a design note - do not ship an approval path
-  believed to skip the human for some commands.
+  Q1 and Q5 are now DECIDED (`roadmap.md`, `20260919_codex-approval-handler-finding.md`):
+  (a) construct `ThreadStartParams(approvals_reviewer=ApprovalsReviewer.user,
+  approval_policy=AskForApproval(root=AskForApprovalValue.on_request), ...)`
+  directly rather than passing the curated `ApprovalMode` enum through
+  `Codex.thread_start()` - `ApprovalMode.auto_review` maps to
+  `ApprovalsReviewer.auto_review` (an AI reviewer), not `user`; (b) the
+  handler must be wired via `CodexClient(config=..., approval_handler=...)`
+  directly - the public `Codex`/`AsyncCodex`/`AsyncCodexClient` wrappers
+  never accept or forward `approval_handler`, and constructing one of those
+  instead would silently auto-accept every command-execution request via
+  `CodexClient._default_approval_handler`. This is now a source-verified
+  design decision, not an open question - still confirm once, in the manual
+  integration pass, that `approvals_reviewer=ApprovalsReviewer.user`
+  actually routes every request to the handler in practice (live behavior
+  can still differ from the typed protocol's stated intent).
+- `CodexClient` is fully synchronous/blocking (its own docstring: "Synchronous
+  typed JSON-RPC client for `codex app-server` over stdio") with **no**
+  working async variant that also supports `approval_handler`
+  (`AsyncCodexClient` wraps `CodexClient` but does not forward
+  `approval_handler` either). `CodexSession` must therefore own a dedicated
+  background thread (or a single-worker `ThreadPoolExecutor`) that holds the
+  one `CodexClient` instance and runs every blocking call
+  (`start`/`initialize`/`thread_start`/`turn_start`/notification-stream
+  iteration) on it; `CodexSession`'s async Protocol methods post work to that
+  thread via `loop.run_in_executor(executor, ...)` and marshal
+  results/events back via `loop.call_soon_threadsafe`. This is a materially
+  larger thread-bridging surface than "just the approval callback" - every
+  interaction with Codex crosses the bridge, not only approvals.
 - The approval callback (`ApprovalHandler = Callable[[str, JsonObject | None],
   JsonObject]`, from `client.py`) runs synchronously on the SDK's own reader
   thread, not on mesh's asyncio loop. Bridge with
@@ -118,37 +146,62 @@ per `roadmap.md`, listed below).
 ## Approach sketch
 
 ```python
+from openai_codex.client import CodexClient, CodexConfig
+from openai_codex.generated.v2_all import (
+    ApprovalsReviewer, AskForApproval, AskForApprovalValue, ThreadStartParams,
+)
+
 class CodexSession:
     def __init__(self, on_event, *, cwd, session_id, broker=None,
                  model=None, effort=None, resume=None,
                  on_sdk_session_id=None, trusted_config_digest=None):
         ...
-        self._codex = None  # AsyncCodex, constructed in start()
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self._client = None  # CodexClient, constructed in start()
 
     async def start(self) -> None:
-        self._codex = AsyncCodex(config=CodexConfig(
-            cwd=self.cwd,
-            approval_handler=self._approval_handler,  # verify exact
-            # constructor param name/whether it lives on CodexConfig or is
-            # passed alongside it - client.py showed it as a separate
-            # CodexClient(config, approval_handler) argument, not a
-            # CodexConfig field; confirm which shape AsyncCodex's public
-            # api.py actually exposes before assuming this call shape.
-        ))
-        await self._codex.start()
-        thread = await self._codex.thread_start(
-            model=self._model, sandbox=Sandbox.workspace_write,
-            config={"approvalsReviewer": "user"},  # placeholder pending Q1
+        loop = asyncio.get_running_loop()
+        self._client = CodexClient(
+            config=CodexConfig(cwd=self.cwd),
+            approval_handler=lambda method, params: self._approval_handler(
+                method, params, loop
+            ),
+        )
+        await loop.run_in_executor(self._executor, self._client.start)
+        await loop.run_in_executor(self._executor, self._client.initialize)
+        started = await loop.run_in_executor(
+            self._executor,
+            self._client.thread_start,
+            ThreadStartParams(
+                cwd=self.cwd,
+                model=self._model,
+                approval_policy=AskForApproval(root=AskForApprovalValue.on_request),
+                approvals_reviewer=ApprovalsReviewer.user,  # Q1/Q5 fix - never
+                # the curated ApprovalMode enum, which maps auto_review to an
+                # AI reviewer, not the human handler.
+                sandbox=...,  # Sandbox.workspace_write equivalent
+            ),
         )
         ...
 
-    def _approval_handler(self, method: str, params) -> dict:
-        # runs on the SDK's reader thread, not the asyncio loop
+    def _approval_handler(self, method: str, params, loop) -> dict:
+        # Runs on CodexClient's own internal reader thread
+        # (client.py:855-861), not the executor thread and not the asyncio
+        # loop. Do not confuse this with the executor bridge above - this is
+        # a second, separate thread-crossing point, already documented as
+        # correct/intentional in the design constraints.
         future = asyncio.run_coroutine_threadsafe(
-            self._broker.ask(tool_name=..., ...), self._loop)
+            self._broker.ask(tool_name=..., ...), loop)
         decision = future.result()
         return _to_codex_decision(decision)
 ```
+
+Every subsequent blocking `CodexClient` call (`turn_start`, notification
+iteration via `TurnHandle`-equivalent hand-rolled subscription consumption,
+`turn_interrupt`, `close`) follows the same `loop.run_in_executor(self._executor,
+...)` pattern shown in `start()` above - the workflow implementing this
+ticket should factor that into a small helper rather than repeating the
+`run_in_executor` call at every call site.
 
 ## Acceptance criteria and tests
 
@@ -162,25 +215,32 @@ class CodexSession:
   exercised through this new driver).
 - Manual integration pass against a real Codex account (subscription first,
   API key as a secondary check) completing an actual write-class turn end to
-  end, since Q1 cannot be fully settled from the fake transport alone.
+  end, since Q1/Q5's source-level resolution still benefits from one live
+  confirmation that `approvals_reviewer=ApprovalsReviewer.user` behaves as
+  documented in practice.
 
 ## Workflow shape
 
 Implementation on sonnet, automated (fake-transport) tests on haiku, standard
 + adversarial review on opus - the adversarial pass's specific brief: attempt
 to construct a turn where a write-class Codex tool call does *not* reach
-`approval_handler` given whatever Q1's resolution turned out to be, and
+`approval_handler` given the resolved design (direct `CodexClient` + explicit
+`approvals_reviewer=ApprovalsReviewer.user`), and
 confirm it cannot happen. Loop until clean and until the manual integration
 pass succeeds.
 
 ## Open questions
 
-- Q1 (roadmap): does `ApprovalMode.auto_review` route every write-class call
-  to `approval_handler`, or only escalated ones? Must resolve before the
-  approval-adapter work item is considered done, not deferred to review.
-- Whether `approval_handler` is a `CodexConfig` field or a separate
-  constructor argument on the public `AsyncCodex`/`Codex` classes (`api.py`
-  was not read in this research pass - `client.py`'s lower-level
-  `CodexClient(config, approval_handler)` showed it as separate, but the
-  public wrapper may thread it differently). Read `sdk/python/src/openai_codex/api.py`
-  directly before writing the constructor call.
+- Q1 and Q5 (roadmap) are DECIDED at the source level - see
+  `20260919_codex-approval-handler-finding.md`. What remains open is purely
+  empirical: does `approvals_reviewer=ApprovalsReviewer.user` actually route
+  every approval request to the handler against a real running
+  `codex app-server`, confirmed only by the manual integration pass above
+  (no dedicated Codex account was available during planning to verify this
+  live).
+- Exact shape of hand-rolling turn-notification consumption off
+  `CodexClient`'s subscription/router internals (`_subscribe_turn_notifications`,
+  `client.py:410-411`) without the convenience of `TurnHandle.stream()`
+  (which is only reachable through the public `Codex`/`AsyncCodex` wrapper
+  this ticket now avoids) - read `client.py`'s `_router`/`_TurnSubscription`
+  internals in full before implementing the notification-consumption loop.

@@ -4,6 +4,7 @@ Phase: 3
 Depends on: `phase3_codex-session.md` (core driver must exist to attach
 tools to); Phase 1's `tools/registry.py` accessor work item below
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-19 at HEAD 2a9fce9 - no direct drift on this ticket's own anchors, but phase3_codex-session.md's design changed substantially (CodexClient direct, not AsyncCodex - see 20260919_codex-approval-handler-finding.md). This ticket's "config={...} override" references now mean ThreadStartParams(config=...) constructed directly alongside approvals_reviewer=ApprovalsReviewer.user, not a kwarg on the public Codex.thread_start() wrapper. Q2 (MCP schema) itself remains unresolved.
 
 ## Context
 
