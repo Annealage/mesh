@@ -28,7 +28,11 @@ import platform
 import subprocess
 import sys
 
-from annealage_mesh import diagnostics, lock, settings
+import pytest
+from conftest import TEST_HOST, make_test_client
+
+from annealage_mesh import cli, diagnostics, lock, settings
+from annealage_mesh.app import DEFAULT_PORT, create_app
 
 
 class _Completed:
@@ -79,6 +83,10 @@ def _forbidden_which(name):
 
 def _no_binaries(name):
     return None
+
+
+def _forbidden_urlopen(request, timeout):
+    raise AssertionError("urlopen should not have been called")
 
 
 _IP_JSON_TWO_INTERFACES = """[
@@ -189,6 +197,180 @@ def test_collect_payload_round_trips_through_json(monkeypatch, tmp_path):
     assert round_tripped == result
 
 
+# --- collect() backend gating: codex_cli/omp_cli present only for their own backend ---
+
+
+def test_collect_backend_claude_reports_only_claude_cli(monkeypatch, tmp_path):
+    """The pre-existing, unconditional backend: ``codex_cli``/``omp_cli``
+    are absent from the dict entirely, not merely falsy, since a
+    claude-backend run never pays for locating a Codex binary or probing a
+    local endpoint neither backend uses."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    result = diagnostics.collect(
+        tmp_path, backend="claude", run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+    )
+    assert "claude_cli" in result
+    assert "codex_cli" not in result
+    assert "omp_cli" not in result
+
+
+def test_collect_with_no_backend_resolved_reports_only_claude_cli(monkeypatch, tmp_path):
+    """``cli.py``'s ``doctor_command`` passes ``backend=None`` when the
+    project's settings failed to resolve at all; ``codex_cli``/``omp_cli``
+    are simply omitted rather than the unmatched backend raising."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    result = diagnostics.collect(
+        tmp_path, backend=None, run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+    )
+    assert "claude_cli" in result
+    assert "codex_cli" not in result
+    assert "omp_cli" not in result
+
+
+def test_collect_backend_codex_reports_codex_cli_and_omits_omp_cli(monkeypatch, tmp_path):
+    """``codex_cli`` carries the bundled binary's real facts, ``claude_cli``
+    is still present since it is unconditional, and ``omp_cli`` is absent
+    entirely rather than an empty or ``None`` placeholder."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    import codex_cli_bin
+
+    bundled_path = tmp_path / "codex"
+    bundled_path.write_bytes(b"")
+    monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", lambda: bundled_path)
+
+    def run(argv, **kwargs):
+        if tuple(argv) == (str(bundled_path), "--version"):
+            return _Completed(stdout="0.21.0\n")
+        raise FileNotFoundError(argv[0])
+
+    result = diagnostics.collect(tmp_path, backend="codex", run=run, which=_no_binaries)
+
+    assert result["codex_cli"] == {"path": str(bundled_path), "version": "0.21.0", "source": "bundled"}
+    assert "claude_cli" in result
+    assert "omp_cli" not in result
+
+
+def test_collect_backend_local_reports_omp_cli_and_omits_codex_cli(monkeypatch, tmp_path):
+    """``omp_cli`` carries the discovered binary, installed client and
+    reachable endpoint together, ``claude_cli`` is still present, and
+    ``codex_cli`` is absent entirely."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: object())
+
+    def which(name):
+        return "/usr/local/bin/omp" if name == "omp" else None
+
+    def run(argv, **kwargs):
+        if tuple(argv) == ("/usr/local/bin/omp", "--version"):
+            return _Completed(stdout="omp 0.9.0\n")
+        raise FileNotFoundError(argv[0])
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(request, timeout):
+        return _Response()
+
+    result = diagnostics.collect(
+        tmp_path,
+        backend="local",
+        local_base_url="http://127.0.0.1:11434",
+        run=run,
+        which=which,
+        urlopen=urlopen,
+    )
+
+    assert result["omp_cli"] == {
+        "path": "/usr/local/bin/omp",
+        "version": "0.9.0",
+        "source": "path",
+        "python_client_installed": True,
+        "endpoint": {"configured": True, "reachable": True, "status": 200, "error": None},
+    }
+    assert "claude_cli" in result
+    assert "codex_cli" not in result
+
+
+# --- collect() reports a missing/not-logged-in codex or local backend clearly, never raising ---
+
+
+def test_collect_backend_codex_reports_missing_binary_without_raising(monkeypatch, tmp_path):
+    """No ``codex_cli_bin`` wheel for this platform (the same failure mode
+    ``_claude_cli_info`` reports as ``"missing"``): ``collect`` still
+    returns cleanly with ``codex_cli`` present and marked missing."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    import codex_cli_bin
+
+    def _raise():
+        raise ModuleNotFoundError("no codex_cli_bin wheel for this platform")
+
+    monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", _raise)
+
+    result = diagnostics.collect(
+        tmp_path, backend="codex", run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+    )
+
+    assert result["codex_cli"] == {"path": None, "version": None, "source": "missing"}
+
+
+def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(monkeypatch, tmp_path):
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    result = diagnostics.collect(
+        tmp_path,
+        backend="local",
+        local_base_url=None,
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
+    )
+    assert result["omp_cli"]["endpoint"] == {
+        "configured": False,
+        "reachable": False,
+        "status": None,
+        "error": "local_base_url is not set",
+    }
+
+
+def test_collect_backend_local_reports_missing_omp_uninstalled_client_and_dead_endpoint_without_raising(
+    monkeypatch, tmp_path
+):
+    """The local backend's three independent failure modes -- no ``omp`` on
+    PATH, ``omp_rpc`` not installed, and the endpoint refusing connections
+    -- all reported together rather than any of them raising."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: None)
+
+    def urlopen(request, timeout):
+        raise ConnectionRefusedError("Connection refused")
+
+    result = diagnostics.collect(
+        tmp_path,
+        backend="local",
+        local_base_url="http://127.0.0.1:11434",
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
+        urlopen=urlopen,
+    )
+
+    assert result["omp_cli"] == {
+        "path": None,
+        "version": None,
+        "source": "missing",
+        "python_client_installed": False,
+        "endpoint": {
+            "configured": True,
+            "reachable": False,
+            "status": None,
+            "error": "ConnectionRefusedError: Connection refused",
+        },
+    }
+
+
 # --- tool_version and parse_version: the primitive that must never raise --
 
 
@@ -297,6 +479,131 @@ def test_claude_cli_reports_missing_when_neither_bundled_nor_path_has_it(monkeyp
         run=_run_raises(AssertionError("run must not be called")), which=_no_binaries
     )
     assert info == {"path": None, "version": None, "source": "missing"}
+
+
+# --- codex CLI: bundled binary only, no PATH fallback ---------------------
+
+
+def test_codex_cli_reports_the_bundled_binary_when_the_package_provides_one(monkeypatch, tmp_path):
+    """``codex_cli_bin`` ships its own ``codex`` binary the way the base
+    ``claude-agent-sdk`` wheel ships ``claude``; unlike Claude, there is no
+    PATH fallback to prefer over it, so ``which`` is accepted only for
+    shape parity and never actually consulted."""
+    import codex_cli_bin
+
+    bundled_path = tmp_path / "codex"
+    bundled_path.write_bytes(b"")
+    monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", lambda: bundled_path)
+
+    def fake_run(argv, **kwargs):
+        assert argv == [str(bundled_path), "--version"]
+        return _Completed(stdout="0.21.0\n")
+
+    info = diagnostics._codex_cli_info(run=fake_run, which=_forbidden_which)
+
+    assert info == {"path": str(bundled_path), "version": "0.21.0", "source": "bundled"}
+
+
+def test_codex_cli_reports_missing_when_the_bundled_package_lookup_fails(monkeypatch):
+    """No published wheel for this platform, or ``codex_cli_bin`` is not
+    installed at all -- ``from codex_cli_bin import bundled_codex_path``
+    itself raising ``ImportError``/``ModuleNotFoundError`` inside
+    ``_codex_cli_info``'s own ``try`` -- reported the same way
+    ``_claude_cli_info`` reports no bundled binary and no PATH match, not
+    raised. Blocking the import statement itself, the same
+    ``builtins.__import__`` seam
+    ``test_diagnostics_module_import_never_touches_claude_agent_sdk`` uses
+    for ``claude_agent_sdk``, is what a refactor moving that import outside
+    ``_codex_cli_info``'s ``try``/``except`` would actually break: stubbing
+    ``bundled_codex_path`` after a successful import (the previous shape of
+    this test) would keep passing right through that regression."""
+    real_import = builtins.__import__
+
+    def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name.split(".")[0] == "codex_cli_bin":
+            raise ModuleNotFoundError("no module named 'codex_cli_bin'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded_import)
+
+    info = diagnostics._codex_cli_info(
+        run=_run_raises(AssertionError("run must not be called")), which=_forbidden_which
+    )
+    assert info == {"path": None, "version": None, "source": "missing"}
+
+
+# --- omp CLI: PATH lookup, python client, and endpoint reachability -------
+
+
+def test_omp_info_reports_present_binary_installed_client_and_reachable_endpoint(monkeypatch):
+    def which(name):
+        return "/usr/local/bin/omp" if name == "omp" else None
+
+    run = _dispatch({("/usr/local/bin/omp", "--version"): _Completed(stdout="omp 0.9.0\n")})
+    monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: object())
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(request, timeout):
+        assert request.full_url == "http://127.0.0.1:11434"
+        return _Response()
+
+    info = diagnostics._omp_info("http://127.0.0.1:11434", run=run, which=which, urlopen=urlopen)
+
+    assert info == {
+        "path": "/usr/local/bin/omp",
+        "version": "0.9.0",
+        "source": "path",
+        "python_client_installed": True,
+        "endpoint": {"configured": True, "reachable": True, "status": 200, "error": None},
+    }
+
+
+def test_omp_info_reports_missing_binary_uninstalled_client_and_unreachable_endpoint(monkeypatch):
+    """``omp`` not on PATH, ``omp_rpc`` not installed and the endpoint
+    refusing connections: the three independent local-backend failure
+    modes reported together, none of them raising."""
+    monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: None)
+
+    def urlopen(request, timeout):
+        raise ConnectionRefusedError("Connection refused")
+
+    info = diagnostics._omp_info(
+        "http://127.0.0.1:11434",
+        run=_run_raises(AssertionError("run must not be called")),
+        which=_no_binaries,
+        urlopen=urlopen,
+    )
+
+    assert info == {
+        "path": None,
+        "version": None,
+        "source": "missing",
+        "python_client_installed": False,
+        "endpoint": {
+            "configured": True,
+            "reachable": False,
+            "status": None,
+            "error": "ConnectionRefusedError: Connection refused",
+        },
+    }
+
+
+def test_local_endpoint_info_reports_not_configured_when_no_base_url_is_set():
+    info = diagnostics._local_endpoint_info(None, urlopen=_forbidden_urlopen)
+    assert info == {
+        "configured": False,
+        "reachable": False,
+        "status": None,
+        "error": "local_base_url is not set",
+    }
 
 
 # --- sandbox facts, from session.sdk, imported lazily ---------------------
@@ -443,3 +750,104 @@ def test_settings_files_reports_presence_once_the_files_exist(tmp_path):
         "project": str(project_path),
         "project_present": True,
     }
+
+
+# --- doctor's stdout and GET /settings's diagnostics JSON must agree ------
+
+
+TOKEN = "the-real-diagnostics-token-Value_123"
+
+
+def _make_executable(path, banner):
+    """A real, directly spawnable script printing ``banner`` for any
+    arguments and exiting 0, so ``_tool_version`` gets a real subprocess
+    result rather than a stubbed ``run``."""
+    path.write_text("#!/bin/sh\necho '%s'\n" % banner)
+    path.chmod(0o755)
+
+
+@pytest.mark.asyncio
+async def test_doctor_report_and_settings_payload_agree_for_backend_codex(
+    monkeypatch, tmp_path, capsys
+):
+    """``doctor_command`` and ``GET /settings`` each do their own settings
+    resolution and their own call into ``diagnostics.collect``; a regression
+    that dropped ``backend``/``local_base_url`` from either real resolution
+    path, or that stopped the route from shipping ``diagnostics`` at all,
+    must fail here. Driven through the real CLI entry point and a real
+    request via microdot's ``TestClient``
+    (``tests/test_settings_routes.py``'s own ``make_client`` pattern), never
+    by calling ``collect`` twice by hand and comparing hand-built dicts."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    import codex_cli_bin
+
+    settings.apply(tmp_path, {"backend": "codex"})
+
+    bundled_path = tmp_path / "fake-codex"
+    _make_executable(bundled_path, "0.21.0")
+    monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", lambda: bundled_path)
+
+    # The real `annealage-mesh doctor` invocation: parses argv, resolves this
+    # project's settings itself (cli.py:564-566), and prints the report.
+    assert cli.doctor_command([str(tmp_path)]) == 0
+    report = capsys.readouterr().out.splitlines()
+
+    # The real GET /settings route, same project, same fresh settings
+    # resolution (routes_settings.py:69-70, 81-89).
+    client = make_test_client(create_app(tmp_path, token=TOKEN, host=TEST_HOST, port=DEFAULT_PORT))
+    res = await client.get("/settings?t=%s" % TOKEN)
+    settings_body = json.loads(res.body.decode("utf-8"))
+
+    expected_codex_cli = {"path": str(bundled_path), "version": "0.21.0", "source": "bundled"}
+    assert settings_body["diagnostics"]["codex_cli"] == expected_codex_cli
+
+    expected_line = "  codex CLI        : 0.21.0  (%s, bundled with the SDK)" % str(bundled_path)
+    assert expected_line in report
+
+
+@pytest.mark.asyncio
+async def test_doctor_report_and_settings_payload_agree_for_backend_local(
+    monkeypatch, tmp_path, capsys
+):
+    """Same parity claim as the codex test, for the local backend's richer
+    ``omp_cli`` shape (binary, python client and endpoint reachability all
+    reported together), again through the real ``doctor_command`` and a real
+    ``GET /settings`` request rather than two hand-built ``collect`` calls."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: object())
+
+    settings.apply(tmp_path, {"backend": "local"})
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    omp_script = bin_dir / "omp"
+    _make_executable(omp_script, "omp 0.9.0")
+    # `_omp_info` receives `which`/`run` as `collect`'s own unstubbed
+    # defaults (`shutil.which`/`subprocess.run`) from both real call sites,
+    # so PATH, not a monkeypatched function, is the seam that reaches them.
+    monkeypatch.setenv("PATH", str(bin_dir) + os.pathsep + os.environ.get("PATH", ""))
+
+    assert cli.doctor_command([str(tmp_path)]) == 0
+    report = capsys.readouterr().out.splitlines()
+
+    client = make_test_client(create_app(tmp_path, token=TOKEN, host=TEST_HOST, port=DEFAULT_PORT))
+    res = await client.get("/settings?t=%s" % TOKEN)
+    settings_body = json.loads(res.body.decode("utf-8"))
+
+    expected_omp_cli = {
+        "path": str(omp_script),
+        "version": "0.9.0",
+        "source": "path",
+        "python_client_installed": True,
+        "endpoint": {
+            "configured": False,
+            "reachable": False,
+            "status": None,
+            "error": "local_base_url is not set",
+        },
+    }
+    assert settings_body["diagnostics"]["omp_cli"] == expected_omp_cli
+
+    assert ("  omp CLI          : 0.9.0  (%s)" % str(omp_script)) in report
+    assert "  local endpoint   : not configured; set local_base_url" in report
+    assert not any(line.startswith("  omp_rpc package  :") for line in report)
