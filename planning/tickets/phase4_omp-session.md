@@ -5,7 +5,7 @@ Depends on: Phase 1 (`Decision` type), Phase 2 (`backend`, `local_base_url`,
 `local_api_key` settings), Phase 3's `tools/registry.py` `tool_table()`
 accessor
 Written: 2026-09-19 at HEAD 58f78db34e
-Revalidated: 2026-09-19 at HEAD 94e9dbf - Q4 DECIDED (roadmap.md): read omp://providers.md's "Custom providers in models.yml" section directly. Schema confirmed: providers.<id>.{baseUrl, api: "openai-completions", apiKey (env-var-name-or-literal; omit + auth: none for keyless), models: [{id, name, contextWindow, maxTokens}]}. No drift on this ticket's own file anchors (tools/registry.py's tool_table() accessor, added by Phase 3, not yet re-verified against Phase 3's landed shape - do that at this phase's actual entry, not now).
+Revalidated: 2026-09-19 at HEAD 2f08d17 - Q4 already DECIDED (see prior stamp). Phase 3 landed: tool_table() (tools/registry.py:292) returns `{name: ToolSpec(schema, description, handler, write)}` - the exact shape anchors below now cite, replacing the speculative sketch. cli.py's build_session branch structure also changed shape in Phase 2/3 (no longer at a fixed line range - locate by name). Checked: `omp_rpc` is not installed in this environment and is not on PyPI under `omp-rpc`/`omp_rpc` (confirmed via `uv pip install omp-rpc` failing with "not found in the package registry"); the local `omp` CLI installation on this workstation does not bundle a discoverable Python source tree for it either. This ticket's implementer must resolve where to actually obtain `omp_rpc` from (the omp project's own distribution channel, likely not plain PyPI) before relying on it - if genuinely unobtainable in a given environment, the fallback is implementing the documented stdio JSON-RPC protocol directly (omp://rpc.md is the complete, canonical wire contract) rather than depending on the client library at all.
 
 ## Context
 
@@ -39,20 +39,26 @@ matched to Phase 4's stated goal).
   `CodexSession`.
 - `session/sdk.py:168-263` (and full file) - structural reference, same as
   noted in `phase3_codex-session.md`.
-- `tools/registry.py`'s `tool_table()` (added in Phase 3) - reused here with
-  a `set_host_tools`/`host_tool_call`/`host_tool_result` adapter instead of
-  Phase 3's MCP-HTTP bridge.
+- `tools/registry.py:292` - `tool_table()`, landed in Phase 3:
+  `{name: ToolSpec(schema, description, handler, write)}` where `ToolSpec`
+  is a namedtuple and `.write` is precomputed `WRITE_CLASS` membership.
+  Reused here with a `set_host_tools`/`host_tool_call`/`host_tool_result`
+  adapter instead of Phase 3's MCP-HTTP bridge - build the `RpcHostToolDefinition`
+  list (`name`, `label`, `description`, `parameters` - the JSON-schema shape
+  `omp://rpc.md`'s `set_host_tools` section documents) directly from
+  `tool_table()`'s entries.
 - `settings.py` (post-Phase-2) - `local_base_url`, `local_api_key` keys.
 - `omp://providers.md` - the custom-provider (`models.yml`-shaped) schema
-  this ticket must read in full before generating provider config from
-  `local_base_url`/`local_api_key` - not fully read in this research pass
-  (Q4).
-- `cli.py:724-773` (post-Phase-2) - the `backend == "local"` branch replaces
-  its Phase-2 stub.
-- `diagnostics.py:78-183` - add `_omp_info` alongside `_codex_cli_info`
-  (Phase 3), gated on `backend == "local"`; checks omp's own version and
-  `local_base_url` reachability (a simple connect/HTTP-HEAD-style check, not
-  a full model call).
+  Q4 resolved (`roadmap.md`) - see this ticket's Approach sketch below for
+  the confirmed shape.
+- `cli.py`'s `build_session` (post-Phase-2/3; branches on
+  `resolved_settings["backend"]` before any backend-specific import -
+  re-locate by name, not by line number) - the `backend == "local"` branch
+  replaces its Phase-2 stub.
+- `diagnostics.py` (post-Phase-3; add `_omp_info` alongside
+  `_codex_cli_info`, gated on `backend == "local"`; checks omp's own
+  version and `local_base_url` reachability (a simple connect/HTTP-HEAD-style
+  check, not a full model call).
 
 ## Design constraints
 
