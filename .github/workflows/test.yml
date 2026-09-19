@@ -43,8 +43,26 @@ jobs:
           cache-dependency-glob: |
             pyproject.toml
 
+      - name: install omp-rpc
+        # Not a pyproject.toml extra: it is not on PyPI, and a direct git
+        # dependency in published package metadata would break this
+        # project's own publish.yml upload (see session/omp.py's module
+        # docstring for the full reasoning). Pinned to the same commit that
+        # docstring documents as verified. `uv sync`'s own extras resolution
+        # runs first (triggered by the next step's `uv run`), so `uv pip
+        # install` here layers on top of that same managed environment
+        # rather than needing a real `pip` binary inside it.
+        run: >-
+          uv run --extra dev python -c "" &&
+          uv pip install
+          "omp-rpc @ git+https://github.com/can1357/oh-my-pi.git@71c5eec978b0e7ce9ff057eb4e311f67f4f03eb9#subdirectory=python/omp-rpc"
+
       - name: run tests
-        run: uv run --extra dev pytest -q
+        # --extra codex: tests/test_codex_session.py and
+        # tests/test_mcp_bridge.py import openai_codex directly and would
+        # otherwise fail to collect at all, silently dropping their
+        # coverage from every run.
+        run: uv run --extra dev --extra codex pytest -q
 
       # The Python suite covers no JavaScript at all, so a syntax error in a
       # module under static/js/ leaves it entirely green while the viewer fails
