@@ -25,6 +25,8 @@ code exercises against ``CodexClient``'s genuine reader thread.
 
 import asyncio
 import queue
+import sys
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -77,6 +79,14 @@ class FakeCodexClient:
         self.interrupt_calls = []
         self._next_turn = 0
         self._turn_queues = {}
+        # Set except while a call this thread stands in for the real
+        # reader thread's routing is in flight (deliver_approval, below):
+        # models CodexClient's single reader thread, which cannot route
+        # turn_interrupt's response while it is blocked synchronously
+        # inside _approval_handler's broker.ask() call. See that method's
+        # docstring and this module's docstring.
+        self._reader_free = threading.Event()
+        self._reader_free.set()
 
     def start(self):
         self.started = True
@@ -117,6 +127,7 @@ class FakeCodexClient:
         return item
 
     def turn_interrupt(self, thread_id, turn_id):
+        self._reader_free.wait(timeout=5.0)
         self.interrupt_calls.append((thread_id, turn_id))
         return SimpleNamespace()
 
@@ -135,6 +146,20 @@ class FakeCodexClient:
 
     def push_notification(self, turn_id, notification):
         self._turn_queues[turn_id].put(notification)
+
+    def deliver_approval(self, method, params):
+        """Invoke ``self.approval_handler`` (``CodexSession._approval_handler``)
+        exactly as the real reader thread would, with ``self._reader_free``
+        cleared for the duration: turn_interrupt above cannot return until
+        this does, modelling the single-reader-thread constraint Finding 2
+        (phase3_codex-session.md) is about. Call from a worker thread via
+        ``loop.run_in_executor``, never awaited directly -- see this
+        module's docstring."""
+        self._reader_free.clear()
+        try:
+            return self.approval_handler(method, params)
+        finally:
+            self._reader_free.set()
 
     def push_turn_completed(self, turn_id, status=TurnStatus.completed):
         self.push_notification(
@@ -533,6 +558,53 @@ async def test_interrupt_reaches_the_client_while_a_turn_is_still_draining():
 
 
 @pytest.mark.asyncio
+async def test_interrupt_completes_while_a_command_execution_approval_is_pending():
+    """Finding 2 (phase3_codex-session.md's review): a native approval
+    blocks CodexClient's sole reader thread synchronously inside
+    ``_approval_handler``'s ``broker.ask()`` call, and ``turn/interrupt``'s
+    own response can only ever be routed by that same thread once it is
+    freed. ``FakeCodexClient.turn_interrupt`` models that constraint
+    through ``deliver_approval``'s ``_reader_free`` gate (see both
+    docstrings); without the fix, ``interrupt()`` waits on
+    ``turn_interrupt`` before ever freeing the reader thread and this test
+    times out instead of completing.
+    """
+    session, fake, recorder, broker = await _started_session()
+    try:
+        await session.submit_turn([{"type": "text", "text": "delete everything"}])
+        turn_id = fake.turn_start_calls[0].turn_id
+
+        loop = asyncio.get_running_loop()
+        approval_future = loop.run_in_executor(
+            None,
+            fake.deliver_approval,
+            "item/commandExecution/requestApproval",
+            {"command": "rm -rf /"},
+        )
+        # Wait for the request to actually register with the broker (the
+        # simulated reader thread is now blocked inside future.result());
+        # otherwise there is nothing yet for interrupt() to unblock.
+        request = await recorder.next()
+
+        await asyncio.wait_for(session.interrupt(), timeout=2.0)
+        assert fake.interrupt_calls == [("thread-1", turn_id)]
+
+        decision = await asyncio.wait_for(approval_future, timeout=2.0)
+        assert decision == {"decision": "decline"}
+
+        resolved = await recorder.next()
+        assert isinstance(resolved, PermissionResolved)
+        assert resolved.request_id == request.request_id
+        assert resolved.outcome == "deny"
+
+        fake.push_turn_completed(turn_id, status=TurnStatus.interrupted)
+        end = await recorder.next()
+        assert isinstance(end, TurnEnd)
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
 async def test_text_delta_becomes_one_text_delta_event():
     from annealage_mesh.session.base import TextDelta
 
@@ -565,3 +637,92 @@ async def test_close_shuts_the_client_and_marks_unavailable():
     await session.close()
     assert fake.closed
     assert session.agent_status() == AGENT_UNAVAILABLE
+
+
+# ---------------------------------------------------------------------------
+# mesh's own /mcp tool-exposure bridge (phase3_codex-tool-mcp-bridge.md):
+# config_overrides construction, registering the stdio proxy as an MCP
+# server scoped to this one launched app-server process.
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_config_overrides_is_empty_with_no_mesh_endpoint_given():
+    """The default: a session built with no mcp_host/_port/_token (every
+    test above, and any driver that never attaches mesh tools) launches
+    Codex with nothing extra, rather than a proxy pointed at a server that
+    was never given to it."""
+    session = CodexSession(lambda e: None, cwd="/proj", session_id="s")
+    assert session._mcp_config_overrides() == ()
+
+
+def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy():
+    """The exact shape ``planning/20260919_codex-mcp-bridge-finding.md``
+    confirmed by reading ``client.py``'s launch-argument construction: each
+    entry is one ``--config key=value`` flag, parsed by Codex as a TOML
+    dotted-path assignment. Round-tripped through a real TOML parser here,
+    not merely pattern-matched, so a quoting mistake this test's own string
+    comparison could miss (an unescaped quote, a missing comma) is caught
+    the same way Codex's own config parser would catch it.
+    """
+    import tomllib
+
+    session = CodexSession(
+        lambda e: None,
+        cwd="/proj",
+        session_id="s",
+        mcp_host="127.0.0.1",
+        mcp_port=8765,
+        mcp_token='tok "en\\x',
+    )
+    overrides = session._mcp_config_overrides()
+    assert len(overrides) == 2
+    parsed = tomllib.loads("\n".join(overrides))
+    mesh = parsed["mcp_servers"]["mesh"]
+    assert mesh["command"] == sys.executable
+    assert mesh["args"] == [
+        "-m",
+        "annealage_mesh.session.codex_mcp_stdio_bridge",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8765",
+        "--token",
+        'tok "en\\x',
+    ]
+
+
+@pytest.mark.asyncio
+async def test_start_threads_config_overrides_through_to_codex_config():
+    """Not just that the helper computes the right tuple in isolation
+    (above), but that ``start()`` actually hands it to the ``CodexConfig``
+    the client is constructed with. Captures ``config`` through its own
+    ``client_factory`` rather than ``_started_session``'s shared one, which
+    only ever records ``approval_handler`` onto the fake client, not
+    ``config`` - every other test in this file only asserts on the former.
+    """
+    fake = FakeCodexClient(config=None, approval_handler=None)
+    captured = {}
+
+    def _client_factory(*, config, approval_handler):
+        captured["config"] = config
+        fake.approval_handler = approval_handler
+        return fake
+
+    recorder = EventRecorder()
+    session = CodexSession(
+        recorder,
+        cwd="/proj/root",
+        session_id="mesh-sess-1",
+        broker=PermissionBroker(recorder, timeout=2.0, no_viewer_grace=0.05),
+        client_factory=_client_factory,
+        mcp_host="127.0.0.1",
+        mcp_port=9999,
+        mcp_token="ttt",
+    )
+    try:
+        await session.start()
+        assert session.agent_status() == AGENT_READY
+        assert captured["config"].config_overrides == session._mcp_config_overrides()
+        assert captured["config"].config_overrides != ()
+    finally:
+        await session.close()

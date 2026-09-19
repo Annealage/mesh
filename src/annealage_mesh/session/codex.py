@@ -110,7 +110,7 @@ from .base import (
     TurnEnd,
     UnknownRequest,
 )
-from .permissions import Decision
+from .permissions import Decision, _toml_string
 
 # The tool name a commandExecution approval is reported under. Deliberately
 # the same string Claude's own Bash tool uses (session/sdk.py's
@@ -160,6 +160,9 @@ class CodexSession:
         resume: Optional[str] = None,
         on_sdk_session_id=None,
         client_factory: Optional[Callable[..., Any]] = None,
+        mcp_host: Optional[str] = None,
+        mcp_port: Optional[int] = None,
+        mcp_token: Optional[str] = None,
     ):
         self._on_event = on_event
         self.cwd = str(cwd)
@@ -171,6 +174,16 @@ class CodexSession:
         self._resume = resume
         self._on_sdk_session_id = on_sdk_session_id
         self._client_factory = client_factory or CodexClient
+        # mesh's own /mcp endpoint (http/routes_mcp.py), for the
+        # config_overrides this class registers its stdio-proxy subprocess
+        # with in start(); see _mcp_config_overrides. All three None (the
+        # default) means "no mesh tools attached to this session" - every
+        # fake-transport test that does not care about the tool-exposure
+        # bridge leaves them unset and gets an empty config_overrides,
+        # deliberately, rather than a bridge pointed at nothing.
+        self._mcp_host = mcp_host
+        self._mcp_port = mcp_port
+        self._mcp_token = mcp_token
 
         self._status = AGENT_CONNECTING
         self._client = None
@@ -292,6 +305,27 @@ class CodexSession:
     async def interrupt(self) -> None:
         if self._client is None or self._thread_id is None or self._active_turn_id is None:
             return
+        # Deny every approval still awaiting a decision before sending
+        # turn/interrupt, not after: a native approval blocks CodexClient's
+        # sole reader thread synchronously inside _approval_handler's
+        # broker.ask() call (see that method's docstring below), and
+        # turn/interrupt's own response can only ever be routed by that
+        # same thread. Waiting on turn_interrupt first, as this method used
+        # to, hangs until the human separately answers the pending
+        # approval or the broker's own five-minute timeout expires.
+        # Resolving the broker's pending future here unblocks the reader
+        # thread instead, exactly as broker.shutdown() already does for
+        # close() -- decide() rather than the private _deny_all_pending
+        # close() uses, since this must not also stop future asks the way
+        # shutdown() does; the session may still take another turn.
+        if self._broker is not None:
+            for request in list(self._broker.pending_requests()):
+                try:
+                    await self._broker.decide(request.request_id, "deny", "turn interrupted")
+                except UnknownRequest:
+                    # Already decided or timed out between the snapshot
+                    # above and this call; nothing left to unblock.
+                    pass
         try:
             await self._run_blocking(self._client.turn_interrupt, self._thread_id, self._active_turn_id)
         except Exception as exc:
@@ -315,6 +349,7 @@ class CodexSession:
                     cwd=self.cwd,
                     client_name="annealage_mesh",
                     client_title="Annealage Mesh",
+                    config_overrides=self._mcp_config_overrides(),
                 ),
                 approval_handler=self._approval_handler if self._broker is not None else None,
             )
@@ -322,7 +357,22 @@ class CodexSession:
             await self._run_blocking(self._client.initialize)
             account = await self._run_blocking(self._client.account_read)
         except Exception as exc:
-            self._client = None
+            # start() may already have spawned the app-server subprocess
+            # and its reader/stderr threads, and registered the MCP proxy
+            # (self._mcp_config_overrides()), by the time initialize() or
+            # account_read() raises; dropping the only reference to
+            # self._client without closing it first would leak all of that
+            # for the life of this still-serving process, since close()
+            # below can no longer reach it once self._client is None. Same
+            # try/except/warn pattern close() itself uses.
+            if self._client is not None:
+                try:
+                    await self._run_blocking(self._client.close)
+                except Exception as close_exc:
+                    sys.stderr.write(
+                        "warning: agent client did not close cleanly: %r\n" % (close_exc,)
+                    )
+                self._client = None
             self._fail(exc)
             return
         if account.account is None:
@@ -352,6 +402,67 @@ class CodexSession:
         self._executor.shutdown(wait=True)
         self._drain_executor.shutdown(wait=True)
         self._set_status(AGENT_UNAVAILABLE)
+
+    def _mcp_config_overrides(self) -> tuple:
+        """``--config`` overrides registering mesh's own tool-exposure
+        bridge (``planning/tickets/phase3_codex-tool-mcp-bridge.md``) as an
+        MCP server scoped to this one launched app-server process - never
+        written to the human's real ``~/.codex/config.toml``.
+
+        Empty when this session was constructed with no mesh ``/mcp``
+        endpoint to point at (``mcp_host``/``_port``/``_token`` all
+        ``None``, the constructor's default): every fake-transport test that
+        is not exercising the tool-exposure bridge leaves them unset and
+        gets Codex launched with nothing extra to prove wrong, rather than a
+        proxy pointed at a server that was never given to it.
+
+        Each entry is one ``--config key=value`` CLI flag
+        (``client.py``'s own launch-argument construction, confirmed by
+        reading it directly rather than assumed -
+        ``planning/20260919_codex-mcp-bridge-finding.md``); Codex parses
+        ``value`` as a TOML literal, so ``command`` is a quoted TOML string
+        and ``args`` is a TOML array-of-strings literal, both built through
+        ``_toml_string`` (``session/permissions.py``'s own escaper for
+        exactly this purpose elsewhere in this project, reused rather than
+        duplicated: the escaping a value needs to be a safe TOML string is
+        the same whichever file the string ends up written into). The
+        launched proxy is always ``sys.executable -m
+        annealage_mesh.session.codex_mcp_stdio_bridge`` - the same
+        interpreter and installed package running this process, guaranteed
+        to have that module and its own dependencies (``mcp``, ``httpx``)
+        importable regardless of whether the optional ``codex`` extra is
+        installed, since both are already transitive dependencies of
+        ``claude-agent-sdk``, a base dependency, and are now declared
+        directly.
+
+        Whether ``config_overrides`` accepts a table-shaped value the same
+        way TOML would, or only flat scalar ``key=value`` pairs, was not
+        verified against a live ``codex app-server`` process - this ticket's
+        own stated Open Question. This follows the literal example in that
+        finding note as the most standards-conformant TOML-literal encoding
+        available without a live process to check against: a bare
+        ``command="..."`` scalar assignment, and ``args=[...]`` as a TOML
+        array-of-strings literal assigned the same dotted-path way. It is a
+        follow-up item for the manual integration pass
+        (``phase3_codex-session.md``'s own open question already calls for
+        one), not something this ticket blocks on.
+        """
+        if self._mcp_host is None or self._mcp_port is None or self._mcp_token is None:
+            return ()
+        proxy_args = [
+            "-m",
+            "annealage_mesh.session.codex_mcp_stdio_bridge",
+            "--host",
+            self._mcp_host,
+            "--port",
+            str(self._mcp_port),
+            "--token",
+            self._mcp_token,
+        ]
+        return (
+            "mcp_servers.mesh.command=%s" % _toml_string(sys.executable),
+            "mcp_servers.mesh.args=[%s]" % ", ".join(_toml_string(arg) for arg in proxy_args),
+        )
 
     # -- OAuth: an explicit fallback, never the default path -----------------
     #

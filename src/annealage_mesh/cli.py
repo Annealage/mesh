@@ -791,6 +791,15 @@ def main(argv=None):
             permissions_path=sessions.mesh_dir(serve_dir) / "permissions.toml",
             viewer_url=open_url,
         )
+        # app.py reads this back once build_session returns, to gate a
+        # write-class tool call arriving through /mcp with the exact same
+        # broker instance this session's own approval flow uses (its own
+        # comment on the bus.mesh_tools/bus.broker wiring seam explains why
+        # bus, not a new parameter here: build_session's (on_event, *, bus)
+        # signature is the shape every existing test fixture already
+        # assumes, and widening it would break all of them for a value only
+        # this real closure needs to hand back out).
+        bus.broker = broker
 
         if backend == "codex":
             # Imported only in this branch, per the module docstring's own
@@ -812,25 +821,33 @@ def main(argv=None):
                 on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
                     serve_dir, mesh_sid, sdk_id
                 ),
+                # mesh's own /mcp endpoint (phase3_codex-tool-mcp-bridge.md):
+                # host is the bind this run resolved, never a hardcoded
+                # loopback, since app.py's allowed_hosts check only accepts
+                # the exact bind address a non-loopback run chose (a
+                # tailnet-bound server does not also accept 127.0.0.1).
+                mcp_host=bind.address,
+                mcp_port=port,
+                mcp_token=token,
             )
             built_session.append(session)
             return session
 
         from .session.sdk import SdkSession
-        from .tools.registry import MeshTools
 
         session = SdkSession(
             on_event,
             cwd=serve_dir,
             session_id=mesh_sid,
             broker=broker,
-            # The mesh tool server. The tools that never prompt are already in
-            # the session's own allow list, so nothing further is passed for
-            # them; the write-class ones are absent from every allow list, which
-            # is what makes them reach the broker above and therefore the human.
-            # The session id goes with it for the one tool that writes the
-            # conversation out.
-            mcp_servers=MeshTools(bus, serve_dir, mesh_sid).mcp_servers,
+            # The mesh tool server, built once by create_app and shared
+            # through bus.mesh_tools (see app.py's own comment on that
+            # channel) rather than built again here: the tools that never
+            # prompt are already in the session's own allow list, so nothing
+            # further is passed for them; the write-class ones are absent
+            # from every allow list, which is what makes them reach the
+            # broker above and therefore the human.
+            mcp_servers=bus.mesh_tools.mcp_servers,
             model=resolved_settings["model"],
             effort=resolved_settings["effort"],
             permission_mode=resolved_settings["permission_mode"],

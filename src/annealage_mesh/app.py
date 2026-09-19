@@ -23,6 +23,7 @@ from microdot import Microdot, Request
 from . import __version__, net, paths, protocol, sessions, stl
 from . import settings as settings_module
 from .http.routes_chat import register_chat_routes
+from .http.routes_mcp import register_mcp_routes
 from .http.routes_settings import register_settings_routes
 from .http.routes_viewer import VIEWER_HTML, register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
@@ -250,6 +251,36 @@ def create_app(
     # needs it whether or not a session exists in order to answer a browser's
     # pause control.
     bus = ViewerBus(registry, url=net.viewer_url(bind, port, token))
+    # The mesh tool server, built once, here, whether or not this backend is
+    # Claude: both the in-process driver's own ``.mcp_servers`` (Claude,
+    # read out of ``bus.mesh_tools`` by ``build_session``'s own closure - see
+    # the comment on that channel below) and the Codex tool-exposure bridge's
+    # ``/mcp`` route (mounted below, whether or not anything ever calls it)
+    # need the exact *same* already-``_wrap``-gated handler set
+    # (``tools/registry.py``'s own design constraint: one place builds it, no
+    # transport re-derives it independently). Deferred to a local import and
+    # gated on ``mesh_session_id is not None`` (agent mode; matches
+    # ``register_routes``'s own ``require_token`` gate above) so a
+    # viewer-only run still imports no SDK at all.
+    mesh_tools = None
+    if mesh_session_id is not None:
+        from .tools.registry import MeshTools
+
+        mesh_tools = MeshTools(bus, serve_dir, mesh_session_id)
+    # ``bus`` is the one object both this function and ``cli.py``'s
+    # ``build_session`` closure already share, so it doubles as the wiring
+    # seam between them in both directions without widening
+    # ``build_session``'s own ``(on_event, *, bus)`` signature - the shape
+    # every existing ``build_session`` fixture across the test suite already
+    # assumes. ``mesh_tools`` flows this function -> the closure (read for
+    # Claude's ``.mcp_servers``/Codex's own host/port/token, never rebuilt);
+    # ``broker`` flows the other way, set by that closure at the exact point
+    # it already constructs ``PermissionBroker``, read below once
+    # ``build_session`` has returned, so the same broker instance gates both
+    # the session's own approval flow and a write-class call arriving
+    # through ``/mcp``.
+    bus.mesh_tools = mesh_tools
+    bus.broker = None
     session_info = {
         "id": mesh_session_id if mesh_session_id is not None else "viewer-only",
         "sdk_session_id": None,
@@ -259,6 +290,7 @@ def create_app(
     app.mesh_registry = registry
     app.mesh_event_log = event_log
     app.mesh_bus = bus
+    app.mesh_tools = mesh_tools
 
     # ``build_session`` is called with the callback a session must use to
     # publish an event, plus the bus its tools drive the browser through, and
@@ -280,6 +312,23 @@ def create_app(
         # tab that connects later sees a ready agent rather than the
         # connecting state this dict was built with.
         session_info["agent"] = session.agent_status()
+        # /mcp is mounted here, not unconditionally above, for the same
+        # reason register_ws's own bus= is None until a session exists: a
+        # viewer-only app has no tools and no broker to gate them, so there
+        # is nothing for this route to serve. mesh_tools is never None here
+        # (built above whenever mesh_session_id is not None, which is the
+        # only way build_session ever returns a real session); broker is
+        # bus.broker, set by build_session's own closure while constructing
+        # PermissionBroker - None only if a caller supplied a build_session
+        # that never sets it, in which case register_mcp_routes fails closed
+        # on every write-class call rather than gating with no broker at all.
+        register_mcp_routes(
+            app,
+            mesh_tools=mesh_tools,
+            broker=bus.broker,
+            token=token,
+            allowed_origins=allowed_origins,
+        )
 
     register_ws(
         app,
@@ -758,14 +807,24 @@ async def run(
         build_session=build_session,
         settings=settings,
     )
-    # Started after the app is built and before the socket accepts anything, so
-    # a browser cannot connect to a session that has not begun connecting. A
-    # failure inside start() is reported as an event and never raised, so this
-    # cannot stop the viewer from being served.
-    if app.mesh_session is not None:
-        await app.mesh_session.start()
     server = await app.start_server(host=host, port=port, start_serving=False)
     await server.start_serving()
+    # Started after the listening socket is already accepting connections,
+    # not before: a Codex backend's start() launches
+    # session/codex.py's stdio-to-HTTP MCP proxy
+    # (codex_mcp_stdio_bridge.py) as a subprocess of the app-server it also
+    # launches, and that proxy's first tools/list call reaches this
+    # process's own /mcp route while Codex's own session startup is still
+    # in progress. Every route is already registered by create_app, above,
+    # well before this point, but the socket itself only starts accepting
+    # connections here; starting the session before this would point that
+    # first call at a port nothing is listening on yet, which Codex treats
+    # as the MCP server having failed, leaving every mesh tool unavailable
+    # for the rest of the session. A failure inside start() is reported as
+    # an event and never raised, so this cannot stop the viewer from being
+    # served either way.
+    if app.mesh_session is not None:
+        await app.mesh_session.start()
     # Started here rather than in create_app, because create_app is called by
     # tests that have no running loop to own a background task and no interest
     # in one; a watcher per constructed app would leak a task per test.

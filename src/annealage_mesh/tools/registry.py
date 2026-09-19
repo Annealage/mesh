@@ -48,6 +48,7 @@ module produces can be read against the plan line by line.
 import asyncio
 import dataclasses
 import sys
+from collections import namedtuple
 
 from claude_agent_sdk import create_sdk_mcp_server
 
@@ -111,6 +112,52 @@ PAUSED_MESSAGE = (
     "otherwise say what you were about to do and ask them to press Paused in "
     "the viewer's topbar when they are ready."
 )
+
+
+#: One already-``_wrap``-gated tool, in the shape a non-Claude MCP bridge
+#: (``http/routes_mcp.py``) needs to build its own server from -
+#: ``tool_table()``'s values, below. ``write`` folds in ``WRITE_CLASS``
+#: membership so that module can gate a write-class call through
+#: ``PermissionBroker`` (Codex's app-server has no equivalent of Claude's own
+#: ``can_use_tool`` hook for a generic MCP tool call - see that module's
+#: docstring) without importing this one at its own top level, which would
+#: pull ``claude_agent_sdk`` into every viewer-only run.
+ToolSpec = namedtuple("ToolSpec", "schema description handler write")
+
+#: JSON Schema type words for the plain ``{param: python_type}`` shorthand a
+#: handful of this package's own tools use (``viewer_tools.py``'s
+#: ``set_visibility``, ``set_up_axis``, ``select_pin``, ``measure``); every
+#: python type any of them actually uses is a key here, and anything else
+#: falls back to ``"string"``, matching
+#: ``claude_agent_sdk``'s own private ``_python_type_to_json_schema``'s final
+#: fallback for a type it does not recognise either.
+_JSON_SCHEMA_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
+
+
+def _tool_json_schema(input_schema):
+    """The JSON Schema ``inputSchema`` a non-Claude MCP transport needs for
+    one tool, from the exact ``input_schema`` its own ``@tool(...)`` call
+    declared.
+
+    Every tool in this package declares one of two shapes: already a full
+    JSON Schema object (has both ``"type"`` and ``"properties"``), or the
+    ``{param: python_type}`` shorthand ``claude_agent_sdk``'s own ``@tool``
+    also accepts and expands itself, only for Claude
+    (``create_sdk_mcp_server``'s private ``_build_schema``, not reused here:
+    that function is unstable, single-underscore SDK-internal API, and this
+    mirrors only the two shapes this package's own tools actually declare,
+    never that function's third, TypedDict, branch, which nothing here
+    uses). ``{}`` - every no-argument tool's declared schema - falls into
+    the second branch and comes out as an object schema with no properties,
+    the same shape ``create_sdk_mcp_server`` would build for it.
+    """
+    if "type" in input_schema and "properties" in input_schema:
+        return input_schema
+    properties = {
+        name: {"type": _JSON_SCHEMA_TYPES.get(py_type, "string")}
+        for name, py_type in input_schema.items()
+    }
+    return {"type": "object", "properties": properties, "required": list(properties)}
 
 
 def _verify(tools):
@@ -241,3 +288,24 @@ class MeshTools:
     @property
     def mcp_servers(self):
         return {MESH_SERVER_NAME: self.server}
+
+    def tool_table(self):
+        """``{name: ToolSpec(schema, description, handler, write)}`` off the
+        same already-``_wrap``-gated handlers ``.mcp_servers`` is built from
+        - the transport-neutral shape a non-Claude driver's own MCP bridge
+        (``http/routes_mcp.py``) builds its own server from, without
+        duplicating the pause-gate/failure-mapping ``_wrap`` already applied
+        above. Description travels alongside the schema, not only the name:
+        it is the search surface a model picks a tool from (this module's own
+        docstring), so a transport that dropped it would leave a non-Claude
+        backend calling these tools blind to what each one is for.
+        """
+        return {
+            tool_def.name: ToolSpec(
+                schema=_tool_json_schema(tool_def.input_schema),
+                description=tool_def.description,
+                handler=tool_def.handler,
+                write=tool_def.name in WRITE_CLASS,
+            )
+            for tool_def in self.tools
+        }
