@@ -27,7 +27,8 @@ import asyncio
 import json
 
 import pytest
-from claude_agent_sdk import Transport
+from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate, Transport
+from claude_agent_sdk.types import PermissionRuleValue
 
 from annealage_mesh.session import sdk as sdk_module
 from annealage_mesh.session.base import (
@@ -40,6 +41,7 @@ from annealage_mesh.session.base import (
     ToolUse,
     TurnEnd,
 )
+from annealage_mesh.session.permissions import Decision
 from annealage_mesh.session.sdk import SandboxStatus, SdkSession
 
 # The thirteen mesh tools that never prompt, in the namespaced form fact 1
@@ -283,10 +285,11 @@ async def test_options_wired_into_the_real_client():
         # The posture from the M5 brief's "decided and not open" section.
         assert options.sandbox == EXPECTED_SANDBOX_SETTINGS
 
-        # can_use_tool is bound directly to the broker's own ask, never
-        # through a wrapper (session/permissions.py's module docstring: a
-        # wrapper that raises or returns the wrong type defeats fact 14).
-        assert options.can_use_tool == stub_broker.ask
+        # can_use_tool is session._can_use_tool, sdk.py's own adapter, not
+        # broker.ask directly: ask() returns a provider-neutral Decision
+        # (session/permissions.py), and this adapter is where that gets
+        # converted into what the Claude SDK requires (fact 14).
+        assert options.can_use_tool == session._can_use_tool
 
         # The stderr hook this file's sandbox-status parsing depends on.
         assert options.stderr == session._note_stderr
@@ -812,3 +815,56 @@ async def test_the_secret_path_hook_is_installed_even_with_no_accepted_digest(
         assert matchers[0].hooks == [session._guard_secret_paths]
     finally:
         await session.close()
+
+
+# ---------------------------------------------------------------------------
+# _to_claude_result / _session_rule: the one Claude-specific adapter that
+# maps session/permissions.py's provider-neutral ``Decision`` onto the
+# ``PermissionResultAllow``/``PermissionResultDeny`` shape
+# ``ClaudeAgentOptions.can_use_tool`` requires. ``_StubBroker`` above
+# deliberately never calls the real broker, so this is the one place in the
+# suite that exercises the adapter functions themselves.
+# ---------------------------------------------------------------------------
+
+
+def test_to_claude_result_allow_with_no_remembered_tool_is_a_bare_allow():
+    result = sdk_module._to_claude_result(Decision(allow=True, remember_tool=None))
+    assert isinstance(result, PermissionResultAllow)
+    assert not result.updated_permissions
+
+
+def test_to_claude_result_allow_with_a_remembered_tool_carries_a_session_rule():
+    """A remembered grant's ``updated_permissions`` is one ``PermissionUpdate``
+    that adds a session-scoped allow rule for the whole tool (plan section 5:
+    per tool, never per input), which is what lets the SDK's own rule
+    matcher, not this module's memory, cover the rest of the running
+    session."""
+    result = sdk_module._to_claude_result(Decision(allow=True, remember_tool="Write"))
+    assert isinstance(result, PermissionResultAllow)
+    assert result.updated_permissions is not None
+    assert len(result.updated_permissions) == 1
+    update = result.updated_permissions[0]
+    assert isinstance(update, PermissionUpdate)
+    assert update.type == "addRules"
+    assert update.behavior == "allow"
+    assert update.destination == "session"
+    assert len(update.rules) == 1
+    rule = update.rules[0]
+    assert isinstance(rule, PermissionRuleValue)
+    assert rule.tool_name == "Write"
+    assert rule.rule_content is None
+
+
+def test_to_claude_result_deny_carries_the_decisions_message():
+    result = sdk_module._to_claude_result(Decision(allow=False, message="nope"))
+    assert isinstance(result, PermissionResultDeny)
+    assert result.message == "nope"
+
+
+def test_session_rule_builds_the_same_update_to_claude_result_uses():
+    update = sdk_module._session_rule("Write")
+    assert isinstance(update, PermissionUpdate)
+    assert update.type == "addRules"
+    assert update.behavior == "allow"
+    assert update.destination == "session"
+    assert update.rules == [PermissionRuleValue(tool_name="Write", rule_content=None)]

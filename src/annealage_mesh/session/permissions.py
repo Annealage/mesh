@@ -1,22 +1,27 @@
 """``can_use_tool`` permission broker: one ``asyncio.Future`` per outstanding
-request, project-scoped allow-always grants, and the mapping onto
-``PermissionUpdate`` that lets the SDK's own rule matcher take over a
-remembered grant for the rest of a running session.
+request, project-scoped allow-always grants, and a provider-neutral
+``Decision`` that each backend's own session adapter maps onto whatever its
+SDK expects. ``session/sdk.py``'s ``_to_claude_result`` is the Claude SDK's
+adapter: it maps a remembered grant onto ``PermissionUpdate`` so that SDK's
+own rule matcher can take over for the rest of a running session; other
+backends have their own, different remembered-grant mechanisms and write
+their own adapter instead (see ``planning/roadmap.md``).
 
 A bug here means a tool ran that the human never approved, so every path
-through ``ask`` returns a ``PermissionResultAllow`` or
-``PermissionResultDeny`` and nothing here ever raises out of ``ask`` itself
-(fact 14 in ``docs/agent-chat-plan.md`` section 2a): a returned dict, or an
-uncaught exception, both surface to the model as an infrastructure error
-rather than a decision, which is worse than a denial with a clear reason.
+through ``ask`` returns a ``Decision`` and nothing here ever raises out of
+``ask`` itself (fact 14 in ``docs/agent-chat-plan.md`` section 2a): a
+returned dict, or an uncaught exception, both surface to the model as an
+infrastructure error rather than a decision, which is worse than a denial
+with a clear reason.
 
 Calling contract, mirroring ``viewers.py``'s own documented pattern rather
 than inventing a second one:
 
-- ``session/sdk.py`` binds ``options.can_use_tool = broker.ask`` directly;
-  the SDK calls it once per tool invocation that its own rules evaluate to
-  "ask" (fact 2: ``allowed_tools`` and ``permissions.allow`` rules never
-  reach it at all).
+- ``session/sdk.py`` binds ``options.can_use_tool`` to its own thin adapter,
+  which calls ``ask`` and converts the ``Decision`` it returns into what the
+  Claude SDK requires; the SDK calls it once per tool invocation that its own
+  rules evaluate to "ask" (fact 2: ``allowed_tools`` and ``permissions.allow``
+  rules never reach it at all).
 - Whatever dispatches an inbound ``permission`` frame (``ws.py`` via
   ``AgentSession.decide_permission``) calls ``decide`` with the frame's
   ``request_id``, ``decision`` and ``message``.
@@ -53,13 +58,11 @@ call-and-return with no reference back into this module's caller.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import re
 import sys
 from pathlib import Path
-from typing import Callable, Dict, FrozenSet, List, Optional, Tuple, Union
-
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate
-from claude_agent_sdk.types import PermissionRuleValue, ToolPermissionContext
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 
 from .base import AgentEvent, PermissionRequest, PermissionResolved, UnknownRequest
 
@@ -68,7 +71,26 @@ try:
 except ImportError:  # Python 3.10: no tomllib, and this project takes no TOML dependency.
     tomllib = None  # type: ignore[assignment]
 
-PermissionResult = Union[PermissionResultAllow, PermissionResultDeny]
+
+@dataclasses.dataclass(frozen=True)
+class Decision:
+    """The provider-neutral result of one permission decision: whatever
+    ``ask``/``decide`` produce, and every backend's own session adapter
+    (``session/sdk.py``'s ``_to_claude_result``, for the Claude SDK) maps
+    onto its own SDK's result type from here, so this module never has to
+    know what that type is.
+
+    ``remember_tool`` is set only on an ``allow_always`` grant that was not
+    downgraded by ``NEVER_REMEMBERED``, naming the tool a backend's own
+    remembered-grant mechanism (the Claude SDK's session-scoped
+    ``PermissionUpdate``, Codex's ``acceptForSession``, or omp's broker-side
+    interception) should also cover for the rest of this running session.
+    """
+
+    allow: bool
+    remember_tool: Optional[str] = None
+    message: str = ""
+
 
 # A human reviewing a running agent may be away from the keyboard for a
 # while without that meaning "no"; a session nobody is watching should
@@ -180,36 +202,39 @@ class PermissionBroker:
 
     # -- can_use_tool itself ----------------------------------------------
 
-    async def ask(
-        self, tool_name: str, input_data: dict, context: ToolPermissionContext
-    ) -> PermissionResult:
-        """The ``can_use_tool`` callback: bind as ``options.can_use_tool =
-        broker.ask`` directly, never through a wrapper, since a wrapper
-        that raises or returns something other than what this method
-        returns defeats the one guarantee this module exists to give
-        (fact 14: a returned dict or a raised exception both read to the
-        model as the permission system erroring, not as a decision).
+    async def ask(self, tool_name: str, input_data: dict, context: Any) -> Decision:
+        """The ``can_use_tool`` callback: every backend's session adapter
+        calls this directly and converts the ``Decision`` it returns into
+        whatever its own SDK expects (``session/sdk.py``'s
+        ``_to_claude_result``, for the Claude SDK). That conversion must
+        itself never raise or return anything but a value of the target
+        SDK's own result type, or it defeats the one guarantee this module
+        exists to give (fact 14: a returned dict or a raised exception both
+        read to the model as the permission system erroring, not as a
+        decision) - this method's own "never raises, always returns a
+        decision" contract is only as good as the adapter on the other end
+        of it.
 
-        ``context`` carries CLI-side hints (``suggestions``, ``title``,
-        ``blocked_path`` and the rest of ``ToolPermissionContext``) this
-        broker does not act on; it is accepted only to match
-        ``CanUseTool``'s signature, and every field beyond ``tool_name``
+        ``context`` is an opaque, backend-defined value (a Claude SDK
+        ``ToolPermissionContext`` for ``session/sdk.py``) this broker does
+        not act on; it is accepted only to match each backend's own
+        permission-callback signature, and every field beyond ``tool_name``
         and ``input_data`` reaches the pane, if at all, through the
         ``permission_request`` event this method emits, which does not
         currently carry them (plan section 3.3's wire example has none).
 
-        Every branch below returns a ``PermissionResult*``, and the two
-        checks before a request is ever created (already granted, no
-        viewer to ask) run with no ``await`` between them and this
-        method's entry, so nothing else on this event loop can change
-        either answer out from under this call before it commits to one.
+        Every branch below returns a ``Decision``, and the two checks
+        before a request is ever created (already granted, no viewer to
+        ask) run with no ``await`` between them and this method's entry, so
+        nothing else on this event loop can change either answer out from
+        under this call before it commits to one.
         """
         if self._shutdown:
-            return PermissionResultDeny(message=_DENY_SHUTDOWN)
+            return Decision(allow=False, message=_DENY_SHUTDOWN)
         if tool_name in self._granted_tools:
-            return PermissionResultAllow(updated_permissions=[_session_rule(tool_name)])
+            return Decision(allow=True, remember_tool=tool_name)
         if self._viewer_count == 0:
-            return PermissionResultDeny(message=self._no_viewer_message())
+            return Decision(allow=False, message=self._no_viewer_message())
 
         request_id = "pr_%d" % self._next_id
         self._next_id += 1
@@ -232,7 +257,7 @@ class PermissionBroker:
                     "error: failed to emit permission_request %r for %r: %r\n"
                     % (request_id, tool_name, exc)
                 )
-                return PermissionResultDeny(message=_DENY_EMIT_FAILED_TEMPLATE)
+                return Decision(allow=False, message=_DENY_EMIT_FAILED_TEMPLATE)
             try:
                 return await asyncio.wait_for(future, timeout=self._timeout)
             except asyncio.TimeoutError:
@@ -245,7 +270,7 @@ class PermissionBroker:
                 # its own done() check, not by a value read off a future
                 # this method has already stopped trusting.
                 self._outcomes[request_id] = OUTCOME_TIMEOUT
-                return PermissionResultDeny(message=_DENY_TIMEOUT_TEMPLATE % self._timeout)
+                return Decision(allow=False, message=_DENY_TIMEOUT_TEMPLATE % self._timeout)
         finally:
             self._pending.pop(request_id, None)
             self._open.pop(request_id, None)
@@ -456,7 +481,7 @@ class PermissionBroker:
         for request_id, future in list(self._pending.items()):
             if not future.done():
                 self._outcomes[request_id] = outcome
-                future.set_result(PermissionResultDeny(message=message))
+                future.set_result(Decision(allow=False, message=message))
 
 
 # ---------------------------------------------------------------------------
@@ -465,15 +490,13 @@ class PermissionBroker:
 # ---------------------------------------------------------------------------
 
 
-def _build_result(
-    tool_name: str, decision: str, message: str
-) -> Tuple[PermissionResult, Optional[str]]:
-    """The ``PermissionResult`` for one decision, and the tool name to
-    remember afterward (``None`` if nothing should be persisted)."""
+def _build_result(tool_name: str, decision: str, message: str) -> Tuple[Decision, Optional[str]]:
+    """The ``Decision`` for one decision, and the tool name to remember
+    afterward (``None`` if nothing should be persisted)."""
     if decision == "allow":
-        return PermissionResultAllow(), None
+        return Decision(allow=True), None
     if decision == "deny":
-        return PermissionResultDeny(message=message or DEFAULT_DENY_MESSAGE), None
+        return Decision(allow=False, message=message or DEFAULT_DENY_MESSAGE), None
     if decision == "allow_always":
         if tool_name in NEVER_REMEMBERED:
             # The pane should never offer this button for this tool, but
@@ -486,29 +509,9 @@ def _build_result(
                 "warning: allow_always for %r downgraded to a one-time allow; "
                 "%r is never remembered (plan section 5)\n" % (tool_name, tool_name)
             )
-            return PermissionResultAllow(), None
-        return PermissionResultAllow(updated_permissions=[_session_rule(tool_name)]), tool_name
+            return Decision(allow=True), None
+        return Decision(allow=True, remember_tool=tool_name), tool_name
     raise ValueError("unknown permission decision: %r" % (decision,))
-
-
-def _session_rule(tool_name: str) -> PermissionUpdate:
-    """The ``PermissionUpdate`` a remembered grant maps to: "map remembered
-    grants through PermissionUpdate so the SDK does the matching" (plan
-    section 5). ``destination="session"`` keeps the rule in the running
-    CLI process's own memory only; ``.mesh/permissions.toml`` is what
-    survives a restart, so a destination that also wrote a settings file
-    on disk would be a second, competing place the same fact lives. A
-    bare ``PermissionRuleValue`` with no ``rule_content`` matches any
-    input for ``tool_name`` (fact 2's own convention for a whole-tool
-    ``allowed_tools`` entry), which is the granularity the pane offers:
-    per tool, never per input.
-    """
-    return PermissionUpdate(
-        type="addRules",
-        rules=[PermissionRuleValue(tool_name=tool_name, rule_content=None)],
-        behavior="allow",
-        destination="session",
-    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,18 @@
 """Tests for ``session/permissions.py``: the ``can_use_tool`` broker.
 
-Every test asserts on the ``PermissionResultAllow``/``PermissionResultDeny``
-object ``ask`` returns, never on an internal predicate such as
-``_granted_tools`` or ``_viewer_count`` in isolation: a predicate can be
-correct while the code path that is supposed to consult it is wired wrong,
-and the SDK rejects anything that is not one of those two types outright
-(plan section 2a, fact 14), so that object is the only contract worth
-pinning.
+Every test asserts on the ``Decision`` object ``ask``/``decide`` produce,
+never on an internal predicate such as ``_granted_tools`` or
+``_viewer_count`` in isolation: a predicate can be correct while the code
+path that is supposed to consult it is wired wrong, and ``Decision`` is the
+one provider-neutral contract every backend's own session adapter converts
+into whatever its SDK requires (``session/sdk.py``'s ``_to_claude_result``
+and ``_session_rule``, for the Claude SDK, have their own dedicated
+coverage in ``tests/test_sdk_session.py``), so it is the only contract
+worth pinning here.
+
+Nothing in this file imports ``claude_agent_sdk``: that is itself part of
+what this module's decoupling from the Claude SDK buys, and a stray import
+creeping back in here would be exactly the regression to catch.
 
 Each test builds its own broker via ``_broker()``, which records every
 emitted event in a plain list rather than wiring a real ``EventLog`` or
@@ -24,13 +30,12 @@ itself is what elapses, not a test-authored delay racing against it.
 import asyncio
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate
-from claude_agent_sdk.types import PermissionRuleValue
 
 from annealage_mesh.session.base import PermissionRequest, PermissionResolved
 from annealage_mesh.session.permissions import (
     DEFAULT_DENY_MESSAGE,
     NEVER_REMEMBERED,
+    Decision,
     PermissionBroker,
     UnknownRequest,
 )
@@ -64,24 +69,24 @@ async def _pending_request(broker, events, tool_name="Edit", input_data=None):
     return task, request
 
 
-def _assert_session_rule(result, tool_name):
-    """A remembered grant's ``updated_permissions`` is one ``PermissionUpdate``
-    that adds a session-scoped allow rule for the whole tool (plan section
-    5: per tool, never per input), which is what lets the SDK's own rule
-    matcher, not this module's memory, cover the rest of the running
-    session."""
-    assert result.updated_permissions is not None
-    assert len(result.updated_permissions) == 1
-    update = result.updated_permissions[0]
-    assert isinstance(update, PermissionUpdate)
-    assert update.type == "addRules"
-    assert update.behavior == "allow"
-    assert update.destination == "session"
-    assert len(update.rules) == 1
-    rule = update.rules[0]
-    assert isinstance(rule, PermissionRuleValue)
-    assert rule.tool_name == tool_name
-    assert rule.rule_content is None
+def _assert_allow(result):
+    assert isinstance(result, Decision)
+    assert result.allow is True
+
+
+def _assert_deny(result):
+    assert isinstance(result, Decision)
+    assert result.allow is False
+
+
+def _assert_remembers(result, tool_name):
+    """A remembered grant's ``Decision`` names the tool a backend's own
+    remembered-grant mechanism (the Claude SDK's session-scoped
+    ``PermissionUpdate``, mapped by ``session/sdk.py``'s
+    ``_to_claude_result``; other backends' own, different mechanisms) should
+    also cover for the rest of the running session."""
+    _assert_allow(result)
+    assert result.remember_tool == tool_name
 
 
 # ---------------------------------------------------------------------------
@@ -97,8 +102,8 @@ async def test_decide_allow_resolves_ask_to_an_allow_result():
     await broker.decide(request.request_id, "allow")
     result = await task
 
-    assert isinstance(result, PermissionResultAllow)
-    assert result.updated_permissions is None
+    _assert_allow(result)
+    assert result.remember_tool is None
 
 
 async def test_decide_deny_carries_the_given_message_to_the_model():
@@ -109,7 +114,7 @@ async def test_decide_deny_carries_the_given_message_to_the_model():
     await broker.decide(request.request_id, "deny", "not touching that file")
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert result.message == "not touching that file"
 
 
@@ -124,7 +129,7 @@ async def test_decide_deny_with_no_message_falls_back_to_a_default():
     await broker.decide(request.request_id, "deny")
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert result.message == DEFAULT_DENY_MESSAGE
     assert result.message != ""
 
@@ -143,8 +148,7 @@ async def test_allow_always_persists_and_grants_a_later_request_without_asking(t
     await broker.decide(request.request_id, "allow_always")
     result = await task
 
-    assert isinstance(result, PermissionResultAllow)
-    _assert_session_rule(result, "Write")
+    _assert_remembers(result, "Write")
     assert permissions_path.exists()
     assert "Write" in permissions_path.read_text(encoding="utf-8")
 
@@ -153,8 +157,7 @@ async def test_allow_always_persists_and_grants_a_later_request_without_asking(t
     # the granted-tool check in ``ask`` runs before the no-viewer check.
     broker.viewer_disconnected()
     second = await broker.ask("Write", {}, None)
-    assert isinstance(second, PermissionResultAllow)
-    _assert_session_rule(second, "Write")
+    _assert_remembers(second, "Write")
     # A grant answered from memory opens no request, so it announces neither a
     # request nor a resolution: the only pair on the wire is the first one.
     assert [type(e).__name__ for e in events] == ["PermissionRequest", "PermissionResolved"]
@@ -164,8 +167,7 @@ async def test_allow_always_persists_and_grants_a_later_request_without_asking(t
     # request either.
     reopened, reopened_events = _broker(permissions_path=permissions_path)
     third = await reopened.ask("Write", {}, None)
-    assert isinstance(third, PermissionResultAllow)
-    _assert_session_rule(third, "Write")
+    _assert_remembers(third, "Write")
     assert reopened_events == []
 
 
@@ -179,8 +181,8 @@ async def test_allow_always_for_bash_is_downgraded_and_never_persisted(tmp_path,
     await broker.decide(request.request_id, "allow_always")
     result = await task
 
-    assert isinstance(result, PermissionResultAllow)
-    assert result.updated_permissions is None
+    _assert_allow(result)
+    assert result.remember_tool is None
     assert not permissions_path.exists()
     assert "downgraded" in capsys.readouterr().err
 
@@ -190,7 +192,7 @@ async def test_allow_always_for_bash_is_downgraded_and_never_persisted(tmp_path,
     second_task, second_request = await _pending_request(broker, events, tool_name="Bash")
     await broker.decide(second_request.request_id, "deny", "no")
     second_result = await second_task
-    assert isinstance(second_result, PermissionResultDeny)
+    _assert_deny(second_result)
     assert second_result.message == "no"
 
 
@@ -203,7 +205,7 @@ async def test_no_viewer_connected_denies_without_ever_creating_a_request():
     broker, events = _broker(viewer_url="http://127.0.0.1:8765/?t=abc")
     result = await broker.ask("Write", {}, None)
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "http://127.0.0.1:8765/?t=abc" in result.message
     assert events == []
     assert broker.pending_requests() == []
@@ -225,7 +227,7 @@ async def test_last_viewer_disconnecting_denies_every_outstanding_request():
     broker.viewer_disconnected()
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "disconnected" in result.message
 
 
@@ -240,7 +242,7 @@ async def test_timeout_denies_when_no_decision_ever_arrives():
 
     result = await broker.ask("Write", {}, None)
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "0.02" in result.message
     assert broker.pending_requests() == []
 
@@ -258,7 +260,7 @@ async def test_shutdown_denies_a_request_already_in_flight():
     broker.shutdown()
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "shutting down" in result.message
 
 
@@ -269,7 +271,7 @@ async def test_shutdown_latches_every_later_ask_to_deny_immediately():
 
     result = await broker.ask("Write", {}, None)
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "shutting down" in result.message
     assert events == []  # never got as far as emitting a permission_request
 
@@ -277,7 +279,7 @@ async def test_shutdown_latches_every_later_ask_to_deny_immediately():
     # observable about the next ask() either.
     broker.shutdown()
     result_again = await broker.ask("Write", {}, None)
-    assert isinstance(result_again, PermissionResultDeny)
+    _assert_deny(result_again)
 
 
 # ---------------------------------------------------------------------------
@@ -299,13 +301,13 @@ async def test_decide_on_an_id_already_answered_raises_and_the_first_answer_stan
 
     await broker.decide(request.request_id, "allow")
     result = await task
-    assert isinstance(result, PermissionResultAllow)
+    _assert_allow(result)
 
     with pytest.raises(UnknownRequest):
         await broker.decide(request.request_id, "deny", "too late")
 
     # The already-delivered result is untouched by the losing decide().
-    assert isinstance(result, PermissionResultAllow)
+    _assert_allow(result)
 
 
 async def test_two_concurrent_decides_on_one_id_leave_exactly_one_winner():
@@ -327,7 +329,7 @@ async def test_two_concurrent_decides_on_one_id_leave_exactly_one_winner():
     assert len(failures) == 1
 
     result = await task
-    assert isinstance(result, PermissionResultAllow)
+    _assert_allow(result)
 
 
 async def test_replayed_request_is_pending_until_answered_then_not_answerable_twice():
@@ -363,7 +365,7 @@ async def test_on_event_raising_denies_and_leaves_nothing_pending(capsys):
 
     result = await broker.ask("Write", {}, None)
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert broker.pending_requests() == []
     assert "broadcast exploded" in capsys.readouterr().err
 
@@ -413,7 +415,7 @@ async def test_a_timeout_announces_itself_as_a_timeout():
 
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert _resolutions(events)[0].outcome == "timeout"
 
 
@@ -493,7 +495,7 @@ async def test_a_failure_to_announce_does_not_break_the_decision(capsys):
     await broker.decide(events[0].request_id, "allow")
     result = await task
 
-    assert isinstance(result, PermissionResultAllow)
+    _assert_allow(result)
     assert broker.pending_requests() == []
     assert "broadcast exploded" in capsys.readouterr().err
 
@@ -524,7 +526,7 @@ async def test_a_reload_keeps_an_outstanding_request_waiting():
 
     # And it is still answerable, which is the whole point.
     await broker.decide(request.request_id, "allow")
-    assert isinstance(await task, PermissionResultAllow)
+    _assert_allow(await task)
     assert _resolutions(events)[0].outcome == "allow"
 
 
@@ -536,7 +538,7 @@ async def test_a_viewer_that_never_returns_is_denied_after_the_grace_period():
     broker.viewer_disconnected()
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "disconnected" in result.message
     assert _resolutions(events)[0].outcome == "no_viewer"
 
@@ -551,7 +553,7 @@ async def test_shutdown_during_the_grace_period_denies_at_once():
     broker.shutdown()
     result = await task
 
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert _resolutions(events)[0].outcome == "shutdown"
 
 
@@ -561,5 +563,5 @@ async def test_a_request_arriving_with_no_viewer_is_still_denied_immediately():
     not there, which would leave the model waiting on nobody."""
     broker, _events = _broker(no_viewer_grace=30.0)
     result = await broker.ask("Write", {}, None)
-    assert isinstance(result, PermissionResultDeny)
+    _assert_deny(result)
     assert "no browser viewer is connected" in result.message

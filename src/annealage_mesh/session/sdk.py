@@ -1,12 +1,17 @@
 """The real agent session: a ``ClaudeSDKClient`` behind the ``AgentSession`` seam.
 
-This module and ``session/permissions.py`` are the only two that import
-``claude_agent_sdk``, and the split is deliberate. This file owns the client,
-the options and the message pump; the broker owns the permission callback,
-whose return type the SDK dictates (it must be a ``PermissionResultAllow`` or
-``PermissionResultDeny``, and a dict is rejected outright), so interposing a
-translation there would mean inventing a parallel vocabulary of decisions whose
-only purpose is to be converted back one call later.
+This is the one file that turns a ``claude_agent_sdk`` result type into
+something this project's own code touches, and the split from
+``session/permissions.py`` is deliberate. That file owns the permission
+callback's future/timeout/grant machinery and returns a provider-neutral
+``Decision``; a dict or anything else the SDK does not itself define is
+rejected outright by ``ClaudeAgentOptions.can_use_tool``, so this file's
+``_to_claude_result`` is what maps a ``Decision`` onto ``PermissionResultAllow``
+or ``PermissionResultDeny`` before it ever reaches the SDK. That one
+translation is what lets a future ``CodexSession``/``OmpSession`` (a later
+phase of the multi-backend project; see ``planning/roadmap.md``) reuse the
+same broker and write their own, different adapter here instead of
+importing this SDK at all.
 
 What the seam buys is not importability without the SDK, which stopped being a
 question when the SDK became a base dependency. It is that ``session/fake.py``
@@ -47,13 +52,15 @@ and denies the call when it has changed. See ``session/workspace_trust.py``
 for what is watched and why that is the boundary.
 """
 
+from __future__ import annotations
+
 import asyncio
 import platform
 import re
 import shutil
 import sys
 import warnings
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -61,6 +68,9 @@ from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
     HookMatcher,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    PermissionUpdate,
     ResultMessage,
     StreamEvent,
     SystemMessage,
@@ -69,6 +79,7 @@ from claude_agent_sdk import (
     ToolUseBlock,
     UserMessage,
 )
+from claude_agent_sdk.types import PermissionRuleValue, ToolPermissionContext
 
 from ..tools import registry
 from . import secret_paths, turn_images, workspace_trust
@@ -86,6 +97,7 @@ from .base import (
     TurnEnd,
     UnknownRequest,
 )
+from .permissions import Decision
 
 # The mesh tools that never reach the broker, and therefore never interrupt the
 # human: the read-class ones, which change nothing, and the view-class ones,
@@ -390,6 +402,23 @@ class SdkSession:
         self._client = None
         self._set_status(AGENT_UNAVAILABLE)
 
+    async def _can_use_tool(
+        self, tool_name: str, input_data: dict, context: ToolPermissionContext
+    ) -> PermissionResult:
+        """The ``can_use_tool`` callback bound into ``ClaudeAgentOptions``.
+
+        Calls the broker's own ``ask`` and converts the provider-neutral
+        ``Decision`` it returns into what the Claude SDK requires, rather
+        than binding ``broker.ask`` itself: ``ask``'s return type stays
+        provider-neutral so ``session/permissions.py`` never has to import
+        this SDK, and this thin wrapper is the one place, for this backend,
+        where that translation happens. ``_to_claude_result`` is pure and
+        never raises, so this preserves ``ask``'s own "never raises, always
+        returns a decision" guarantee end to end.
+        """
+        decision = await self._broker.ask(tool_name, input_data, context)
+        return _to_claude_result(decision)
+
     def _build_options(self) -> ClaudeAgentOptions:
         allowed = list(PRE_ALLOWED_MESH_TOOLS) + list(self._extra_allowed_tools)
         kwargs = {
@@ -420,7 +449,7 @@ class SdkSession:
             pre_tool_use.insert(0, self._guard_config)
         kwargs["hooks"] = {"PreToolUse": [HookMatcher(matcher=None, hooks=pre_tool_use)]}
         if self._broker is not None:
-            kwargs["can_use_tool"] = self._broker.ask
+            kwargs["can_use_tool"] = self._can_use_tool
         if self._model:
             kwargs["model"] = self._model
         if self._effort:
@@ -747,6 +776,52 @@ class SdkSession:
             # The callback appends to a log and broadcasts; a failure there must
             # not take down the pump, or one bad frame would end the session.
             sys.stderr.write("warning: could not deliver %s: %r\n" % (type(event).__name__, exc))
+
+
+# ---------------------------------------------------------------------------
+# The one Claude-specific adapter: session/permissions.py's ``Decision`` to
+# the ``PermissionResultAllow``/``PermissionResultDeny`` shape
+# ``ClaudeAgentOptions.can_use_tool`` requires. See ``PermissionBroker.ask``'s
+# docstring: this conversion must never raise or return anything else, or it
+# defeats the "never raises, always returns a decision" guarantee ``ask``
+# itself already gives.
+# ---------------------------------------------------------------------------
+
+PermissionResult = Union[PermissionResultAllow, PermissionResultDeny]
+
+
+def _to_claude_result(decision: Decision) -> PermissionResult:
+    """The ``PermissionResultAllow``/``PermissionResultDeny`` ``decision``
+    maps to: an allow carrying a session-scoped ``PermissionUpdate`` when
+    ``remember_tool`` is set, so the SDK's own rule matcher covers the rest
+    of this process's run; a bare allow otherwise; a deny carrying the
+    human's message.
+    """
+    if not decision.allow:
+        return PermissionResultDeny(message=decision.message)
+    if decision.remember_tool:
+        return PermissionResultAllow(updated_permissions=[_session_rule(decision.remember_tool)])
+    return PermissionResultAllow()
+
+
+def _session_rule(tool_name: str) -> PermissionUpdate:
+    """The ``PermissionUpdate`` a remembered grant maps to: "map remembered
+    grants through PermissionUpdate so the SDK does the matching" (plan
+    section 5). ``destination="session"`` keeps the rule in the running
+    CLI process's own memory only; ``.mesh/permissions.toml`` is what
+    survives a restart, so a destination that also wrote a settings file
+    on disk would be a second, competing place the same fact lives. A
+    bare ``PermissionRuleValue`` with no ``rule_content`` matches any
+    input for ``tool_name`` (fact 2's own convention for a whole-tool
+    ``allowed_tools`` entry), which is the granularity the pane offers:
+    per tool, never per input.
+    """
+    return PermissionUpdate(
+        type="addRules",
+        rules=[PermissionRuleValue(tool_name=tool_name, rule_content=None)],
+        behavior="allow",
+        destination="session",
+    )
 
 
 # The two binaries the CLI's own disabled-sandbox message names, and the
