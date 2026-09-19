@@ -5,6 +5,7 @@ Depends on: Phase 3 (`_codex_cli_info`), Phase 4 (`_omp_info`) - both
 collectors are written as part of those phases' tickets; this ticket is only
 the aggregation/reporting wiring
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-20 at HEAD 5d8094e - MAJOR DRIFT, ticket shape largely obsolete. `diagnostics.py`'s `collect()` already gates `codex_cli`/`omp_cli` on `backend` (landed as a side effect of Phase 3's/Phase 4's own implementation work, each adding its own collector's call site directly rather than leaving it for this ticket); `claude_cli` stays ungated per an explicit, already-written docstring decision ("predates the multi-backend project and this ticket does not change that"). `cli.py`'s `diagnostics_report()` already formats both new fact shapes (codex_cli/omp_cli blocks, missing/not-configured reporting). `http/routes_settings.py` already threads `backend`/`local_base_url` through to the same `collect()` call. The ONLY work item genuinely still open is this ticket's own stated "Acceptance criteria and tests" - `tests/test_diagnostics.py` currently has zero coverage of `codex_cli`/`omp_cli`/`backend=` (confirmed via grep, 0 matches) despite the production code being fully wired and shipped. Scope narrowed accordingly below; anchors/approach-sketch sections are now historical (what already happened) rather than a work plan.
 
 ## Context
 
