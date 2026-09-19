@@ -1,4 +1,4 @@
-# Multi-backend agent roadmap
+# Multi-backend agent roadmap [ALL 6 PHASES COMPLETE - 2026-09-20]
 
 Date: 2026-09-19
 HEAD: 58f78db34e
@@ -322,7 +322,7 @@ Workflow shape: implementation on sonnet, automated tests on haiku, standard
 review on opus (not adversarial - this phase is additive UI/plumbing, low
 security surface). Ticket: `planning/tickets/phase5_live-model-selection.md`.
 
-## Phase 6 - Diagnostics and settings-UI polish
+## Phase 6 - Diagnostics and settings-UI polish [COMPLETE - see `20260919_phase6-progress.md`]
 
 Goal: `doctor`/`GET /settings` report the right diagnostics for whichever
 backend is configured, and the settings window's diagnostics block (already
