@@ -179,7 +179,7 @@ plus a haiku test run and one opus review (not adversarial - low-risk,
 additive) suffices; no loop expected. Ticket:
 `planning/tickets/phase2_settings-backend-switch.md`.
 
-## Phase 3 - `CodexSession`
+## Phase 3 - `CodexSession` [COMPLETE - see `20260919_phase3-progress.md`]
 
 Goal: `backend = "codex"` drives a real Codex conversation through mesh's
 existing chat pane and approval cards, using ChatGPT-subscription OAuth.
