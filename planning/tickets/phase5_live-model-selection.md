@@ -4,6 +4,7 @@ Phase: 5
 Depends on: Phase 3 (`CodexSession`), Phase 4 (`OmpSession`) both must exist;
 Phase 2 (`model` setting as the starting default)
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-20 at HEAD e50c36e - Q3 DECIDED, and resolved better than guessed: claude_agent_sdk's ClaudeSDKClient has a genuine live set_model(model) control-plane call, no reconnect needed (session/sdk.py's approach sketch below rewritten accordingly). Confirmed by reading source: Codex's TurnStartParams.model genuinely overrides "for this turn and subsequent turns" within the same thread (openai_codex 0.154.0's generated/v2_all.py) - the Codex anchor below was correct as originally sketched. session/codex.py and session/omp.py both landed in Phases 3/4 with self._model set once at construction/thread_start time and never re-read per-turn yet - this ticket adds that. protocol.py/session/base.py/http/ws.py/static/js/chat.js anchors not yet re-verified against current line numbers - re-locate by name, Phase 1/2/3/4 all touched files in this area.
 
 ## Context
 
@@ -11,17 +12,21 @@ The user's explicit requirement: backend is CLI-configured (a settings key,
 Phase 2); model selection is a live webui control, with its *default*
 configured the same way as the backend (i.e. also a settings key, not only a
 per-invocation flag). Codex and omp both support changing the active model
-mid-session natively; Claude does not have an equivalent primitive in
-`claude_agent_sdk` as far as this research established, so this ticket must
-resolve Q3 before Claude's path can be more than a documented limitation.
+`claude_agent_sdk` does not have an equivalent primitive - or so this
+roadmap assumed until Q3's revalidation found `ClaudeSDKClient.set_model()`,
+a genuine first-class live control-plane call. All three backends turn out
+to support live switching natively; there is no "refuse and require a
+restart" path needed for any of them.
 
 ## Scope
 
 In scope: new inbound WS frame `set_model`, new `AgentSession.set_model(...)`
 Protocol member, new `AgentModelChanged` event, per-driver implementation
-(native for Codex/omp, reconnect-or-refuse for Claude pending Q3), `hello`
-frame carrying the starting model, webui picker control and model-list
-sourcing.
+(native live switch on all three backends - Claude via `ClaudeSDKClient.set_model()`,
+Codex via `TurnStartParams.model`, omp via the RPC `set_model` command),
+`hello` frame carrying the starting model, webui picker control and
+model-list sourcing.
+
 
 Out of scope: anything about *which* model is available on a given
 backend/endpoint beyond straightforward enumeration (`codex.models()`,
@@ -58,18 +63,28 @@ backend/endpoint beyond straightforward enumeration (`codex.models()`,
   closest - read the full function before adding, it is currently only
   partially read in this research pass (lines 360-465 were read but the
   per-type branches' exact bodies were elided in the structural summary).
-- `session/codex.py` (Phase 3) - `set_model` stores `self._model = model`;
-  `submit_turn` passes `model=self._model` to `thread.turn(...)` on every
-  call, not only the next one (a turn started before the switch and a new
-  turn after it must both reflect current state correctly - verify there is
-  no unwanted mid-turn model change via `turn.steer()`, which should not
-  carry a model override).
-- `session/omp.py` (Phase 4) - `set_model` calls
-  `client.set_model(provider=self._provider, model_id=model)` directly (the
-  RPC command is literally named this - no adapter needed beyond argument
-  naming).
-- `session/sdk.py` - `set_model` needs Q3 resolved first (see Open
-  questions).
+- `session/codex.py` (Phase 3, landed) - `_model` is currently set once in
+  `__init__` and read at `thread_start`/`TurnStartParams` construction
+  (search for `self._model` - re-locate exactly, do not trust a line
+  number). `set_model` should store the new value and every subsequent
+  `TurnStartParams` construction (in `submit_turn`) must read the current
+  `self._model`, not a value captured at thread-start time - confirmed via
+  source that `TurnStartParams.model` genuinely overrides "for this turn and
+  subsequent turns" within the same thread, so no new thread/reconnect is
+  needed.
+- `session/omp.py` (Phase 4, landed) - `_model` is currently set once in
+  `__init__` (search for `self._model`). `omp://rpc.md`'s documented
+  `{ type: "set_model", provider: string, modelId: string }` command is the
+  wire shape; confirm `RpcClient`'s actual Python method name/signature for
+  it against the installed `omp_rpc` source before assuming a call shape -
+  not verified in this research pass.
+- `session/sdk.py` - `set_model` now has a confirmed, simple implementation:
+  `await self._client.set_model(model)` directly on the live
+  `ClaudeSDKClient` (`claude_agent_sdk/client.py:350-372`), which sends a
+  `{"subtype": "set_model", "model": model}` control request
+  (`claude_agent_sdk/_internal/query.py:788-796`) over the already-connected
+  session. No `close()`/`start()`/`resume=` cycle needed - this replaces the
+  ticket's original reconnect-based approach sketch entirely.
 - `static/js/chat.js:229-236` (`AGENT_LABEL`/`AGENT_TITLE` constants) and
   `initChat` (237-805, only partially read) - add a model-picker control;
   read the composer's existing DOM-construction pattern in the unread middle
@@ -93,35 +108,38 @@ backend/endpoint beyond straightforward enumeration (`codex.models()`,
   and/or `models.js` (`static/js/models.js`, not read in this research pass)
   share an event-handling switch statement, confirm the two are
   distinguishable there too, not only in `base.py`.
-- Claude's path (Q3) must fail loudly and specifically ("model can only be
-  changed by restarting mesh" or similar, surfaced as a normal chat-pane
-  message or a refused-frame response) if live switching turns out to be
-  unsupported - never a silent no-op where the picker shows a new value but
-  the next turn quietly uses the old model.
+- All three backends now support live switching natively (Q3's revalidated
+  resolution) - there is no "refuse and require a restart" path to design
+  for any of them. If a future backend genuinely cannot switch live, follow
+  the same shape this bullet originally described (a clear refusal via
+  `protocol.build_refused(...)`, never a silent no-op), but that is not
+  needed for Claude/Codex/omp as they stand today.
 
 ## Approach sketch
 
-For Claude, if Q3 resolves positively:
+All three drivers now have a confirmed, simple live-switch mechanism - no
+driver needs the reconnect workaround the ticket originally sketched for
+Claude:
 
 ```python
+# session/sdk.py
 async def set_model(self, model: str) -> None:
     if model == self._model:
         return
-    await self.close()
+    await self._client.set_model(model)  # live control-plane call,
+    self._model = model                   # no reconnect
+
+# session/codex.py
+async def set_model(self, model: str) -> None:
+    self._model = model  # read by the next TurnStartParams construction
+
+# session/omp.py
+async def set_model(self, model: str) -> None:
+    await self._run_blocking(self._client.set_model, provider=..., model_id=model)
     self._model = model
-    self._resume = self.sdk_session_id  # reconnect into the same conversation
-    await self.start()
+    # confirm RpcClient's actual method name/signature against omp_rpc
+    # source before implementing this literally - not verified here.
 ```
-
-matching the existing `-c`/`-r` resume mechanism's shape
-(`session/sdk.py:192,208`, `cli.py:764` `resume=_resumable_sdk_id(...)`) -
-this is not new machinery, it is the existing reconnect path triggered from a
-different caller.
-
-If Q3 resolves negatively, `set_model` on `SdkSession` should raise/return a
-refusal mesh's WS layer turns into a `protocol.build_refused(...)` frame
-(`protocol.py:186-195`) rather than attempting a reconnect that would not
-actually change the model.
 
 ## Acceptance criteria and tests
 
@@ -148,7 +166,14 @@ distinction called out above, which a standard review can catch).
 
 ## Open questions
 
-- Q3 (roadmap): does `claude_agent_sdk` honor a changed `model=` on
-  `resume=<id>`? Blocks whether Claude gets live switching or a documented
-  refusal - resolve before this ticket's Claude work item is implemented,
-  not discovered during review.
+- `omp_rpc.RpcClient`'s actual Python method name/signature for the
+  `set_model` RPC command - `omp://rpc.md` documents the wire shape
+  (`{type: "set_model", provider, modelId}`) but this ticket's revalidation
+  pass did not confirm the client library's exposed method against its
+  installed source (Phase 4's implementer already resolved similar
+  questions for other commands - check `session/omp.py`'s existing
+  `_run_blocking` call sites for the established pattern first).
+- Whether `static/js/models.js` (not read in this research pass) shares an
+  event-handling switch statement with `chat.js` that also needs to
+  distinguish `AgentModelChanged` from `ModelsChanged` - confirm before
+  wiring the webui picker.
