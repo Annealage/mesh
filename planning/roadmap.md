@@ -229,7 +229,7 @@ reaches the human given Q1's answer, not just the happy path. Looped until
 clean. Tickets: `planning/tickets/phase3_codex-session.md`,
 `planning/tickets/phase3_codex-tool-mcp-bridge.md`.
 
-## Phase 4 - `OmpSession`
+## Phase 4 - `OmpSession` [COMPLETE - see `20260919_phase4-progress.md`]
 
 Goal: `backend = "local"` drives a conversation against an arbitrary
 OpenAI-compatible endpoint through the same chat pane and approval cards.
@@ -361,6 +361,7 @@ adversarial). Ticket: `planning/tickets/phase6_diagnostics.md`.
 | Claude live model-switch-on-resume unsupported (Q3) | Phase 5 degrades to "refuse with a clear message" rather than a silent no-op or a crash. |
 | omp custom-provider wire shape assumed rather than verified (Q4) | Phase 4 blocks on reading `omp://providers.md`'s full custom-provider schema section before generating provider config. |
 | Three drivers drift in approval/tool/sandbox behavior over time | `session/base.py`'s Protocol and `tools/registry.py`'s classification stay the single source of truth every driver adapts to, not three independent policies. |
+| `.github/workflows/test.yml`'s `uv run --extra dev pytest -q` installs neither `--extra codex` nor `omp-rpc`, so `tests/test_codex_session.py`/`tests/test_mcp_bridge.py`/`tests/test_omp_session.py` need manual dependency installation to even collect in CI as currently configured (flagged in Phase 3 and Phase 4's progress reports, not fixed by either since it falls outside both phases' stated anchors) | Needs a dedicated fix before merge to a shared branch: add `--extra codex` to the CI invocation and either add an `omp-rpc` extra pointing at a stable release once one exists, or install it via the documented pinned git command in a CI step. Track as a standalone follow-up, not folded into Phase 5/6. |
 
 ## Progress tracking
 
