@@ -66,6 +66,26 @@ dev = ["pytest", "pytest-asyncio>=0.23"]
 # end at all: undeclared, they are silently not run.
 e2e = ["playwright"]
 
+# Optional, unlike claude-agent-sdk, because it is an alternative backend
+# (settings.py's `backend` key) rather than the default: an install that
+# only ever runs the Claude backend should not pay for a second CLI it
+# will never invoke. Like claude-agent-sdk, this wheel bundles a pinned CLI
+# runtime of its own (`openai-codex-cli-bin`), so `uv sync --extra codex`
+# downloads a second platform-specific binary on top of the base install.
+#
+# The floor is 0.154.0 because that is the exact version
+# `planning/20260919_codex-approval-handler-finding.md` verified by reading
+# the SDK's own source directly: the public `Codex`/`AsyncCodex`/
+# `AsyncCodexClient` wrappers have no way to set a custom `approval_handler`
+# at all and silently auto-accept every command-execution approval without
+# one, so `session/codex.py` constructs the low-level
+# `openai_codex.client.CodexClient` directly instead of any of those three.
+# That is reading an undocumented internal shape rather than the SDK's
+# stated public contract, so the `<1` cap is deliberately tight: a later
+# 0.x release is exactly where a shape like that is most likely to move
+# with no changelog entry warning this project to re-verify it.
+codex = ["openai-codex>=0.154,<1"]
+
 [project.scripts]
 annealage-mesh = "annealage_mesh.cli:main"
 

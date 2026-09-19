@@ -366,6 +366,20 @@ def diagnostics_report(facts):
             )
         )
 
+    codex_cli = facts.get("codex_cli")
+    if codex_cli is not None:
+        if codex_cli["source"] == "missing":
+            lines.append(
+                "  codex CLI        : NOT FOUND. Agent mode cannot run; install "
+                "the codex extra (`uv sync --extra codex` or `pip install "
+                "annealage-mesh[codex]`)"
+            )
+        else:
+            lines.append(
+                "  codex CLI        : %s  (%s, bundled with the SDK)"
+                % (codex_cli["version"] or "version not reported", codex_cli["path"])
+            )
+
     git = facts["git"]
     lines.append(
         "  git              : %s"
@@ -518,7 +532,14 @@ def doctor_command(argv):
     if serve_dir is None:
         sys.stderr.write("error: %s\n" % message)
         return 2
-    facts = diagnostics.collect(serve_dir)
+    try:
+        backend = settings_module.resolve(serve_dir)["backend"]
+    except settings_module.SettingsError:
+        # A doctor invocation must still report everything else it can when
+        # the settings files themselves are what is broken; codex_cli is
+        # simply omitted rather than the whole command failing.
+        backend = None
+    facts = diagnostics.collect(serve_dir, backend=backend)
     sys.stdout.write("\n".join(diagnostics_report(facts)) + "\n")
     return 0
 
@@ -745,33 +766,59 @@ def main(argv=None):
         anything that only wants the CLI's argument parsing, never pays for
         importing the SDK.
 
-        Branches on ``resolved_settings["backend"]``: only ``claude`` builds a
-        real session today. ``codex`` and ``local`` raise ``NotImplementedError``
+        Branches on ``resolved_settings["backend"]``: ``claude`` and ``codex``
+        build a real session today; ``local`` raises ``NotImplementedError``
         rather than returning a stand-in session object, so a stub backend can
         never reach ``describe_agent_posture`` or ``on_ready`` and have either
         render a posture or status for a session that does not exist; ``main``
         catches the raise and turns it into a clean error exit instead of a
-        raw traceback.
+        raw traceback. ``openai_codex``/``session.codex`` are imported only
+        inside the ``codex`` branch, so a ``claude``-backend run never pays
+        for that optional dependency.
         """
         if mode != "agent":
             return None
         backend = resolved_settings["backend"]
-        if backend == "codex":
-            raise NotImplementedError("backend=codex is not yet implemented")
         if backend == "local":
             raise NotImplementedError("backend=local is not yet implemented")
-        if backend != "claude":
+        if backend not in ("claude", "codex"):
             raise AssertionError("unreachable: settings.py validates backend's choices")
 
         from .session.permissions import PermissionBroker
-        from .session.sdk import SdkSession
-        from .tools.registry import MeshTools
 
         broker = PermissionBroker(
             on_event,
             permissions_path=sessions.mesh_dir(serve_dir) / "permissions.toml",
             viewer_url=open_url,
         )
+
+        if backend == "codex":
+            # Imported only in this branch, per the module docstring's own
+            # "keep the claude backend free of an unnecessary dependency
+            # import" intent: openai-codex is an optional extra, and a
+            # claude-backend run must not require it to be installed.
+            from .session.codex import CodexSession
+
+            session = CodexSession(
+                on_event,
+                cwd=serve_dir,
+                session_id=mesh_sid,
+                broker=broker,
+                model=resolved_settings["model"],
+                effort=resolved_settings["effort"],
+                # The app-server resumes only a thread it already knows; a
+                # freshly created mesh session has no Codex thread id yet.
+                resume=_resumable_sdk_id(serve_dir, mesh_sid) if resumed else None,
+                on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
+                    serve_dir, mesh_sid, sdk_id
+                ),
+            )
+            built_session.append(session)
+            return session
+
+        from .session.sdk import SdkSession
+        from .tools.registry import MeshTools
+
         session = SdkSession(
             on_event,
             cwd=serve_dir,

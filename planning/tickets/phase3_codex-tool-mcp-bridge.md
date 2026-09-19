@@ -57,9 +57,12 @@ different, in-process transport that needs no HTTP server at all.
   checks (`http/ws.py:74-102,182-250`, `_token_is_allowed`/
   `_origin_is_allowed`) are shared across routes, so the new MCP endpoint
   reuses the same auth rather than inventing a second scheme.
-- `session/codex.py` (from `phase3_codex-session.md`) - `start()`'s
-  `thread_start(...)` call gains a `config={...}` value pointing at the
-  mounted endpoint, once Q2 is resolved.
+- `session/codex.py` (from `phase3_codex-session.md`, now landed - read it
+  before starting) - `start()`'s `CodexConfig(config_overrides=(...))`
+  gains an entry registering the stdio-proxy subprocess this ticket adds,
+  now that Q2 is resolved (`20260919_codex-mcp-bridge-finding.md`):
+  `config_overrides` is a tuple of `--config key=value` CLI passthrough
+  strings, not an inline JSON/dict value.
 
 ## Design constraints
 
@@ -75,61 +78,90 @@ different, in-process transport that needs no HTTP server at all.
   pause-gating) gets decided. If a future tool needs different behavior on
   Codex than on Claude, that is a `tools/registry.py` change, not something
   encoded in this bridge.
-- Mount on mesh's *own* existing HTTP server (no second subprocess, no second
-  port to manage or document in the startup banner) - this is a deliberate
-  choice over spawning a standalone MCP server process, made explicit here so
-  a future agent does not "simplify" it into a separate process without
-  re-deriving why that was rejected (port/lifecycle/auth duplication).
+- Mount the HTTP/authority side on mesh's *own* existing HTTP server (no
+  second long-lived process, no second port to manage or document in the
+  startup banner) - this is a deliberate choice over spawning a standalone
+  MCP server process, made explicit here so a future agent does not
+  "simplify" it into a separate process without re-deriving why that was
+  rejected (port/lifecycle/auth duplication). The stdio-proxy subprocess
+  (new, per `20260919_codex-mcp-bridge-finding.md`) is unavoidable - Codex
+  only launches stdio subprocesses for MCP, never a direct URL registration
+  - but it should be a thin, short-lived translation shim with no tool logic
+  of its own, not a second authority.
 
 ## Approach sketch
 
-Use the official `mcp` Python package's `Server`/`FastMCP` streamable-HTTP
-app, built from `tool_table()`'s entries, mounted at e.g. `/mcp` on mesh's
-microdot app (exact mounting mechanism depends on what `app.py`'s framework
-integration looks like - microdot and the reference MCP SDK's ASGI-style app
-may need an adapter; check before assuming a drop-in mount).
-`CodexSession.start()`'s `thread_start(config={...})` override then needs
-whatever key Q2 resolves to, likely shaped close to:
+Two pieces, per `20260919_codex-mcp-bridge-finding.md`'s corrected design:
+
+1. **HTTP/authority side** (unchanged from the original plan): the official
+   `mcp` Python package's `Server`/`FastMCP` streamable-HTTP app, built from
+   `tool_table()`'s entries, mounted at e.g. `/mcp` on mesh's microdot app
+   (exact mounting mechanism depends on what `app.py`'s framework
+   integration looks like - microdot and the reference MCP SDK's ASGI-style
+   app may need an adapter; check before assuming a drop-in mount). Requires
+   mesh's own run token the same way `/ws`/`/settings` do.
+2. **stdio-to-HTTP proxy** (new): a small script Codex launches as a
+   subprocess per thread, speaking MCP over stdio to Codex on one side and
+   MCP over streamable-HTTP to mesh's own `/mcp` endpoint on the other,
+   forwarding mesh's run token. Check first whether an MIT/Apache-licensed,
+   dependency-light off-the-shelf proxy already does this (the `mcp-remote`
+   pattern is common in the MCP ecosystem) before writing one from scratch -
+   vendoring or depending on an existing, maintained proxy is preferable to
+   a bespoke reimplementation of MCP's own stdio framing.
+
+`CodexSession.start()` registers the proxy via `CodexConfig`'s
+`config_overrides` (a tuple of `--config key=value` strings, confirmed by
+reading `client.py:246-256`'s exact launch-argument construction - this is
+Codex's standard TOML-dotted-path override mechanism, not a JSON/dict
+value):
 
 ```python
-config={
-    "mcp_servers": {
-        "mesh": {"url": f"http://127.0.0.1:{port}/mcp", ...auth...}
-    }
-}
+config_overrides = (
+    f'mcp_servers.mesh.command="{proxy_command}"',
+    # whether a table-shaped value (args=[...], env={...}) is accepted the
+    # same way TOML would, or only scalar key=value pairs, needs a live
+    # check - see this ticket's Open questions.
+)
 ```
-
-but every field name here is a placeholder pending Q2 - do not implement
-against this shape without confirming it against
-`https://learn.chatgpt.com/docs/mcp` (or wherever the current schema lives)
-and the pinned runtime version first.
 
 ## Acceptance criteria and tests
 
-- A fake or real `codex app-server` process can list mesh's tools (a
+- A fake or real `codex app-server` process, launched with the
+  `config_overrides` registration, can list mesh's tools (a
   `read_stl_view`/similar READ-class tool is a safe first target) through
-  the mounted endpoint and get a result in the same `{"content": [...]}`
-  shape Claude's in-process tools return.
+  the stdio proxy -> HTTP endpoint chain and get a result in the same
+  `{"content": [...]}` shape Claude's in-process tools return.
 - A WRITE-class tool call routed through this bridge reaches
   `PermissionBroker` exactly once, not zero or two times (a plausible
   transport-layer bug: MCP's own protocol-level confirmation semantics
   double-counting against the approval-handler's).
-- The endpoint refuses a request with no/wrong token the same way `/ws` does
-  (`refusal()`, `http/ws.py:74-76`).
+- The HTTP endpoint refuses a request with no/wrong token the same way
+  `/ws` does (`refusal()`, `http/ws.py:74-76`).
+- The stdio proxy subprocess exits cleanly when its parent `codex
+  app-server` process exits (no orphaned proxy processes accumulating
+  across turns/sessions).
 
 ## Workflow shape
 
 Implementation on sonnet, automated tests on haiku (fake app-server driving
-the MCP endpoint), standard + adversarial review on opus - adversarial pass
+the stdio proxy, and a fake/real HTTP client driving the `/mcp` endpoint
+directly), standard + adversarial review on opus - adversarial pass
 specifically checks the auth-reuse constraint (no unauthenticated tool
-execution surface) and the double-approval risk above. Loop until clean.
+execution surface reachable through either hop) and the double-approval
+risk above. Loop until clean.
 
 ## Open questions
 
-- Q2 (roadmap): exact current config schema for Codex's remote MCP-over-HTTP
-  server registration. Must resolve before the approach sketch above is
-  implemented as anything other than a placeholder.
+- Whether `config_overrides` accepts a table-shaped value
+  (`mcp_servers.mesh.args=[...]`, `mcp_servers.mesh.env={...}`) the same way
+  TOML would, or only flat scalar `key=value` pairs - needs a live check
+  against a real `codex app-server` process before the `config_overrides`
+  construction in the approach sketch is implemented literally.
+- Whether an existing MIT/Apache-licensed stdio-to-HTTP MCP proxy is
+  suitable to depend on/vendor, or whether mesh needs to write its own -
+  not researched in this pass.
 - Whether microdot supports mounting a streamable-HTTP ASGI-style app
-  directly, or needs a thin adapter route that proxies to an
-  in-process MCP server object - not determined in this research pass since
-  `app.py` was not read.
+  directly, or needs a thin adapter route that proxies to an in-process MCP
+  server object - not determined in this research pass since `app.py` was
+  not read.
+

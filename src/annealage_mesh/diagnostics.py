@@ -81,6 +81,7 @@ def collect(
     session_id=None,
     bind=None,
     port=None,
+    backend=None,
     run=subprocess.run,
     which=shutil.which,
 ):
@@ -95,12 +96,20 @@ def collect(
     with no running server passes none of the three, and the fields are
     ``None``.
 
+    ``backend`` gates the ``codex_cli`` fact: it is present only when
+    ``backend == "codex"``, so a ``claude``-backend run (or a standalone
+    ``doctor`` invocation that never resolved a backend at all) never pays
+    for locating the bundled Codex runtime, which needs the optional
+    ``openai-codex-cli-bin`` package a ``claude``-only install may not have.
+    ``claude_cli`` carries no equivalent gate: it predates the multi-backend
+    project and this ticket does not change that.
+
     ``run`` and ``which`` are the same seam ``net.py`` and ``project.py``
     use for their own subprocess calls, so a test can pin exactly what
     "git is missing" or "claude hangs" looks like without touching a real
     binary.
     """
-    return {
+    facts = {
         "python": {
             "version": platform.python_version(),
             "executable": sys.executable,
@@ -122,6 +131,9 @@ def collect(
         "lock": _lock_info(project_dir),
         "settings_files": _settings_files(project_dir),
     }
+    if backend == "codex":
+        facts["codex_cli"] = _codex_cli_info(run=run, which=which)
+    return facts
 
 
 def _safe_which(which, name):
@@ -181,6 +193,25 @@ def _claude_cli_info(*, run, which):
     if found:
         return {"path": found, "version": _tool_version(found, run=run), "source": "path"}
     return {"path": None, "version": None, "source": "missing"}
+
+
+def _codex_cli_info(*, run, which):
+    """``{"path", "version", "source"}`` for the bundled ``codex`` binary the
+    openai-codex SDK would run, mirroring ``_claude_cli_info``'s shape.
+
+    Sourced from the pinned ``openai-codex-cli-bin`` package rather than a
+    ``which()`` lookup (``which`` is accepted only for that shape parity and
+    is otherwise unused): there may be no ``codex`` binary on ``PATH`` at
+    all, the same way there may be no bundled ``claude`` binary, since it is
+    bundled inside the Python package rather than installed separately.
+    """
+    try:
+        from codex_cli_bin import bundled_codex_path
+
+        path = str(bundled_codex_path())
+    except Exception:
+        return {"path": None, "version": None, "source": "missing"}
+    return {"path": path, "version": _tool_version(path, run=run), "source": "bundled"}
 
 
 def _detect_git(*, run, which):

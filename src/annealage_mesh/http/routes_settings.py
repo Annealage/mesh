@@ -79,7 +79,12 @@ def register_settings_routes(
         """
         loop = asyncio.get_running_loop()
         collect = functools.partial(
-            diagnostics.collect, serve_dir, session_id=session_id, bind=bind, port=port
+            diagnostics.collect,
+            serve_dir,
+            session_id=session_id,
+            bind=bind,
+            port=port,
+            backend=settings["backend"],
         )
         facts = await loop.run_in_executor(None, collect)
         wire = settings.to_wire()

@@ -5,6 +5,7 @@ Depends on: Phase 1 (`Decision` type), Phase 2 (`backend`, `local_base_url`,
 `local_api_key` settings), Phase 3's `tools/registry.py` `tool_table()`
 accessor
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-19 at HEAD 94e9dbf - Q4 DECIDED (roadmap.md): read omp://providers.md's "Custom providers in models.yml" section directly. Schema confirmed: providers.<id>.{baseUrl, api: "openai-completions", apiKey (env-var-name-or-literal; omit + auth: none for keyless), models: [{id, name, contextWindow, maxTokens}]}. No drift on this ticket's own file anchors (tools/registry.py's tool_table() accessor, added by Phase 3, not yet re-verified against Phase 3's landed shape - do that at this phase's actual entry, not now).
 
 ## Context
 
@@ -96,10 +97,24 @@ class OmpSession:
         ...
 ```
 
-Provider config generation (`_build_custom_provider`) is the piece gated on
-Q4 - do not implement it from the field names guessed in
-`planning/20260919_multi-backend-research.md`'s summary table without
-re-reading `omp://providers.md`'s actual custom-provider schema section.
+Provider config generation (`_build_custom_provider`) now has a confirmed
+shape (Q4, `roadmap.md`) to build against - a dict matching
+`omp://providers.md`'s custom-provider schema, written to wherever
+`RpcClient`'s `provider=`/config-file argument expects it (confirm the
+exact injection point - a `models.yml`-shaped dict passed directly, vs. a
+temp file path - against `omp-rpc`'s actual client code, not assumed):
+
+```python
+def _build_custom_provider(base_url: str, api_key: str | None) -> dict:
+    provider = {"baseUrl": base_url, "api": "openai-completions"}
+    if api_key:
+        provider["apiKey"] = api_key  # literal string; resolved as
+        # env-var-name-or-literal by omp, so this is correct even in the
+        # edge case where the string happens to match a real env var name
+    else:
+        provider["auth"] = "none"
+    return provider
+```
 
 ## Acceptance criteria and tests
 
@@ -124,8 +139,10 @@ second concurrent tool call). Loop until clean.
 
 ## Open questions
 
-- Q4 (roadmap): exact `omp://providers.md` custom-provider wire shape for
-  `local_base_url`/`local_api_key`.
+- Whether the confirmed Q4 schema is passed to `RpcClient` as an inline
+  dict, a generated `models.yml` fragment written to a temp file, or
+  another mechanism - `omp-rpc`'s actual client code (not the protocol doc)
+  needs reading to confirm the injection point.
 - Whether `omp_rpc.RpcClient`'s Python-side event delivery is already
   asyncio-compatible or needs the same thread-bridge pattern as
   `CodexSession`'s approval handler - check the package's own source, the
