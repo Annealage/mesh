@@ -187,7 +187,7 @@ SETTING_KEYS = (
         layers=(USER, PROJECT),
         effect="restart",
         description=(
-            "The Claude model the agent session uses. Unset falls back to the CLI's own default."
+            "The model the agent backend uses. Unset falls back to the backend's own default."
         ),
         py_type=str,
         nullable=True,
@@ -221,6 +221,47 @@ SETTING_KEYS = (
         py_type=str,
         nullable=True,
         choices=_PERMISSION_MODE_CHOICES,
+    ),
+    Key(
+        name="backend",
+        type_name='"claude" or "codex" or "local"',
+        default="claude",
+        layers=(USER, PROJECT),
+        effect="restart",
+        description=(
+            "Which agent backend this session uses: claude (claude-agent-sdk, "
+            "Claude subscription or API billing), codex (OpenAI's openai-codex "
+            "SDK, ChatGPT subscription or API billing), or local (an arbitrary "
+            "OpenAI-compatible endpoint via local_base_url)."
+        ),
+        py_type=str,
+        choices=("claude", "codex", "local"),
+    ),
+    Key(
+        name="local_base_url",
+        type_name="str or null",
+        default=None,
+        layers=(USER, PROJECT),
+        effect="restart",
+        description=(
+            "The OpenAI-compatible base URL the local backend talks to. Only "
+            "used when backend is local."
+        ),
+        py_type=str,
+        nullable=True,
+    ),
+    Key(
+        name="local_api_key",
+        type_name="str or null",
+        default=None,
+        layers=(USER, PROJECT),
+        effect="restart",
+        description=(
+            "The API key sent to local_base_url, if the endpoint requires one. "
+            "Only used when backend is local."
+        ),
+        py_type=str,
+        nullable=True,
     ),
     Key(
         name="up_axis",

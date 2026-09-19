@@ -3,6 +3,7 @@
 Phase: 2
 Depends on: none (independent of Phase 1; can land in parallel)
 Written: 2026-09-19 at HEAD 58f78db34e
+Revalidated: 2026-09-19 at HEAD 1dd8f99 - no drift on settings.py/cli.py/settings.js/routes_settings.py (Phase 1 only touched session/permissions.py, session/sdk.py, and their tests)
 
 ## Context
 

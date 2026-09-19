@@ -131,7 +131,7 @@ adversarial review on opus (the adversarial pass specifically checks the
 "never raises out of ask" invariant survived the refactor), looped until
 clean. Ticket: `planning/tickets/phase1_permission-broker-decoupling.md`.
 
-## Phase 2 - Settings + CLI backend switch (skeleton)
+## Phase 2 - Settings + CLI backend switch (skeleton) [COMPLETE - see `20260919_phase2-progress.md`]
 
 Goal: `--backend`/`backend` setting exists, is validated and CLI-flaggable
 exactly like `--model`, and `build_session` branches on it - but the `codex`

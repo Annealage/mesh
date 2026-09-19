@@ -117,6 +117,13 @@ def build_parser():
         help="model for the agent to use (default: whatever the claude CLI is configured for)",
     )
     ap.add_argument(
+        "--backend",
+        default=None,
+        choices=("claude", "codex", "local"),
+        help="which agent backend this session uses (default: claude, or "
+        "whatever your settings say)",
+    )
+    ap.add_argument(
         "--effort",
         default=None,
         choices=("low", "medium", "high", "xhigh", "max"),
@@ -273,6 +280,7 @@ def flags_from(args):
         ("host", args.host),
         ("port", args.port),
         ("model", getattr(args, "model", None)),
+        ("backend", getattr(args, "backend", None)),
         ("effort", getattr(args, "effort", None)),
         ("permission_mode", getattr(args, "permission_mode", None)),
     ):
@@ -553,6 +561,7 @@ def main(argv=None):
             ("-c/--continue", args.continue_),
             ("-r/--resume", args.resume is not None),
             ("--model", args.model is not None),
+            ("--backend", args.backend is not None),
             ("--effort", args.effort is not None),
             ("--permission-mode", args.permission_mode is not None),
             ("--trust-project-config", args.trust_project_config),
@@ -619,22 +628,25 @@ def main(argv=None):
         # unprotected and leaving the human to notice. Viewer-only mode runs no
         # agent and so carries no such requirement, which is why the message
         # points at it.
-        missing = sdk_requirements.missing_sandbox_dependencies()
-        if missing:
-            sys.stderr.write(
-                "error: agent mode runs the agent's shell sandboxed, and that needs "
-                "%s on this platform.\n"
-                "  missing: %s\n"
-                "  install: apt install %s   (or your distribution's equivalent)\n"
-                "  or run the viewer alone, which needs neither: "
-                "annealage-mesh view\n"
-                % (
-                    " and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
-                    ", ".join(missing),
-                    sdk_requirements.SANDBOX_PACKAGES,
+        # Claude-only: Codex uses its own Sandbox enum (Phase 3) and omp has
+        # its own posture (Phase 4), neither needs bwrap/socat on the host.
+        if resolved_settings["backend"] == "claude":
+            missing = sdk_requirements.missing_sandbox_dependencies()
+            if missing:
+                sys.stderr.write(
+                    "error: agent mode runs the agent's shell sandboxed, and that needs "
+                    "%s on this platform.\n"
+                    "  missing: %s\n"
+                    "  install: apt install %s   (or your distribution's equivalent)\n"
+                    "  or run the viewer alone, which needs neither: "
+                    "annealage-mesh view\n"
+                    % (
+                        " and ".join(sdk_requirements.SANDBOX_DEPENDENCIES),
+                        ", ".join(missing),
+                        sdk_requirements.SANDBOX_PACKAGES,
+                    )
                 )
-            )
-            return 2
+                return 2
 
         # Before the session opens, because what this gate prevents is a
         # session-start hook running, and by the time a session exists that has
@@ -732,9 +744,25 @@ def main(argv=None):
         Imported here rather than at module scope so that viewer-only mode, and
         anything that only wants the CLI's argument parsing, never pays for
         importing the SDK.
+
+        Branches on ``resolved_settings["backend"]``: only ``claude`` builds a
+        real session today. ``codex`` and ``local`` raise ``NotImplementedError``
+        rather than returning a stand-in session object, so a stub backend can
+        never reach ``describe_agent_posture`` or ``on_ready`` and have either
+        render a posture or status for a session that does not exist; ``main``
+        catches the raise and turns it into a clean error exit instead of a
+        raw traceback.
         """
         if mode != "agent":
             return None
+        backend = resolved_settings["backend"]
+        if backend == "codex":
+            raise NotImplementedError("backend=codex is not yet implemented")
+        if backend == "local":
+            raise NotImplementedError("backend=local is not yet implemented")
+        if backend != "claude":
+            raise AssertionError("unreachable: settings.py validates backend's choices")
+
         from .session.permissions import PermissionBroker
         from .session.sdk import SdkSession
         from .tools.registry import MeshTools
@@ -832,6 +860,9 @@ def main(argv=None):
         )
     except KeyboardInterrupt:
         pass
+    except NotImplementedError as exc:
+        sys.stderr.write("error: %s\n" % exc)
+        return 2
     finally:
         # Released on every exit from the server loop, including a signal:
         # a lock still held after this process is gone would refuse every

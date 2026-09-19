@@ -31,7 +31,7 @@ import { toast } from "./ui.js";
 
 const SECTIONS = [
   { title: "Server", keys: ["host", "port", "open_browser"] },
-  { title: "Agent", keys: ["model", "effort", "permission_mode"] },
+  { title: "Agent", keys: ["model", "effort", "permission_mode", "backend"] },
   { title: "Viewer", keys: ["up_axis", "tool_cards_collapsed"] },
 ];
 
@@ -51,6 +51,7 @@ const CHOICES = {
   effort: ["", "low", "medium", "high", "xhigh", "max"],
   permission_mode: ["", "default", "acceptEdits", "plan"],
   up_axis: ["z", "y"],
+  backend: ["claude", "codex", "local"],
 };
 
 let current = null;

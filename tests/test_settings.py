@@ -20,7 +20,7 @@ def _write(path, text):
 
 
 def test_setting_keys_and_keys_by_name_agree():
-    assert len(settings.SETTING_KEYS) == 8
+    assert len(settings.SETTING_KEYS) == 11
     assert set(settings.KEYS_BY_NAME) == {key.name for key in settings.SETTING_KEYS}
     assert all(settings.KEYS_BY_NAME[key.name] is key for key in settings.SETTING_KEYS)
 
@@ -309,6 +309,9 @@ def test_emitter_round_trips_every_value_type_in_the_table(tmp_path):
             "model": "claude-opus-4",
             "effort": "high",
             "permission_mode": "acceptEdits",
+            "backend": "codex",
+            "local_base_url": "http://localhost:11434",
+            "local_api_key": "test-key-123",
         },
     )
 
@@ -329,6 +332,9 @@ def test_emitter_round_trips_every_value_type_in_the_table(tmp_path):
     assert project_mapping["model"] == "claude-opus-4"
     assert project_mapping["effort"] == "high"
     assert project_mapping["permission_mode"] == "acceptEdits"
+    assert project_mapping["backend"] == "codex"
+    assert project_mapping["local_base_url"] == "http://localhost:11434"
+    assert project_mapping["local_api_key"] == "test-key-123"
 
     for key in settings.SETTING_KEYS:
         assert resolved.provenance(key.name) in (settings.USER, settings.PROJECT)
