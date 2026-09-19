@@ -52,6 +52,7 @@ class FakeSession:
         self.permission_decisions: List[Tuple[str, str, str]] = []
         self.decided_requests: Set[str] = set()
         self.interrupted = 0
+        self.set_model_calls: List[str] = []
         self.started = 0
         self.closed = 0
         self.viewer_counts: List[int] = []
@@ -89,6 +90,9 @@ class FakeSession:
 
     async def interrupt(self) -> None:
         self.interrupted += 1
+
+    async def set_model(self, model: str) -> None:
+        self.set_model_calls.append(model)
 
     # -- lifecycle -----------------------------------------------------------
     # Recorded rather than merely accepted, so a test can assert that whatever

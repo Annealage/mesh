@@ -36,6 +36,7 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright
 
 from annealage_mesh import app as mesh_app
+from annealage_mesh import sessions as mesh_sessions
 from annealage_mesh.session import base as session_base
 from annealage_mesh.session.fake import FakeSession
 
@@ -338,7 +339,20 @@ def chat_server(tmp_path_factory):
         buses.append(bus)
         return session
 
-    server = _ServerThread(d, token=secrets.token_urlsafe(16), build_session=build_session)
+    server = _ServerThread(
+        d,
+        token=secrets.token_urlsafe(16),
+        build_session=build_session,
+        # A real mesh_session_id is required alongside a real build_session:
+        # app.py's create_app gates mesh_tools construction (and therefore
+        # the /mcp route) on mesh_session_id being set, not on build_session
+        # merely being present - cli.py's own build_session closure is
+        # always a real callable whose mode check happens internally, so
+        # gating on its presence would make every viewer-only run import
+        # claude_agent_sdk. A scripted FakeSession is a real session the
+        # same way, so it needs a real (if fake) session id too.
+        mesh_session_id=mesh_sessions.create_session(d),
+    )
     server.start()
     # The `ViewerBus` this app built, kept on the server handle rather than
     # yielded alongside it so the tests that predate M6 are untouched. The

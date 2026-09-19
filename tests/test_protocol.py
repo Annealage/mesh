@@ -137,9 +137,22 @@ def test_build_hello_round_trips():
             # is the one that shows the human a control claiming the agent may
             # drive the viewer when it may not.
             "paused": False,
+            # Defaulted to None, same reasoning as `sdk_session_id`: a caller
+            # with no agent session yet (or one this project's settings never
+            # set a model for) reports that honestly rather than a guess.
+            "model": None,
         },
         "protocol": PROTOCOL_VERSION,
     }
+    assert _roundtrip(frame) == frame
+
+
+def test_build_hello_carries_the_starting_model():
+    """A fresh tab's picker reads its initial value from here, not from a
+    later `AgentModelChanged` event: this is a snapshot, not the corrected
+    value a live `set_model` produces."""
+    frame = build_hello(7, "sess-1", "sdk-1", "/tmp/proj", "ready", model="claude-opus-4")
+    assert frame["session"]["model"] == "claude-opus-4"
     assert _roundtrip(frame) == frame
 
 
@@ -245,6 +258,7 @@ VALID_FRAMES = [
     },
     {"v": PROTOCOL_VERSION, "type": "pause", "paused": True},
     {"v": PROTOCOL_VERSION, "type": "pause", "paused": False},
+    {"v": PROTOCOL_VERSION, "type": "set_model", "model": "claude-opus-4"},
 ]
 
 
@@ -301,6 +315,7 @@ def test_validate_inbound_rejects_frame_with_no_type_at_all():
         {"v": PROTOCOL_VERSION, "type": "result", "result": {}},
         {"v": PROTOCOL_VERSION, "type": "error", "id": "c_1"},
         {"v": PROTOCOL_VERSION, "type": "state"},
+        {"v": PROTOCOL_VERSION, "type": "set_model"},
     ],
 )
 def test_validate_inbound_rejects_frame_missing_a_required_key(frame):
@@ -321,6 +336,7 @@ def test_validate_inbound_rejects_frame_missing_a_required_key(frame):
             "extra": 1,
         },
         {"v": PROTOCOL_VERSION, "type": "state", "state": {}, "extra": 1},
+        {"v": PROTOCOL_VERSION, "type": "set_model", "model": "gpt-5", "extra": 1},
     ],
 )
 def test_validate_inbound_rejects_unknown_top_level_key(frame):
@@ -434,3 +450,15 @@ def test_validate_inbound_rejects_a_numeric_pause_value():
 def test_validate_inbound_rejects_state_value_that_is_not_an_object():
     ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "state", "state": "front"})
     assert ok is False
+
+
+def test_validate_inbound_rejects_a_non_string_set_model():
+    ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "set_model", "model": 5})
+    assert ok is False
+    assert "non-empty string" in reason
+
+
+def test_validate_inbound_rejects_an_empty_set_model():
+    ok, reason = validate_inbound({"v": PROTOCOL_VERSION, "type": "set_model", "model": ""})
+    assert ok is False
+    assert "non-empty string" in reason

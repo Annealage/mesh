@@ -80,6 +80,12 @@
     <div id="chatLog"></div>
     <div id="chatPending"></div>
     <div id="chatComposer">
+      <div id="chatModelRow" class="chatmodelrow">
+        <label for="chatModelInput">Model</label>
+        <input id="chatModelInput" type="text" placeholder="backend default"
+               title="Switch the model for this conversation, live, with no restart"
+               autocomplete="off" spellcheck="false">
+      </div>
       <div id="chatAttachStrip" class="attachstrip" hidden></div>
       <div id="chatComposerRow">
         <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>

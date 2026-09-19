@@ -161,6 +161,7 @@ def register_ws(
                         session_info["cwd"],
                         session_info.get("agent", "unavailable"),
                         paused=bus.paused if bus is not None else False,
+                        model=session_info.get("model"),
                     )
                 )
             )
@@ -408,7 +409,7 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
         seq = event_log.append(event)
         await registry.broadcast(protocol.build_event(seq, event.to_wire()))
         return
-    if kind in ("turn", "interrupt", "permission"):
+    if kind in ("turn", "interrupt", "permission", "set_model"):
         if session is None:
             # Viewer-only: the frames are still defined and validated so one
             # browser build works against both modes, and answering with a
@@ -432,6 +433,8 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
                 await session.submit_turn(frame["blocks"], viewer=conn.tab_id)
             elif kind == "interrupt":
                 await session.interrupt()
+            elif kind == "set_model":
+                await session.set_model(frame["model"])
             else:
                 await session.decide_permission(
                     frame["request_id"], frame["decision"], frame.get("message", "")

@@ -165,6 +165,129 @@ async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_
     assert info.cost_usd == pytest.approx(0.02)
 
 
+# ---------------------------------------------------------------------------
+# session_info stays live: a browser tab connecting after a switch sees it
+# ---------------------------------------------------------------------------
+
+
+async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(served_dir):
+    """``session_info["model"]`` is built once from ``settings`` at session
+    construction; without ``_event_publisher`` writing a live
+    ``AgentModelChanged`` back into that same dict, a browser tab connecting
+    after the switch only recovers the running model while the event
+    announcing it is still inside the replay ring buffer -- once evicted, a
+    fresh ``hello`` would permanently show the CLI-configured starting model
+    instead of what the session is actually running.
+
+    ``TestClient.websocket()``'s fake socket drops anything the server sends
+    before its own first ``read()``, which is exactly when ``hello`` is sent
+    (test_ws_auth.py's own documented reason for the same workaround), so
+    this drives one real ``/ws`` handshake through ``app.dispatch_request``
+    with a raw duplex buffer and decodes the literal ``hello`` frame bytes.
+    """
+    import json
+    import struct
+
+    from microdot import Response
+    from microdot.microdot import Request
+    from microdot.websocket import WebSocket
+
+    from annealage_mesh import protocol
+    from annealage_mesh.session.base import AgentModelChanged
+    from annealage_mesh.session.fake import FakeSession
+
+    class _RawSock:
+        def __init__(self, initial_bytes):
+            self.buffer = initial_bytes
+            self.written = []
+
+        async def read(self, n):
+            data = self.buffer[:n]
+            self.buffer = self.buffer[n:]
+            return data
+
+        async def readexactly(self, n):
+            return await self.read(n)
+
+        async def readline(self):
+            line = b""
+            while True:
+                byte = await self.read(1)
+                if not byte:
+                    return line
+                line += byte
+                if line[-1:] == b"\n":
+                    return line
+
+        async def awrite(self, data):
+            self.written.append(bytes(data))
+
+    def _decode_text_frame(frame_bytes):
+        opcode = frame_bytes[0] & 0x0F
+        length = frame_bytes[1] & 0x7F
+        offset = 2
+        if length == 126:
+            length = struct.unpack("!H", frame_bytes[2:4])[0]
+            offset = 4
+        elif length == 127:
+            length = struct.unpack("!Q", frame_bytes[2:10])[0]
+            offset = 10
+        return opcode, frame_bytes[offset : offset + length]
+
+    built = []
+    from annealage_mesh import sessions
+
+    sid = sessions.create_session(served_dir)
+
+    def build_session(on_event, *, bus):
+        session = FakeSession(on_event, session_id=sid)
+        built.append(session)
+        return session
+
+    app = app_module.create_app(
+        served_dir,
+        token="tok",
+        mesh_session_id=sid,
+        build_session=build_session,
+        settings={"model": "claude-opus-4"},
+    )
+    # The live switch this fix keeps session_info current for -- a real
+    # driver emits this once its own control-plane set_model call takes
+    # effect (session/omp.py, session/sdk.py, session/codex.py all do).
+    built[0].emit(AgentModelChanged(model="claude-haiku-5"))
+
+    client = make_test_client(app)
+    headers = {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "Origin": "http://127.0.0.1:%d" % app_module.DEFAULT_PORT,
+    }
+    request_bytes = client._render_request("GET", "/ws?t=tok", headers, b"")
+    client_hello = json.dumps(
+        {"v": protocol.PROTOCOL_VERSION, "type": "hello", "token": "tok", "last_seq": 0}
+    )
+    hello_frame = WebSocket._encode_websocket_frame(WebSocket.TEXT, client_hello)
+    sock = _RawSock(request_bytes + bytes(hello_frame))
+    req = await Request.create(client.app, sock, sock, ("127.0.0.1", 1234), scheme=None)
+    res = await client.app.dispatch_request(req)
+    assert res is Response.already_handled
+
+    # The upgrade handshake's own HTTP response lines go through the same
+    # `awrite` call `_RawSock` records, ahead of the first real WebSocket
+    # frame; `\x81` (FIN + TEXT opcode) is what distinguishes it from those.
+    ws_frames = [f for f in sock.written if f[:1] == b"\x81"]
+    assert ws_frames, "the server never sent a hello frame"
+    opcode, payload = _decode_text_frame(ws_frames[0])
+    assert opcode == WebSocket.TEXT
+    hello = json.loads(payload)
+    # The property under test: a connection opened *after* the switch reads
+    # the live model, not the settings-time snapshot ("claude-opus-4") --
+    # even though this event has never left the still-full replay ring.
+    assert hello["session"]["model"] == "claude-haiku-5"
+
+
 async def test_viewer_only_mode_writes_no_event_log(tmp_path):
     """There is no session and no conversation, so there is nothing to persist
     and nothing to create a session directory for."""

@@ -36,6 +36,7 @@ from annealage_mesh.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     PermissionRequest,
     PermissionResolved,
@@ -47,6 +48,7 @@ from annealage_mesh.session.omp import (
     OmpSession,
     _api_key_env_name,
     _build_custom_provider,
+    _PROVIDER_ID,
     _write_agent_dir,
 )
 from annealage_mesh.session.permissions import PermissionBroker
@@ -66,6 +68,7 @@ class FakeRpcClient:
         self.abort_calls = 0
         self.confirmations = []
         self.cancellations = []
+        self.set_model_calls = []
         self._listeners = {}
         self.session_id = "omp-sess-1"
 
@@ -84,6 +87,10 @@ class FakeRpcClient:
 
     def abort(self):
         self.abort_calls += 1
+
+    def set_model(self, provider, model_id):
+        self.set_model_calls.append((provider, model_id))
+        return SimpleNamespace(provider=provider, model_id=model_id)
 
     def on_message_update(self, listener):
         self._listeners["message_update"] = listener
@@ -272,11 +279,53 @@ async def test_start_launches_omp_scoped_to_a_custom_provider_with_no_builtin_to
         assert "secret-key" not in json.dumps(models_doc)
         assert fake.kwargs["env"][env_var_name] == "secret-key"
         assert provider["models"] == [{"id": "llama3.1:8b", "name": "llama3.1:8b"}]
+        # Registering only the startup model_id, with no discovery, is
+        # exactly what made a live switch to any other model rejected by
+        # omp's real RpcClient.set_model with "Model not found" (Finding 1):
+        # discovery: {type: proxy} (omp://providers.md's "Discovery-enabled
+        # provider" shape) makes every model the endpoint reports live-
+        # switchable, not only this one.
+        assert provider["discovery"] == {"type": "proxy"}
 
         assert session.sdk_session_id == "omp-sess-1"
     finally:
         await session.close()
     assert not agent_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_set_model_to_a_model_other_than_the_startup_one_is_not_rejected_by_the_config():
+    """The real ``omp`` binary's ``RpcClient.set_model`` rejects any
+    ``modelId`` its session does not already know about -- registered in
+    ``models.yml`` or discovered at runtime (``omp://providers.md``'s
+    registry-assembly order). ``FakeRpcClient.set_model`` below never
+    rejects anything, so it cannot by itself prove a live switch to a
+    second model actually works against the real binary; what it *can*
+    prove is that this session no longer generates the config that made
+    the real binary reject it -- registering only the one startup
+    ``model_id`` with discovery disabled. This asserts the generated
+    ``models.yml`` now enables discovery (``discovery: {type: "proxy"}``),
+    which is what makes any model the endpoint actually reports selectable,
+    not only ``llama3.1:8b``, before also exercising the switch itself
+    through the fake to confirm the call still goes through end to end."""
+    session, fake, recorder, broker = await _started_session(
+        model="llama3.1:8b", base_url="http://127.0.0.1:11434/v1"
+    )
+    try:
+        agent_dir = Path(fake.kwargs["env"]["PI_CODING_AGENT_DIR"])
+        models_doc = json.loads((agent_dir / "models.yml").read_text())
+        provider = models_doc["providers"]["mesh-local"]
+        # The seam the real bug lived in: without this, omp would only ever
+        # know about "llama3.1:8b" and reject a switch to anything else.
+        assert provider["discovery"] == {"type": "proxy"}
+
+        await session.set_model("mixtral-8x7b")
+        assert fake.set_model_calls == [(_PROVIDER_ID, "mixtral-8x7b")]
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "mixtral-8x7b"
+    finally:
+        await session.close()
 
 
 @pytest.mark.asyncio
@@ -311,13 +360,19 @@ def test_build_custom_provider_writes_the_given_env_var_name_as_apikey():
     assert provider == {
         "baseUrl": "http://host/v1",
         "api": "openai-completions",
+        "discovery": {"type": "proxy"},
         "apiKey": "MESH_OMP_API_KEY_abc123",
     }
 
 
 def test_build_custom_provider_without_api_key_is_auth_none_not_empty_header():
     provider = _build_custom_provider("http://host/v1", None)
-    assert provider == {"baseUrl": "http://host/v1", "api": "openai-completions", "auth": "none"}
+    assert provider == {
+        "baseUrl": "http://host/v1",
+        "api": "openai-completions",
+        "discovery": {"type": "proxy"},
+        "auth": "none",
+    }
     assert "apiKey" not in provider
 
 
@@ -685,5 +740,33 @@ async def test_interrupt_denies_every_pending_request_before_aborting():
         assert fake.abort_calls == 1
         await confirm_future
         assert fake.confirmations == [("ui-1", False)]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_calls_the_rpc_set_model_with_the_provider_and_model():
+    """``RpcClient.set_model(provider, model_id)`` (``omp://rpc.md``'s
+    ``{type: "set_model", provider, modelId}`` wire shape), run through the
+    same ``_run_blocking`` executor bridge every other one-shot
+    ``RpcClient`` call in this file uses."""
+    session, fake, recorder, broker = await _started_session()
+    try:
+        await session.set_model("llama-70b")
+        assert fake.set_model_calls == [(_PROVIDER_ID, "llama-70b")]
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "llama-70b"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_to_the_current_model_is_a_no_op():
+    session, fake, recorder, broker = await _started_session(model="llama-70b")
+    try:
+        await session.set_model("llama-70b")
+        assert fake.set_model_calls == []
+        assert not any(isinstance(e, AgentModelChanged) for e in recorder.all)
     finally:
         await session.close()

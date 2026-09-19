@@ -52,6 +52,7 @@ from annealage_mesh.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     PermissionRequest,
     PermissionResolved,
@@ -627,6 +628,40 @@ async def test_text_delta_becomes_one_text_delta_event():
 
         fake.push_turn_completed(turn_id)
         await recorder.next()
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_is_read_fresh_by_the_next_turn_starts_params():
+    """``set_model`` stores the new value; ``submit_turn``'s own
+    ``TurnStartParams`` dict reads ``self._model`` fresh on every call,
+    which is what makes a live switch actually take effect on the next
+    turn -- Codex documents ``TurnStartParams.model`` as overriding "for
+    this turn and subsequent turns" within the same thread, so no new
+    thread or reconnect is needed."""
+    session, fake, recorder, broker = await _started_session()
+    try:
+        await session.set_model("o3-mini")
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "o3-mini"
+
+        await session.submit_turn([{"type": "text", "text": "hi"}])
+        assert fake.turn_start_calls[-1].params["model"] == "o3-mini"
+
+        fake.push_turn_completed(fake.turn_start_calls[-1].turn_id)
+        await recorder.next()
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_to_the_current_model_is_a_no_op():
+    session, fake, recorder, broker = await _started_session(model="gpt-5")
+    try:
+        await session.set_model("gpt-5")
+        assert not any(isinstance(e, AgentModelChanged) for e in recorder.all)
     finally:
         await session.close()
 

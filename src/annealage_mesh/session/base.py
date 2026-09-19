@@ -288,6 +288,27 @@ class AgentStatus(AgentEvent):
 
 
 @dataclasses.dataclass(frozen=True)
+class AgentModelChanged(AgentEvent):
+    """The active model changed mid-conversation, via ``session.set_model``.
+
+    Not to be confused with ``ModelsChanged`` above, which is about the
+    served directory's 3D-printable STL files -- a completely unrelated
+    concept that happens to share the word "model". This one is
+    ``Agent``-prefixed, matching ``AgentStatus``/``AgentError``: it is about
+    the conversation driver itself, never the served project.
+
+    Emitted once the switch actually took effect (after the live
+    control-plane call each driver's ``set_model`` makes), so a picker
+    showing the CLI-configured starting model (``hello``'s ``session.model``)
+    reflects a later human choice without a page reload.
+    """
+
+    kind: ClassVar[str] = "agent_model_changed"
+    model: str
+    viewer: Optional[str] = None
+
+
+@dataclasses.dataclass(frozen=True)
 class SessionReset(AgentEvent):
     """Emitted when a requested resume (``-c``/``-r``) fails and the
     session falls back to starting fresh instead (plan section 3.4)."""
@@ -314,7 +335,7 @@ class AgentError(AgentEvent):
 class AgentSession(Protocol):
     """What ``http/ws.py`` needs from whatever is driving a conversation.
 
-    The four frame-handling coroutines are what ``ws.py`` dispatches to. The
+    The five frame-handling coroutines are what ``ws.py`` dispatches to. The
     four members after them are the lifecycle ``app.run`` and ``cli.py`` drive,
     and they are declared here rather than left to duck typing because both
     callers reach for them unconditionally: a session missing ``start`` fails
@@ -324,12 +345,12 @@ class AgentSession(Protocol):
     ``session_id``, ``sdk_session_id`` and ``cwd`` are read once per
     connection to build the ``hello`` frame's ``session`` object.
     ``sdk_session_id`` is ``None`` until the real SDK client has one to
-    report (M5); it is never fabricated. The four coroutine methods are
-    where ``ws.py`` dispatches an inbound ``turn``, ``permission`` or
-    ``interrupt`` frame; there is deliberately no method for an inbound
-    ``state`` frame, because a browser's camera/visibility snapshot is
-    viewer state, not agent state, and belongs wherever a tool call reads
-    "the current view" from, not here.
+    report (M5); it is never fabricated. The five coroutine methods are
+    where ``ws.py`` dispatches an inbound ``turn``, ``permission``,
+    ``interrupt`` or ``set_model`` frame; there is deliberately no method for
+    an inbound ``state`` frame, because a browser's camera/visibility
+    snapshot is viewer state, not agent state, and belongs wherever a tool
+    call reads "the current view" from, not here.
 
     A session never touches a WebSocket, an ``EventLog`` or a
     ``ViewerRegistry`` directly; it only calls ``on_event`` from its
@@ -360,6 +381,17 @@ class AgentSession(Protocol):
 
     async def interrupt(self) -> None:
         """Handle an inbound ``interrupt`` frame."""
+        ...
+
+    async def set_model(self, model: str) -> None:
+        """Handle an inbound ``set_model`` frame: switch the live conversation
+        to ``model`` and emit ``AgentModelChanged`` once it takes effect.
+
+        All three backends support a genuine live switch natively (no
+        reconnect or restart); a session that cannot honour a given value
+        raises rather than silently no-opping, which ``ws.py`` turns into a
+        ``refused`` frame naming the failure.
+        """
         ...
 
     async def start(self) -> None:

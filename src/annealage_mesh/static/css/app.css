@@ -249,6 +249,16 @@ pre.toolresult.error { color: #e8a0a0; }
 
 #chatComposer { flex: none; border-top: 1px solid #2c313a; padding: 10px 14px; display: flex; flex-direction: column; gap: 8px; }
 #chatComposerRow { display: flex; gap: 8px; align-items: flex-end; }
+.chatmodelrow {
+  display: flex; align-items: center; gap: 8px; font-size: 11px; color: #8b93a0;
+}
+.chatmodelrow label { flex: none; text-transform: uppercase; letter-spacing: .04em; }
+#chatModelInput {
+  flex: 1; min-height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid #3a3f47;
+  background: #1b1e24; color: #d6d8dc; font: inherit; font-size: 12px;
+}
+#chatModelInput:focus { outline: none; border-color: #35c7e0; }
+#chatModelInput:disabled { opacity: .5; }
 #chatInput {
   flex: 1; resize: vertical; min-height: 38px; max-height: 160px;
   background: #1b1e24; color: #d6d8dc; border: 1px solid #2f343d; border-radius: 7px;

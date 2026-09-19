@@ -172,6 +172,7 @@ from .base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     SandboxStatus,
     TextDelta,
@@ -387,6 +388,26 @@ class OmpSession:
             # already finished or the child is gone, and both surface
             # through the event stream's own failure handling.
             sys.stderr.write("warning: interrupt failed: %r\n" % (exc,))
+
+    async def set_model(self, model: str) -> None:
+        """Switch `omp`'s live session model via the RPC `set_model` command.
+
+        ``omp://rpc.md`` documents the wire shape as
+        ``{type: "set_model", provider, modelId}``; the installed
+        ``omp_rpc`` source (``RpcClient.set_model(self, provider: str,
+        model_id: str) -> ModelInfo``, confirmed by reading
+        ``omp_rpc/client.py`` directly) is the method this calls through
+        ``_run_blocking``, exactly like every other one-shot ``RpcClient``
+        call in this file. ``_PROVIDER_ID`` is the same custom-provider id
+        this session's own ``models.yml`` registers at ``start()``, so a
+        live switch stays scoped to the provider `omp` already knows this
+        session by.
+        """
+        if model == self._model:
+            return
+        await self._run_blocking(self._client.set_model, _PROVIDER_ID, model)
+        self._model = model
+        self._emit(AgentModelChanged(model=model))
 
     # -- lifecycle --------------------------------------------------------------
 
@@ -726,8 +747,25 @@ def _build_custom_provider(base_url: str, api_key_env_name: Optional[str]) -> di
     local, unauthenticated endpoint (Ollama, llama.cpp): ``auth: none`` is
     `omp`'s own keyless marker, never an empty-string ``Authorization``
     header.
+
+    ``discovery: {type: "proxy"}`` is `omp://providers.md`'s
+    "Discovery-enabled provider" shape: it makes `omp` fetch the endpoint's
+    own model list at runtime (registry-assembly step 3, after the
+    ``models.yml`` static entries in step 2), so every model
+    ``base_url`` actually reports becomes selectable, not only the single
+    ``model_id`` this session happened to start with. Without it,
+    ``RpcClient.set_model`` -- which only accepts a provider/model pair
+    `omp` already knows about -- rejects any live switch to a model other
+    than the one ``_write_agent_dir`` registered at startup with "Model not
+    found", which is exactly the failure the webui's live model picker
+    exists to avoid. The static ``models`` entry ``_write_agent_dir`` still
+    writes is kept alongside discovery, not replaced by it: it guarantees
+    the startup model is registered even against an endpoint whose
+    discovery probe fails or is unsupported (a bare llama.cpp server with
+    no ``/v1/models`` route, for instance), while discovery is what makes
+    every *other* model the endpoint reports live-switchable too.
     """
-    provider = {"baseUrl": base_url, "api": "openai-completions"}
+    provider = {"baseUrl": base_url, "api": "openai-completions", "discovery": {"type": "proxy"}}
     if api_key_env_name:
         provider["apiKey"] = api_key_env_name
     else:

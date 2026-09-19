@@ -153,6 +153,7 @@ export function initWs({
   onHello = () => {},
   onAgentEvent = () => {},
   onPaused = () => {},
+  onRefused = () => {},
   dispatchCall = null,
 }) {
   let ws = null;
@@ -181,8 +182,19 @@ export function initWs({
     return raw * (0.75 + Math.random() * 0.5);
   }
 
+  // Returns whether the frame was actually written to the socket, rather
+  // than nothing: a caller with no correlation id to match a reply against
+  // (chat.js's set_model, tracked locally via pendingSetModel) needs to
+  // know when this no-ops, because a false return means no frame went out
+  // at all, so neither a confirming event nor a `refused` frame is ever
+  // coming for it, and the caller must reconcile its own optimistic state
+  // immediately instead of waiting on an answer that will never arrive.
   function send(frame) {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(frame));
+      return true;
+    }
+    return false;
   }
 
   function clearLiveness() {
@@ -277,8 +289,13 @@ export function initWs({
       // Always sent in answer to something this page sent, and always
       // carrying a reason. Dropping it would leave the human watching for an
       // effect that is never coming, with the server's explanation of why
-      // discarded one layer below the UI.
+      // discarded one layer below the UI. There is no correlation id on
+      // this frame (build_refused carries only a reason), so onRefused
+      // cannot know which outstanding request it answers; chat.js uses it
+      // to reset optimistic UI that has no other way to learn a change
+      // was rejected.
       toast(frame.reason || "the server refused that request", false);
+      onRefused(frame.reason || "");
     }
     // "ping": nothing to do beyond the liveness reset above, which every
     // inbound frame already did. An unrecognised type from a same-version

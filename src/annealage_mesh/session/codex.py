@@ -101,6 +101,7 @@ from .base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     SandboxStatus,
     SessionReset,
@@ -275,7 +276,21 @@ class CodexSession:
                 None, turn_images.expand_turn_blocks, blocks, self.cwd
             )
             items = _to_codex_input_items(expanded)
-            params = {"effort": self._effort} if self._effort else None
+            # A per-turn override, not the thread-level default set at
+            # thread_start/thread_resume time (_start_or_resume_thread):
+            # TurnStartParams.model genuinely overrides "for this turn and
+            # subsequent turns" within the same thread (confirmed via
+            # openai_codex's generated/v2_all.py), so reading self._model
+            # fresh here, on every call, is what makes a live set_model
+            # actually take effect on the next turn sent -- the thread-start
+            # value alone would only ever reflect whatever model was current
+            # when the thread was created.
+            params = {}
+            if self._effort:
+                params["effort"] = self._effort
+            if self._model:
+                params["model"] = self._model
+            params = params or None
             started = await self._run_blocking(
                 self._client.turn_start, self._thread_id, items, params
             )
@@ -333,6 +348,17 @@ class CodexSession:
             # already finished or the child is gone, and both surface
             # through the drain loop's own failure handling.
             sys.stderr.write("warning: interrupt failed: %r\n" % (exc,))
+
+    async def set_model(self, model: str) -> None:
+        """Store the new model; the next ``TurnStartParams`` construction in
+        ``submit_turn`` reads ``self._model`` fresh and passes it as a
+        per-turn override, which Codex documents as overriding "for this
+        turn and subsequent turns" within the same thread -- no new thread
+        or reconnect is needed."""
+        if model == self._model:
+            return
+        self._model = model
+        self._emit(AgentModelChanged(model=model))
 
     # -- lifecycle -----------------------------------------------------------
 

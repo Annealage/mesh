@@ -131,6 +131,7 @@ def build_hello(
     cwd: str,
     agent_status: str,
     paused: bool = False,
+    model: Optional[str] = None,
 ) -> dict:
     """The greeting sent once, immediately after a successful upgrade.
 
@@ -145,6 +146,13 @@ def build_hello(
     that was connected when it happened: replay reaches back 500 events and
     a fresh tab replays nothing at all, so the value belongs in the greeting
     rather than being inferred from the event stream.
+
+    ``model`` is the effective starting model this run's agent session was
+    constructed with (``settings.py``'s ``model`` key, Phase 2's per-project
+    default), so a fresh tab's picker shows the right value with no flash of
+    a wrong default. It is not corrected here on a later live switch; an
+    ``AgentModelChanged`` event (``session/base.py``) is what a connected
+    client updates its picker from once ``set_model`` actually takes effect.
     """
     return {
         "v": PROTOCOL_VERSION,
@@ -155,6 +163,7 @@ def build_hello(
             "sdk_session_id": sdk_session_id,
             "cwd": cwd,
             "agent": agent_status,
+            "model": model,
             "paused": bool(paused),
         },
         "protocol": PROTOCOL_VERSION,
@@ -274,6 +283,19 @@ def _check_pause(frame: dict) -> Optional[str]:
     return None
 
 
+def _check_set_model(frame: dict) -> Optional[str]:
+    # Same non-empty-string convention _check_permission's allowed-decision
+    # set and _check_pause's bool check both follow: a client sending
+    # something adjacent to the contract (an empty string, a number, null)
+    # is told, not coerced. Unlike ``paused``'s enumerable values, a model
+    # name is backend/endpoint-dependent and not enumerable here, so this
+    # only rules out shapes that could never be a real model id.
+    model = frame.get("model")
+    if not isinstance(model, str) or not model:
+        return "set_model.model must be a non-empty string"
+    return None
+
+
 def _check_state(frame: dict) -> Optional[str]:
     return _object_error(
         frame.get("state"), {"camera", "visibility", "selection", "mode"}, set(), "state.state"
@@ -304,6 +326,7 @@ _INBOUND_SPECS = {
     "interrupt": _Spec(set(), set()),
     "state": _Spec({"state"}, {"state"}, _check_state),
     "pause": _Spec({"paused"}, {"paused"}, _check_pause),
+    "set_model": _Spec({"model"}, {"model"}, _check_set_model),
 }
 
 

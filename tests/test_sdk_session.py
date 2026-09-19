@@ -35,6 +35,7 @@ from annealage_mesh.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     TextDelta,
     ToolResult,
@@ -141,7 +142,7 @@ class FakeTransport(Transport):
         self.written.append(obj)
         if obj.get("type") == "control_request":
             subtype = obj["request"].get("subtype")
-            if subtype == "initialize":
+            if subtype in ("initialize", "set_model"):
                 self._queue.put_nowait(
                     {
                         "type": "control_response",
@@ -563,6 +564,46 @@ async def test_submit_turn_sends_the_turn_to_the_real_client():
         sent = transport.written[-1]
         assert sent["type"] == "user"
         assert sent["message"]["content"] == [{"type": "text", "text": "please look"}]
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_sends_the_live_control_request_and_emits_the_change():
+    """``set_model`` is a genuine control-plane call on the already-connected
+    client (``ClaudeSDKClient.set_model``, which sends a
+    ``{"subtype": "set_model", "model": ...}`` control request) -- no
+    reconnect, no new client, no new transport."""
+    session, transport, recorder = await _started_session(model="claude-opus-4")
+    try:
+        await session.set_model("claude-haiku-5")
+        sent = [
+            obj["request"]
+            for obj in transport.written
+            if obj.get("type") == "control_request" and obj["request"].get("subtype") == "set_model"
+        ]
+        assert len(sent) == 1
+        assert sent[0]["model"] == "claude-haiku-5"
+        assert session.agent_status() == AGENT_READY
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "claude-haiku-5"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_to_the_current_model_is_a_no_op():
+    """No point in a live control-plane round trip, or a redundant event,
+    for a switch that changes nothing."""
+    session, transport, recorder = await _started_session(model="claude-opus-4")
+    try:
+        await session.set_model("claude-opus-4")
+        assert not any(
+            obj.get("type") == "control_request" and obj["request"].get("subtype") == "set_model"
+            for obj in transport.written
+        )
+        assert not any(isinstance(event, AgentModelChanged) for event in recorder.all)
     finally:
         await session.close()
 

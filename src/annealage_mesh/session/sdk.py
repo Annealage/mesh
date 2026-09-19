@@ -88,6 +88,7 @@ from .base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
+    AgentModelChanged,
     AgentStatus,
     SandboxStatus,
     SessionReset,
@@ -365,6 +366,22 @@ class SdkSession:
             # either already finished or the child is gone, and both of those
             # surface through the pump.
             sys.stderr.write("warning: interrupt failed: %r\n" % (exc,))
+
+    async def set_model(self, model: str) -> None:
+        """Switch the live conversation to ``model``, no reconnect.
+
+        ``ClaudeSDKClient.set_model`` is a genuine control-plane call that
+        takes effect on the already-connected session (confirmed by reading
+        ``claude_agent_sdk/_internal/query.py``'s own ``set_model``, which
+        sends a ``{"subtype": "set_model", "model": model}`` control request
+        over the wire this client already holds open) -- unlike a resumed
+        session, nothing here closes or restarts ``self._client``.
+        """
+        if model == self._model:
+            return
+        await self._client.set_model(model)
+        self._model = model
+        self._emit(AgentModelChanged(model=model))
 
     # -- lifecycle -----------------------------------------------------------
 

@@ -67,6 +67,7 @@ wsApi = initWs({
   onHello: chatApi.handleHello,
   onAgentEvent: chatApi.handleEvent,
   onPaused: commandsApi.setPausedFromServer,
+  onRefused: chatApi.handleRefused,
   dispatchCall: commandsApi.dispatch,
 });
 

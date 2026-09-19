@@ -98,6 +98,14 @@
  *                 `{kind, text}`, or null once dismissed. A `session_reset`
  *                 also clears `turns` (`resetChatTurns`), because the new
  *                 session's turn numbers start over from 1.
+ *                 `model` mirrors the hello frame's `session.model` (the
+ *                 CLI-configured starting model, possibly null) until an
+ *                 `agent_model_changed` event corrects it to whatever a live
+ *                 `set_model` frame actually took effect as. Not to be
+ *                 confused with the unrelated top-level `models` array
+ *                 (served 3D files, `setModels` below): this one is the LLM
+ *                 backend's active model, read and written only by the chat
+ *                 pane.
  *                 `attachments` is one entry per image attached to the
  *                 message being composed, in the order they were attached,
  *                 whatever state each is in: `[{id, kind, state, path, url,
@@ -149,6 +157,7 @@ let state = Object.freeze({
     pendingUser: Object.freeze([]),
     pending: Object.freeze([]),
     agentStatus: "connecting",
+    model: null,
     banner: null,
     attachments: Object.freeze([]),
   }),
@@ -516,6 +525,12 @@ function setChatAgentStatus(status) {
   }, ["chat"]);
 }
 
+function setChatModel(model) {
+  commit(() => {
+    state = { ...state, chat: Object.freeze({ ...state.chat, model: model || null }) };
+  }, ["chat"]);
+}
+
 function setChatBanner(kind, text) {
   commit(() => {
     state = { ...state, chat: Object.freeze({ ...state.chat, banner: Object.freeze({ kind, text }) }) };
@@ -638,6 +653,7 @@ export const store = {
   markChatPermissionSubmitted,
   removeChatPermissionRequest,
   setChatAgentStatus,
+  setChatModel,
   setChatBanner,
   clearChatBanner,
   resetChatTurns,

@@ -27,7 +27,7 @@ from .http.routes_mcp import register_mcp_routes
 from .http.routes_settings import register_settings_routes
 from .http.routes_viewer import VIEWER_HTML, register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
-from .session.base import CalloutsChanged, ModelsChanged
+from .session.base import AgentModelChanged, CalloutsChanged, ModelsChanged
 from .session.events import EventLog
 from .viewers import ViewerBus, ViewerRegistry
 
@@ -261,7 +261,19 @@ def create_app(
     # transport re-derives it independently). Deferred to a local import and
     # gated on ``mesh_session_id is not None`` (agent mode; matches
     # ``register_routes``'s own ``require_token`` gate above) so a
-    # viewer-only run still imports no SDK at all.
+    # viewer-only run still imports no SDK at all. This must stay gated on
+    # the id, not on ``build_session is not None``: `cli.py`'s real
+    # ``build_session`` closure is always a real callable (its mode check
+    # happens inside the closure body when called, returning ``None`` for
+    # viewer-only), so gating on the callable's mere presence would import
+    # `claude_agent_sdk` and build an unused `MeshTools`/MCP server on every
+    # `annealage-mesh view`/`--no-agent` run - a real regression a prior
+    # version of this comment introduced and then reverted (see git log).
+    # A caller that supplies its own ``build_session`` factory returning a
+    # real session without a real ``mesh_session_id`` (a test fixture's
+    # scripted ``FakeSession``, say) must pass a ``mesh_session_id`` too -
+    # that is the actual contract this function relies on, not something to
+    # work around here.
     mesh_tools = None
     if mesh_session_id is not None:
         from .tools.registry import MeshTools
@@ -286,6 +298,16 @@ def create_app(
         "sdk_session_id": None,
         "cwd": str(serve_dir),
         "agent": "unavailable",
+        # The effective starting model this run's agent session was (or
+        # will be) constructed with (settings.py's "model" key, Phase 2's
+        # per-project default). Kept live afterwards: `_event_publisher`,
+        # given this same dict, updates this key in place whenever an
+        # `AgentModelChanged` event is published, so a later `hello` reads
+        # whatever the session is actually running rather than only this
+        # startup snapshot (see protocol.build_hello's docstring on why the
+        # field itself is documented as a snapshot -- the corrected value
+        # written back here is what makes it stay one that is current).
+        "model": settings.get("model"),
     }
     app.mesh_registry = registry
     app.mesh_event_log = event_log
@@ -300,7 +322,7 @@ def create_app(
     # either module importing the other.
     session = None
     if build_session is not None:
-        session = build_session(_event_publisher(registry, event_log), bus=bus)
+        session = build_session(_event_publisher(registry, event_log, session_info), bus=bus)
     app.mesh_session = session
     if session is not None:
         # Both of these read the session, so both are inside this guard: a
@@ -316,12 +338,14 @@ def create_app(
         # reason register_ws's own bus= is None until a session exists: a
         # viewer-only app has no tools and no broker to gate them, so there
         # is nothing for this route to serve. mesh_tools is never None here
-        # (built above whenever mesh_session_id is not None, which is the
-        # only way build_session ever returns a real session); broker is
-        # bus.broker, set by build_session's own closure while constructing
-        # PermissionBroker - None only if a caller supplied a build_session
-        # that never sets it, in which case register_mcp_routes fails closed
-        # on every write-class call rather than gating with no broker at all.
+        # (built above whenever mesh_session_id is not None, which every
+        # real caller - cli.py's build_session, and every test fixture that
+        # wants a real session - must set for exactly this reason); broker
+        # is bus.broker, set by build_session's own closure while
+        # constructing PermissionBroker - None only if a caller supplied a
+        # build_session that never sets it, in which case register_mcp_routes
+        # fails closed on every write-class call rather than gating with no
+        # broker at all.
         register_mcp_routes(
             app,
             mesh_tools=mesh_tools,
@@ -428,7 +452,7 @@ def create_app(
     return app
 
 
-def _event_publisher(registry, event_log):
+def _event_publisher(registry, event_log, session_info=None):
     """Return the ``on_event`` callback a session publishes through.
 
     Appending to the log and broadcasting are one action, not two, and the
@@ -441,9 +465,21 @@ def _event_publisher(registry, event_log):
     event: the log is what a reconnecting browser replays from, so an event
     that reached the log but no live socket is recoverable, while the reverse
     is a hole in the history.
+
+    ``session_info``, when given, is the same mutable dict ``register_ws``'s
+    ``_greet`` reads fresh on every ``hello`` (``http/ws.py``): an
+    ``AgentModelChanged`` here means a live ``set_model`` actually took
+    effect, so ``session_info["model"]`` is updated in place before the event
+    reaches the log. Without this, a browser tab connecting after the switch
+    only recovers the running model while the event that announced it is
+    still inside the replay ring buffer; once evicted, a fresh ``hello``
+    would otherwise fall back to permanently showing the CLI-configured
+    starting model instead of what the session is actually running.
     """
 
     def publish(event):
+        if session_info is not None and isinstance(event, AgentModelChanged):
+            session_info["model"] = event.model
         seq = event_log.append(event)
         frame = protocol.build_event(seq, event.to_wire())
         asyncio.ensure_future(registry.broadcast(frame))

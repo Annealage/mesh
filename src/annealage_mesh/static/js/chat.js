@@ -243,6 +243,7 @@ export function initChat({ send }) {
   const bannerCloseBtn = document.getElementById("chatBannerClose");
   const chatInputEl = document.getElementById("chatInput");
   const chatSendBtn = document.getElementById("chatSend");
+  const chatModelInputEl = document.getElementById("chatModelInput");
   const chatInterruptBtn = document.getElementById("chatInterrupt");
   const chatAttachBtn = document.getElementById("chatAttachBtn");
   const chatFileInput = document.getElementById("chatFileInput");
@@ -618,6 +619,96 @@ export function initChat({ send }) {
     agentStatusEl.dataset.state = chat.agentStatus;
   }
 
+  // Set to the requested model right before sending `set_model`, and
+  // cleared by whichever of two frames answers it first: a matching
+  // `agent_model_changed` (the switch took effect) or the next `refused`
+  // frame seen afterwards (protocol.py's build_refused carries no
+  // correlation id, so "the next one" is the only signal this pane has
+  // that its own request -- not some unrelated permission/turn refusal --
+  // was the one rejected). `handleRefused` below reads this to decide
+  // whether a given refusal is its business at all.
+  let pendingSetModel = null;
+
+  // A refusal that needs to revert the field, but arrived while the field
+  // had focus: renderModel intentionally skips a focused field (see
+  // below), so the revert cannot be applied immediately without stomping
+  // on whatever the human is mid-typing. Recorded here instead of dropped,
+  // so the next blur (or a further edit, which supersedes it) applies it
+  // -- otherwise a rejected value can stay displayed forever, since only
+  // another edit's `change` event would ever call renderModel again.
+  let queuedModelRevert = false;
+
+  // The model picker is a free-text field, not a dropdown: enumerating what
+  // a given backend/endpoint actually offers is out of this ticket's scope
+  // (protocol.py's build_hello and this pane only carry the *current*
+  // value). `change` fires on blur once the value differs from what it was
+  // on focus, which is what lets a human type a full model id without a
+  // frame going out on every keystroke.
+  //
+  // Not to be confused with `models_changed` (`js/models.js`/`ws.js`), which
+  // is about the served directory's 3D files and never reaches this pane at
+  // all (`ws.js`'s own event switch intercepts it before `handleEvent`
+  // below ever sees it) -- this field tracks `agent_model_changed`, the
+  // LLM backend's active model.
+  function applyModelInput() {
+    // Any fresh edit supersedes a revert queued by an earlier refusal: the
+    // human has already moved past that rejected value, so there is
+    // nothing left for the queued revert to correct.
+    queuedModelRevert = false;
+    const value = chatModelInputEl.value.trim();
+    const current = store.getState().chat.model || "";
+    if (!value || value === current) {
+      // Empty or unchanged: not a switch request, so the field is put back
+      // to the last known value rather than left showing something that was
+      // never sent and never took effect.
+      chatModelInputEl.value = current;
+      return;
+    }
+    pendingSetModel = value;
+    if (!send({ v: 1, type: "set_model", model: value })) {
+      // send() no-ops silently when the socket is not OPEN; no refusal
+      // (or confirming agent_model_changed) will ever arrive for a
+      // request that was never transmitted, so pendingSetModel cannot be
+      // left set waiting for an answer that is not coming. Revert through
+      // the same focus-aware path a genuine refusal uses -- from this
+      // pane's point of view a request that never went out failed exactly
+      // as thoroughly as one the server rejected.
+      pendingSetModel = null;
+      revertPendingModel();
+    }
+  }
+
+  chatModelInputEl.addEventListener("change", applyModelInput);
+  chatModelInputEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      chatModelInputEl.blur(); // fires "change" above if the value differs
+    }
+  });
+  // `change` alone cannot apply a queued revert: it only fires when the
+  // field's value differs from its value at focus time, which is exactly
+  // false in the stuck case (the human refocused, made no further edit,
+  // then blurred) that queuedModelRevert exists to fix. `blur` fires
+  // regardless of whether the value changed.
+  chatModelInputEl.addEventListener("blur", () => {
+    if (queuedModelRevert) {
+      queuedModelRevert = false;
+      renderModel(store.getState().chat);
+    }
+  });
+
+  // The one writer of the model field's value and disabled state; mirrors
+  // renderSendButton's reasoning for gating on `agentStatus`. Skipped while
+  // the field has focus, so a store update racing a human mid-edit (a
+  // reconnect's hello, another tab's own AgentModelChanged) cannot overwrite
+  // what they are typing.
+  function renderModel(chat) {
+    chatModelInputEl.disabled = chat.agentStatus === "unavailable";
+    if (document.activeElement !== chatModelInputEl) {
+      chatModelInputEl.value = chat.model || "";
+    }
+  }
+
   // The one writer of the Send button's state, because there are two
   // independent reasons to refuse a send and a function per reason would leave
   // whichever ran last deciding for both.
@@ -655,6 +746,7 @@ export function initChat({ send }) {
     renderTurns(chat);
     renderPending(chat);
     renderAgentStatus(chat);
+    renderModel(chat);
     renderBanner(chat);
     renderInterrupt(chat);
     renderAttachStrip(chat);
@@ -748,7 +840,22 @@ export function initChat({ send }) {
   }
 
   function handleHello(session) {
-    if (session) store.setChatAgentStatus(session.agent);
+    if (session) {
+      // A fresh connection's hello is authoritative, the same way it
+      // already is for agent status and model below: any set_model this
+      // pane sent on a prior connection is moot by now, whether the
+      // request itself raced the disconnect and was never transmitted, or
+      // it went out but its response (agent_model_changed or a refused
+      // frame) was lost when the socket dropped before it arrived.
+      // Clearing both here, rather than leaving them for a refusal that
+      // may never come, keeps a stale pending flag from leaving the field
+      // stuck on a rejected value and from this connection's first
+      // unrelated refusal being blamed on that earlier request.
+      pendingSetModel = null;
+      queuedModelRevert = false;
+      store.setChatAgentStatus(session.agent);
+      store.setChatModel(session.model);
+    }
     // Held for the Export button, which needs the id of the session it is
     // writing out. Viewer-only runs report "viewer-only" here and have no
     // conversation to export, which the button reflects by staying disabled.
@@ -788,6 +895,20 @@ export function initChat({ send }) {
         // this connection was accepted; this is what keeps it current.
         store.setChatAgentStatus(event.status);
         break;
+      case "agent_model_changed":
+        // Not `models_changed` (served 3D files, ws.js/js/models.js): this
+        // is the LLM backend's active model, confirmed to have taken effect
+        // by whichever driver's `set_model` emitted it. Clears
+        // pendingSetModel only when this is the change this pane itself
+        // asked for -- a different tab's switch, or a value nobody here
+        // requested, is still worth displaying but must not be mistaken for
+        // an answer to a request that, as far as this pane knows, is still
+        // outstanding.
+        if (pendingSetModel !== null && event.model === pendingSetModel) {
+          pendingSetModel = null;
+        }
+        store.setChatModel(event.model);
+        break;
       case "session_reset":
         store.resetChatTurns();
         store.setChatBanner("reset", event.reason);
@@ -801,5 +922,39 @@ export function initChat({ send }) {
     }
   }
 
-  return { handleHello, handleEvent };
+  // Reverts the model field after a set_model request is known to have
+  // failed -- either an explicit `refused` frame or a send that never
+  // reached the socket at all (applyModelInput above). Mirrors renderModel's
+  // own focus-awareness: the field cannot be overwritten while mid-edit
+  // without stomping on what the human is typing, so the revert is queued
+  // instead and applied by the blur listener above.
+  function revertPendingModel() {
+    if (document.activeElement === chatModelInputEl) {
+      // The field is mid-edit; renderModel would no-op against it (see its
+      // own comment), silently dropping the revert and leaving a rejected
+      // value stuck until some later edit happens to fire `change`. Queue
+      // it instead so the blur listener above applies it the moment focus
+      // leaves, regardless of whether the human edits anything further.
+      queuedModelRevert = true;
+      return;
+    }
+    renderModel(store.getState().chat);
+  }
+
+  // A refusal carries no correlation id (protocol.py's build_refused is
+  // just {v, type, reason}), so this cannot tell which outstanding request
+  // it answers. What it can do is track its own pending `set_model` call
+  // locally (`pendingSetModel`, set by applyModelInput above and cleared by
+  // a matching `agent_model_changed`) and treat only the next refusal seen
+  // while that is still set as "probably mine". An unrelated refusal (a
+  // permission or turn frame, with no set_model outstanding) is left alone
+  // entirely, rather than reverting a model change that has not actually
+  // failed.
+  function handleRefused() {
+    if (pendingSetModel === null) return;
+    pendingSetModel = null;
+    revertPendingModel();
+  }
+
+  return { handleHello, handleEvent, handleRefused };
 }
