@@ -17,7 +17,7 @@ the current phase's tickets under `tickets/`.
   and why, the `openai-codex` and `omp-rpc` SDK internals the plan depends
   on, source citations. Timestamped and HEAD-stamped.
 - `roadmap.md` - the phased roadmap: current state, open-questions table
-  (Qk), settled design decisions, six phases each with goal/work
+  (Qk), settled design decisions, seven phases each with goal/work
   items/targets/tests/exit criteria/workflow shape, risk register, progress
   tracking. Updated in place as phases complete; never forked.
 - `tickets/` - one self-contained file per substantive work item, written

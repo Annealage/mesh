@@ -1,4 +1,4 @@
-# Multi-backend agent roadmap [PHASES 1-6 COMPLETE, PHASE 7 IN PROGRESS - 2026-09-20]
+# Multi-backend agent roadmap [ALL 7 PHASES COMPLETE - 2026-09-20]
 
 Date: 2026-09-19
 HEAD: 58f78db34e
@@ -352,7 +352,7 @@ panel report identical, backend-appropriate content for all three backends.
 Workflow shape: sonnet implementation, haiku tests, one opus review (not
 adversarial). Ticket: `planning/tickets/phase6_diagnostics.md`.
 
-## Phase 7 - Real on-demand integration tests
+## Phase 7 - Real on-demand integration tests [COMPLETE - see `20260920_phase7-progress.md`]
 
 Goal: an opt-in, automated `pytest -m integration` tier proves the real
 `openai_codex`/`omp_rpc`/`claude_agent_sdk` packages - not the
