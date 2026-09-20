@@ -436,9 +436,14 @@ exclusion is genuinely effective from every default entry point, no test
 ever constructs a real driver with `broker=None`, and (after the
 correction) that the `local_base_url`-optional code path in
 `session/omp.py` does not regress the existing arbitrary-endpoint
-behavior. Looped until clean; the correction's own review pass was
-self-administered when the `reviewer` agent's own Codex backing hit the
-same real account-wide usage limit found during this phase's live run.
+behavior. Looped until clean. The correction's first review attempt was
+self-administered, when the `reviewer` agent's own Codex backing hit the
+same real account-wide usage limit found during this phase's live run;
+once that reset, an independent `reviewer` pass did run for real against
+the fix, surfacing two genuine findings (fixed) and prompting a third
+change (a speculative local validation check reverted, at the user's
+direction, in favor of trusting `omp`'s own real validation) - see
+`20260920_phase7-correction.md`.
 Ticket: `planning/tickets/phase7_live-integration-tests.md`.
 
 ## Risk register

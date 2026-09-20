@@ -161,6 +161,65 @@ correction's fix added). This closes out the acceptance criterion Phase
 7's own ticket named and that this correction's first pass could only get
 two-of-three of.
 
+## Independent review, once the account limit reset: two real findings, one reverted overcorrection
+
+This fix's first review attempt (during the initial correction pass) had
+failed on the same real Codex `usage_limit_reached` error the live tier
+hit, and was substituted with author self-review at the time - a real gap,
+not a formality, since self-review cannot catch what the author did not
+think to check. Once the retry above proved the account limit had reset, a
+`reviewer` subagent was dispatched for real against commit `d630545`
+(`session/omp.py`, `settings.py`, `cli.py`, `tests/test_omp_session.py`,
+`tests/test_diagnostics.py`), told to independently verify the
+`omp_rpc.RpcClient.start()` env-merge claim by reading the installed
+package itself rather than trusting the commit message. It came back
+`"overall_correctness": "incorrect"`, with three findings:
+
+1. `set_model`'s provider/model split for the no-`local_base_url` branch
+   only checked `model_id` truthiness, not `provider` - `"/qwen3.9-70b"`
+   silently reached `RpcClient.set_model("", "qwen3.9-70b")` instead of
+   the intended local rejection. Fixed at first by requiring both sides
+   non-empty - but the user pushed back directly: "why are you
+   over-analysing / validating a model name at all? the underlying tool
+   will have its own correct validation which we should presume to
+   attempt to replicate." Checking `omp_rpc/client.py` confirmed
+   `RpcClient.set_model` does zero client-side validation of its own - it
+   just sends the RPC - and `ws.py`'s dispatcher already catches any
+   `set_model` exception generically and surfaces a refused frame either
+   way. A local pre-check on "does this look like a valid provider/model
+   pair" duplicates validation the real backend already owns, with no
+   real backend response it could improve on. Reverted to a pure
+   split-and-pass-through: no raise, no guessing at what `omp` will
+   accept - a malformed reference now gets `omp`'s own real rejection,
+   not mesh's guess about one.
+2. The doctor report and `GET /settings` diagnostics payload had no way to
+   know `local_api_key` was set, so the one combination
+   `OmpSession.start()` now refuses outright (`local_api_key` without
+   `local_base_url`) reported a healthy "using omp's own configured
+   providers" message right up until startup actually failed on it. Fixed
+   by threading `local_api_key` through `diagnostics.collect`/`_omp_info`/
+   `_local_endpoint_info` (presence only, never the value itself) and
+   adding a `"misconfigured"` signal both the CLI report and the HTTP
+   route now act on before the healthy-sounding message.
+3. `tests/test_omp_session_live.py` had stopped reading
+   `MESH_LIVE_OMP_MODEL` when the `MESH_LIVE_*` credential scheme was
+   removed - but that variable was never a credential, just a model
+   override, and `.github/workflows/integration.yml` still documents it,
+   and the Claude/Codex live tests both still honor their own
+   equivalents. Restored.
+
+Verified again for real after all three fixes: full default suite
+1069/1069 (up from 1066: +3 for the new diagnostics coverage); `ruff
+check` clean via `uvx ruff@latest` (this host's own pinned `ruff` (0.12.1)
+cannot even parse this repo's `pyproject.toml` any more - an unrelated,
+pre-existing `ASYNC240` rule-selector/ruff-version mismatch that appeared
+on this host between this phase's earlier ruff runs and now, the same
+category of environmental drift as the `omp` binary moving; not touched
+here, worked around by fetching a current release through `uvx` instead of
+editing this repo's config to fit a stale tool); the full live integration
+tier (Claude, Codex, omp) re-run against real accounts one more time after
+every fix - all three still pass for real.
+
 ## Lesson, stated plainly
 
 Two mistakes compounded: inventing a credential-plumbing requirement
@@ -168,7 +227,17 @@ nobody asked for, and asserting an environment fact ("no live credentials
 exist here") without checking it. The second is the more important one to
 name - a claim about the environment must be verified by actually looking,
 not inferred from what would be convenient or cautious to assume. The
-user's own three corrections trace the right escalation: first the factual
-correction, then the scope correction ("you don't need to require api key
-args"), then the root-cause correction ("fix the interfaces"). Each was
-necessary because the prior one was answered too narrowly.
+user's own corrections trace one consistent escalation, run twice: first
+the factual correction, then the scope correction ("you don't need to
+require api key args"), then the root-cause correction ("fix the
+interfaces"); and, in the review round, the same shape again - a review
+finding was answered by adding local validation, and the user corrected
+that too ("the underlying tool will have its own correct validation which
+we should presume to attempt to replicate"). The common thread across all
+four corrections: don't build a second, guessed-at version of something a
+real, already-correct system already does - not a credential scheme
+alongside real credentials, not a config requirement alongside real
+config, and not a validation check alongside the real validation the
+actual backend performs. Every one of these was solved by trusting and
+using the real thing exactly as it already works, not by adding a layer
+in front of it.
