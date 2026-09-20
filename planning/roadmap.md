@@ -352,7 +352,7 @@ panel report identical, backend-appropriate content for all three backends.
 Workflow shape: sonnet implementation, haiku tests, one opus review (not
 adversarial). Ticket: `planning/tickets/phase6_diagnostics.md`.
 
-## Phase 7 - Real on-demand integration tests [COMPLETE - see `20260920_phase7-progress.md`]
+## Phase 7 - Real on-demand integration tests [COMPLETE - see `20260920_phase7-progress.md` and `20260920_phase7-correction.md`]
 
 Goal: an opt-in, automated `pytest -m integration` tier proves the real
 `openai_codex`/`omp_rpc`/`claude_agent_sdk` packages - not the
@@ -373,39 +373,71 @@ Work items:
 2. `tests/test_sdk_session_live.py`, `tests/test_codex_session_live.py`,
    `tests/test_omp_session_live.py`: each constructs the real driver class
    (no fake `client_factory`/`transport`), submits one trivial text-only
-   prompt, and asserts a real reply - `pytest.mark.skipif` on its own
-   backend's required `MESH_LIVE_*` env vars so the tier stays usable
-   per-backend.
-3. `.github/workflows/integration.yml`: `workflow_dispatch`-only job
-   mapping repo/environment secrets to the `MESH_LIVE_*` variables.
+   prompt, and asserts a real reply. Gated only by `pytest.mark.skipif`
+   on the relevant CLI binary being present on `PATH` - no credential env
+   var of any kind is required, because each test authenticates through
+   whatever account that backend's CLI is already logged into on the
+   host, exactly like running the CLI directly. (An earlier version of
+   this work item invented an unrequested `MESH_LIVE_*`-prefixed
+   API-key/CODEX_HOME-isolation scheme instead of checking whether the
+   host already had these backends configured; it did. See
+   `20260920_phase7-correction.md`.)
+3. `.github/workflows/integration.yml`: `workflow_dispatch`-only job. A
+   GitHub-hosted runner has none of `claude`/`codex`/`omp` installed or
+   authenticated, so every test skips cleanly there until `runs-on`
+   points at a runner - most realistically self-hosted - that already has
+   all three configured, the same way this repo's own development host
+   does; there is no scriptable install+auth channel for any of the three
+   this file can fabricate.
+4. `session/omp.py`: `local_base_url` made genuinely optional (it
+   previously hard-failed `OmpSession.start()` when unset). Set: unchanged
+   behavior, a synthesized throwaway custom provider for an arbitrary
+   endpoint. Unset: `model` passes straight through to `omp`'s own
+   `--model` flag with no config synthesis, using whatever providers the
+   host's `omp` is already configured with. This was a real production
+   interface bug (not just a test-harness gap), found by the user
+   directly asking why the live tests required reconfiguring tools that
+   were already set up correctly - see `20260920_phase7-correction.md`
+   for the full account.
 
-Targets: no hardware; needs real accounts/endpoints to actually execute a
-passing run (Anthropic API key, OpenAI API key logged into an isolated
-`CODEX_HOME`, a reachable OpenAI-compatible endpoint for the omp backend)
-- none available in this environment, so this phase's own verification is
-limited to proving the skip path is correct and the default suite is
-unaffected; documented as such rather than claimed as an executed live
-pass.
+Targets: no hardware; needs real accounts already configured on the host
+running the tests to actually execute a passing run - this repo's own
+development host has `claude`, `codex`, and `omp` all already installed
+and authenticated, so this phase's live tier was actually run for real
+against them (not merely skip-path-verified). Results: Claude/haiku passed
+for real; Codex/gpt-5.6-luna authenticated and completed a real round trip
+through the real `codex app-server` (proving the fix and plumbing work
+end-to-end) but the account had hit its ChatGPT usage limit, so the
+observed reply was a quota rejection rather than the expected text - a
+real account-state fact, not a code defect; the omp CLI's binary
+disappeared from this host mid-session (its symlink target directory was
+removed outside this repository's control), so that leg could not be
+exercised in this run. A CI runner with none of these three configured
+will see all three skip cleanly, never error or silently misrun.
 
-Tests: the skip-path itself, i.e. `pytest -m integration -q` with no
-`MESH_LIVE_*` variables set reports all three tests skipped, never errored
-or silently absent; `pytest -q` (bare) still collects and passes the same
-1062 tests as before this phase.
+Tests: the skip-path itself, i.e. `pytest -m integration -q` on a host
+with none of the three CLIs on `PATH` reports all three tests skipped,
+never errored or silently absent; `pytest -q` (bare) still collects and
+passes the same 1066 tests as before this phase (net +4 from
+`session/omp.py`'s new `local_base_url`-optional test coverage).
 
-Exit criteria: a human who exports the documented `MESH_LIVE_*` variables
-and runs `pytest -m integration -q`, or triggers
-`.github/workflows/integration.yml` with the equivalent secrets
-configured, gets a real pass/fail against the real backend for all three;
-the default test suite is provably unaffected either way.
+Exit criteria: a human running `pytest -m integration -q` on a host with
+`claude`/`codex`/`omp` already installed and authenticated gets a real
+pass/fail against the real backend for all three, with zero
+reconfiguration beyond what running each CLI directly would need; the
+default test suite is provably unaffected either way.
 
 Workflow shape: implementation on sonnet (three independent files, built
 in parallel), automated verification on haiku/direct bash (the skip-path
 run), adversarial review on opus - specifically checking the marker
 exclusion is genuinely effective from every default entry point, no test
-ever constructs a real driver with `broker=None`, and the credential/
-config isolation (`CODEX_HOME`, omp's `PATH` seam) actually holds even
-along the skip path. Looped until clean. Ticket:
-`planning/tickets/phase7_live-integration-tests.md`.
+ever constructs a real driver with `broker=None`, and (after the
+correction) that the `local_base_url`-optional code path in
+`session/omp.py` does not regress the existing arbitrary-endpoint
+behavior. Looped until clean; the correction's own review pass was
+self-administered when the `reviewer` agent's own Codex backing hit the
+same real account-wide usage limit found during this phase's live run.
+Ticket: `planning/tickets/phase7_live-integration-tests.md`.
 
 ## Risk register
 
@@ -417,7 +449,8 @@ along the skip path. Looped until clean. Ticket:
 | omp custom-provider wire shape assumed rather than verified (Q4) | Phase 4 blocks on reading `omp://providers.md`'s full custom-provider schema section before generating provider config. |
 | Three drivers drift in approval/tool/sandbox behavior over time | `session/base.py`'s Protocol and `tools/registry.py`'s classification stay the single source of truth every driver adapts to, not three independent policies. |
 | `.github/workflows/test.yml`'s `uv run --extra dev pytest -q` installs neither `--extra codex` nor `omp-rpc`, so `tests/test_codex_session.py`/`tests/test_mcp_bridge.py`/`tests/test_omp_session.py` need manual dependency installation to even collect in CI as currently configured (flagged in Phase 3 and Phase 4's progress reports, not fixed by either since it falls outside both phases' stated anchors) | **RESOLVED 2026-09-20**: `--extra codex` added to the CI pytest invocation; `omp-rpc` installed via `uv pip install` against the synced environment, pinned to the same commit `session/omp.py`'s module docstring documents as verified (not declared as a `pyproject.toml` extra - a direct git dependency there would break the real PyPI publish workflow). Verified locally: the exact CI command passes 1062. |
-| Phase 7's own three live tests are unverified against a real pass in this environment - no Anthropic/OpenAI API key or reachable omp endpoint is available here | The skip path (the one thing verifiable here) is exercised for real and asserted to report all three tests skipped with a clear reason, never errored or silently absent; the ticket documents exactly which `MESH_LIVE_*` variables a human must export to get a real pass/fail, and this is stated plainly as unexecuted rather than claimed as a passing live run. |
+| `backend=local` (`session/omp.py`) hard-required `local_base_url`, forcing reconfiguration of an `omp` install that already had its own named providers configured (**RESOLVED 2026-09-20**, found by the user directly during Phase 7's own live-test run) | `local_base_url` is now genuinely optional; unset, `model` passes straight through to `omp`'s own `--model` flag against whatever providers the host's `omp` is already configured with, no config synthesis. Five new unit tests (`tests/test_omp_session.py`) cover both branches; the live omp test exercises the new path directly. See `20260920_phase7-correction.md`. |
+| Phase 7's live tests were unverifiable against a real pass in this development environment | **Superseded 2026-09-20**: this repo's own development host has `claude`/`codex`/`omp` all already installed and authenticated, so the live tier was run for real, not just skip-path-verified. Claude/haiku passed for real; Codex/gpt-5.6-luna authenticated and round-tripped for real but hit a real ChatGPT account usage limit (an account-state fact, not a code defect); omp's binary disappeared from this host mid-session (outside this repo's control) before its leg could run. A host without these CLIs configured (e.g. a fresh CI runner) still skips all three cleanly rather than erroring or silently misrunning. |
 
 ## Progress tracking
 
