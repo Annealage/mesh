@@ -703,7 +703,10 @@ def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy():
     comparison could miss (an unescaped quote, a missing comma) is caught
     the same way Codex's own config parser would catch it.
     """
-    import tomllib
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
 
     session = CodexSession(
         lambda e: None,

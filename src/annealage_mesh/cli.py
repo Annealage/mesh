@@ -115,21 +115,20 @@ def build_parser():
     ap.add_argument(
         "--model",
         default=None,
-        help="model for the agent to use (default: whatever the claude CLI is configured for)",
+        help="model for the agent to use (default: whatever your backend is configured for)",
     )
     ap.add_argument(
         "--backend",
         default=None,
         choices=("claude", "codex", "local"),
-        help="which agent backend this session uses (default: claude, or "
-        "whatever your settings say)",
+        help="which agent backend this session uses: claude, codex, or "
+        "local (omp). Defaults to whatever your settings say",
     )
     ap.add_argument(
         "--effort",
         default=None,
         choices=("low", "medium", "high", "xhigh", "max"),
-        help="how much thinking the agent does per turn (default: "
-        "whatever the claude CLI is configured for)",
+        help="how much thinking the agent does per turn (default: whatever your settings say)",
     )
     ap.add_argument(
         "--permission-mode",

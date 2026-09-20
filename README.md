@@ -1,18 +1,18 @@
 # Annealage Mesh
 
-Annealage Mesh is a little web tool for building 3D-printable parts with an agent, by pointing at them. You give it a folder, it serves up a 3D viewer in the browser with a Claude Code chat pane beside it, and the two of you get to work in there.
+An agentic CAD workbench for 3D-printable parts. A 3D viewer and a chat pane sit side by side in the browser, the agent writes CadQuery geometry, and you iterate on the design by pointing at it instead of describing it in words.
 
-Ask for a part and the agent writes a CadQuery script in that folder, runs it, and the STL turns up in the viewer. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script. The project ships a full CadQuery-based modeling pipeline — dimension management, robust solid helpers, self-verification, and print-prep scripts — so neither you nor the agent has to figure out the toolchain.
+You give it a folder, it scaffolds a parametric CadQuery project and starts a local server. Ask for a part, the agent writes the geometry, and the STL turns up in the viewer within a fraction of a second. Click the face that's wrong, type what's wrong with it, and the agent revises the script. You can pin your problems on the model, the agent can pin its questions right back, and the two of you iterate on a shared surface instead of trading paragraphs about which corner you mean.
 
 ![Annealage Mesh: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](https://raw.githubusercontent.com/Annealage/mesh/v2.0.0/docs/mesh-three-pane.png)
 
 ## Why
 
-I built this while iterating on a 3D-printed part with Claude Code. The CAD was generated from a script, I'd look at a render, and then spend ages typing things like "no, the inside corner on the far wall near the fan, not that one" trying to describe which face I meant. It was a pain, and half the time the agent picked the wrong spot anyway.
+I built this while iterating on a 3D-printed part with an agent. The CAD was generated from a script, I'd look at a render, then spend ages typing things like "no, the inside corner on the far wall near the fan, not that one" trying to describe which face I meant. It was a bit of a pain, and half the time the agent picked the wrong spot anyway.
 
-Pointing at the thing is just so much easier. So we built a viewer where I click the face and type the comment right there, and the agent gets it back with the actual coordinates, no guessing.
+Pointing at the thing is just so much easier. Click the face, type the comment right there, the agent gets it back with the actual coordinates, no guessing.
 
-It's bidirectional too, which turned out to be the good bit. The agent can write its own callouts (a location plus a note) and they show up as pins in the viewer for me to see and reply to. So it ends up being a shared surface, I mark up what I want changed, the agent pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
+It's bidirectional too, which turned out to be the good bit. The agent writes its own callouts (a location plus a note) and they show up as cyan pins in the viewer. I mark up what I want changed, it pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
 
 ## Install
 
@@ -34,9 +34,17 @@ On Linux you'll also want `bubblewrap` and `socat`:
 
     apt install bubblewrap socat
 
-That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running you an uncontained one. macOS has its own sandbox built into the OS so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer on its own and needs neither.
+That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running an uncontained one. macOS has its own sandbox built in so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer without an agent session and needs neither.
 
-Python 3.10+. Four runtime dependencies, and only one of them is large: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find where your settings file belongs on your OS, [tomli](https://github.com/hukkin/tomli) to read that file on Python 3.10 (3.11 and up have `tomllib` built in), and the Claude Agent SDK, which is how the chat pane talks to Claude Code. The SDK bundles the Claude Code CLI, so installing this pulls about 90 MB; the other three are pure Python and tiny. three.js 0.160.0 is vendored inside the package and served locally, so the viewer itself needs no network access at all.
+Python 3.10+. Three small runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find your settings file, and [tomli](https://github.com/hukkin/tomli) to read it on 3.10 (3.11+ has `tomllib` built in). three.js 0.160.0 is vendored and served locally, so the viewer needs no network access at all. Agent backends have their own dependencies (below).
+
+### Agent backends
+
+Three backends, each getting the same viewer tools, the same MCP surface, and the same permission model. The `--backend` flag or the `backend` key in your settings file picks which one a session uses.
+
+- **Claude** (`--backend claude`): uses the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk). The SDK bundles the Claude Code CLI, so installing it pulls about 90 MB.
+- **Codex** (`--backend codex`): uses OpenAI's Codex CLI. Install `openai-codex` separately.
+- **OMP** (`--backend local`): uses [Oh My Pi](https://github.com/can1357/oh-my-pi) and all the providers it supports, including local models. Install `omp-rpc` from the oh-my-pi repo.
 
 ## Usage
 
@@ -44,30 +52,30 @@ Point it at a folder:
 
     annealage-mesh ./build
 
-It sets the folder up if it isn't already (a `dimensions.json` number set, a `model.py` scaffold with PEP-723 inline deps for CadQuery, a `cad/` directory of helper scripts, `models/` and `images/` directories, a `CLAUDE.md` stub, a `.gitignore`, and `git init` with one commit if git is installed), starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
+It sets the folder up if it isn't already (a `dimensions.json` for your caliper measurements, a `model.py` scaffold with PEP-723 inline deps for CadQuery, a `cad/` directory of helper scripts, `models/` and `images/` directories, a `CLAUDE.md` stub, a `.gitignore`, and a git init with one commit if git is installed), starts the server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in the folder shows up in the viewer, toggle them on and off in the side panel.
 
-There are four subcommands for when you want less than all of that:
+Four subcommands for when you want less than all of that:
 
-    annealage-mesh view ./build     # the viewer alone: no agent, no scaffold, no git
+    annealage-mesh view ./build     # viewer and chat, no scaffold, no git
     annealage-mesh init ./build     # set the folder up and stop
     annealage-mesh doctor ./build   # what's installed, what's configured, then stop
-    annealage-mesh migrate ./build  # got an older project? add the new CAD scaffold to it
+    annealage-mesh migrate ./build  # got an older project? add the CAD scaffold to it
 
-If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./view` and it's read as the directory. Running inside Claude Code already? The bare form flips to viewer-only and says so, so you don't get an agent inside an agent.
+If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./view` and it's read as the directory. Running inside an existing agent session? The bare form detects it and flips to viewer-only so you don't end up with an agent inside an agent.
 
-- Drag to orbit, scroll / pinch to zoom, right-drag or two-finger to pan.
-- Flip to "Add pin" mode, click the model to drop a pin, then type a comment against it in the panel.
+- Drag to orbit, scroll or pinch to zoom, right-drag or two-finger to pan.
+- Flip to "Add pin" mode, click the model to drop a pin, type a comment against it in the panel.
 - Hit Submit. Your pins get written to `mesh-comments.json` in the served folder, which is what the agent reads.
-- Type in the chat pane to put the agent to work in that folder. Interrupt stops a turn mid-flight, and each turn shows what it cost.
+- Type in the chat pane to put the agent to work in that folder. Interrupt stops a turn mid-flight, each turn shows what it cost.
 - The agent works the viewer too, not just the folder. It can move the camera, hide and show parts, screenshot what's on screen and pin its own callouts, so "show me the underside of that boss" is something it does rather than tells you to do.
-- Hit Pause in the topbar and everything that changes the view gets refused until you hit it again, so you can line up a shot or type a comment without it moving underneath you. It can still look while paused.
-- Need a distance between two features? Pick any two placed pins (yours or the agent's) in the "Measure" panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
+- Hit Pause in the topbar and everything that changes the view gets refused until you hit it again. Line up a shot or type a comment without it moving underneath you. It can still read while paused.
+- Need a distance between two features? Pick any two placed pins (yours or the agent's) in the Measure panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
 - Attach a picture to a message with the paperclip, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
-- Hit "Sketch" to draw straight on the 3D view, circle the wall that's wrong, and send that as the picture. Quicker than a pin when the shape of the problem is the point.
-- "Export" in the chat header writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask it for a record of what you decided.
-- The gear opens Settings: port, host, model, effort, and a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, the same facts `doctor` prints, which is what you want when you're looking at this on a phone with no terminal.
+- Hit Sketch to draw straight on the 3D view, circle the wall that's wrong, send that as the picture. Quicker than a pin when the shape of the problem is the point.
+- Export in the chat header writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask for a record of what you decided.
+- The gear opens Settings: port, host, model, backend, effort, a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, same facts `doctor` prints.
 
-It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan / zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
+It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan and zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
 
 Sessions are kept, so `-c` picks up the most recent conversation for that folder and `-r` lists what's there. Reloading the browser mid-turn doesn't lose anything, the conversation belongs to the session rather than the socket.
 
@@ -75,30 +83,33 @@ There's a fuller walkthrough in [docs/user-guide.md](docs/user-guide.md) coverin
 
 ## The CAD pipeline
 
-Mesh ships a CadQuery-based pipeline for parametric modeling. It's five stages, each building on the last:
+Mesh ships a CadQuery-based pipeline for parametric modelling. Five stages, each building on the last:
 
-1. **Evidence → dimensions** — caliper measurements go into `dimensions.json`, one source of truth. Measured values are sacred; derived numbers get computed in the model script, not baked into the JSON.
-2. **Scaffold** — `model.py` reads that file, uses PEP-723 inline deps (`uv run model.py` just works), and models the reference hardware first so the printable part is placed against real geometry.
-3. **Robust solids** — CadQuery geometry with OCCT kernel safety. The bundled `cad/robust_solids.py` handles the sharp edges: `safe_fillet` tries radii largest-first and falls back, `assert_valid` catches the silent boolean failures that OCCT won't tell you about.
-4. **Verify** — `cad/section_probe.py` slices the mesh, probes points, and checks watertightness before the human ever sees it. Cross-section PNGs go into `images/` so you can eyeball interior walls.
-5. **Print prep** — orientation, splitting hollow parts into open-face trays, plate layout, and watertight export via `cad/export_watertight.py`. Repairs are volume-guarded so they never silently reshape the part.
+1. **Evidence then dimensions.** Caliper measurements go into `dimensions.json`, one source of truth. Measured values are sacred; derived numbers get computed in the model script, not baked into the JSON.
+2. **Scaffold.** `model.py` reads that file, uses PEP-723 inline deps (`uv run model.py` just works), and models the reference hardware first so the printable part is placed against real geometry.
+3. **Robust solids.** CadQuery geometry with OCCT kernel safety. The bundled `cad/robust_solids.py` handles the sharp edges: `safe_fillet` tries radii largest-first and falls back, `assert_valid` catches the silent boolean failures that OCCT won't tell you about.
+4. **Verify.** `cad/section_probe.py` slices the mesh, probes points, and checks watertightness before the human ever sees it. Cross-section PNGs go into `images/` so you can eyeball interior walls.
+5. **Print prep.** Orientation, splitting hollow parts into open-face trays, plate layout, and watertight export via `cad/export_watertight.py`. Repairs are volume-guarded so they never silently reshape the part.
 
-The helpers are CadQuery-specific, but the viewer itself just watches for STL output. If you'd rather use OpenSCAD, build123d, or anything else that produces STLs, the viewer still works — you just won't have the helper scripts.
+The helpers are CadQuery-specific, but the viewer itself just watches for STL output. If you'd rather use OpenSCAD, build123d, or anything else that produces STLs, it all works the same way, you just won't have the helper scripts.
 
-A few files turn up in the served folder:
+## Files in the served folder
 
+- `dimensions.json` - measured values that `model.py` reads. One source of truth for every number that came off a caliper.
+- `model.py` - the parametric CadQuery script. `uv run model.py` writes STEP and STL into `models/`.
+- `cad/` - helper scripts: `robust_solids.py`, `section_probe.py`, `export_watertight.py`, `pin_to_model.py`.
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
 - `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (cyan, read-only). This is how an agent points back at the model.
-- `images/` - pictures you attached, sketches you drew, and screenshots the agent saved. Meant to be committed.
-- `.mesh/` - session event logs, this project's own config, any allow-always decisions you made, and a lock file so two servers can't fight over one folder. All of it gitignored except `config.toml`, which is shareable and holds no secret.
-- `review/` - transcripts you exported. Created the first time you export one, not before.
+- `images/` - pictures you attached, sketches you drew, screenshots the agent saved. Meant to be committed.
+- `.mesh/` - session event logs, this project's config, allow-always decisions, and a lock file so two servers can't fight over one folder. Gitignored except `config.toml`, which is shareable and holds no secret.
+- `review/` - exported transcripts. Created the first time you export one, not before.
 - `CLAUDE.md` - a stub describing the folder's contract, generated once if you don't already have one. Never overwritten.
 
 ## What it'll ask you about
 
 The agent's shell runs sandboxed, so a command that stays inside the project folder just runs without asking. That's deliberate, regenerating a part twenty times would be miserable otherwise. Anything that writes through its edit tools, wants out of the folder, or reaches the network gets you a card in the chat pane with the full command or file contents on it, and you allow it, allow it for the rest of the session, or deny it with a reason. The reason goes to the agent verbatim, so "not that file, do the enclosure instead" is more use to it than a bare no.
 
-Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the three that leave something behind after you close the page: writing a callout, deleting one, and saving a screenshot into the folder.
+Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the things that leave something behind after you close the page: writing a callout, deleting one, saving a screenshot, and setting a measured value in `dimensions.json`.
 
 ![An approval card for a Write, showing the whole file path and contents, with Allow, Always allow and Deny](https://raw.githubusercontent.com/Annealage/mesh/v2.0.0/docs/mesh-approval.png)
 
@@ -110,7 +121,7 @@ It binds to `127.0.0.1` by default, and the startup banner tells you what it's r
 
 ## For AI agents
 
-If you're an agent (or setting one up) working outside the chat pane, the contract is two JSON files in the served folder, plus two MCP tools, unchanged from the simple contract it started with.
+If you're an agent (or setting one up) working outside the built-in chat pane, the contract is two JSON files in the served folder plus a few MCP tools.
 
 Read the human's feedback from `mesh-comments.json`:
 
@@ -136,15 +147,16 @@ Write your own callouts to `mesh-callouts.json` and they show up as cyan pins in
 
 `point` and `comment` are the only fields that really matter, the rest are display niceties.
 
-Two MCP tools complement the file contract:
+Three MCP tools complement the file contract:
 
-- `mesh_verify` — run an STL quality check (open edges, volume, body count) and get the result back structured. Same checks as `cad/section_probe.py verify`, but callable from any MCP client.
-- `mesh_dimensions` — read, write, and update entries in `dimensions.json` without hand-editing the file. Enforces the measured-vs-derived separation.
+- `mesh_verify` runs an STL quality check (open edges, volume, body count) and returns the result structured. Same checks as `cad/section_probe.py verify`, but callable from any MCP client.
+- `mesh_dimensions` reads and lists entries in `dimensions.json` without hand-editing the file.
+- `mesh_dimensions_set` writes a measured value into `dimensions.json` (requires human approval, since it's changing the numbers the model is built from).
 
-There's also a Claude Code skill in `skill/` that wires this up as a workflow, so you can just tell Claude to use Annealage Mesh when it's working on printable models.
+There's a skill in `skill/` that wires this up as a workflow for agents that support skill files.
 
 ## Licence
 
 [PolyForm Noncommercial 1.0.0](LICENSE), free to use for any noncommercial purpose. Commercial use needs a separate licence; see [COMMERCIAL.md](COMMERCIAL.md).
 
-The Claude Code skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) is MIT, so it can be copied into any agent configuration without restriction.
+The skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) is MIT, so it can be copied into any agent configuration without restriction.
