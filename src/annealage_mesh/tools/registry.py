@@ -88,6 +88,7 @@ WRITE_CLASS = (
     "delete_callout",
     "snapshot",
     "export_transcript",
+    "mesh_dimensions_set",
 )
 
 #: What never prompts, as the model sees it, which is what goes into

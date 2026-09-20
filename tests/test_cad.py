@@ -297,11 +297,12 @@ class TestDimensionsHelpers:
 class TestMCPToolIntegration:
     """The MCP tool builders return valid tool definitions."""
 
-    def test_cad_tools_build_returns_two_tools(self, tmp_path):
+    def test_cad_tools_build_returns_three_tools(self, tmp_path):
         from annealage_mesh.tools.cad_tools import build
 
         tools = build(tmp_path)
-        assert len(tools) == 2
+        assert len(tools) == 3
         names = {t.name for t in tools}
         assert "mesh_verify" in names
         assert "mesh_dimensions" in names
+        assert "mesh_dimensions_set" in names

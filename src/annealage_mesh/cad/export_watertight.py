@@ -117,9 +117,7 @@ def export_watertight(obj, path):
                     print("  [pymeshfix] %s" % e)
             mesh = best
         meshes.append(mesh)
-    import trimesh as _trimesh  # noqa: F811 — re-import for concatenate
-
-    _trimesh.util.concatenate(meshes).export(str(path))
+    trimesh.util.concatenate(meshes).export(str(path))
     oe = sum(_open_edges(m) for m in meshes)
     print("wrote %s: open=%d bodies=%d" % (path, oe, len(meshes)))
 

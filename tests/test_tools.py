@@ -67,6 +67,7 @@ EXPECTED_WRITE_CLASS = (
     "delete_callout",
     "snapshot",
     "export_transcript",
+    "mesh_dimensions_set",
 )
 
 # Never prompts: nothing here reaches the broker, so nothing here interrupts.
@@ -88,6 +89,7 @@ ARGS = {
     "measure": {"a": "pin:1", "b": "pin:2"},
     "mesh_verify": {"rel": "cube.stl"},
     "mesh_dimensions": {"action": "read"},
+    "mesh_dimensions_set": {"key": "width", "value": "42"},
     "set_view": {"target": [1, 2, 3]},
     "fit_view": {},
     "set_visibility": {"rel": "cube.stl", "visible": False},

@@ -616,7 +616,7 @@ def _detect_existing(project_dir):
         else:
             found.append(("build directory", "found build/ (empty)"))
 
-    for dirname in ("cad", "parametric-cad-design"):
+    for dirname in ("cad", "cadquery", "parametric-cad-design"):
         d = project_dir / dirname
         if d.is_dir():
             found.append(("helper scripts", "found existing %s/ directory" % dirname))

@@ -76,7 +76,7 @@ EXPECTED_PRE_ALLOWED_TOOLS = [
     "mcp__mesh__select_pin",
 ]
 
-# The three that leave something on disk, and therefore must NOT be here. Listed
+# The five that leave something on disk, and therefore must NOT be here. Listed
 # so this file states the negative rather than leaving it to be inferred from
 # what is missing above: one of these appearing in ``allowed_tools`` would
 # silently remove the human's approval card and nothing else would notice.
@@ -84,6 +84,8 @@ EXPECTED_NEVER_PRE_ALLOWED = [
     "mcp__mesh__add_callout",
     "mcp__mesh__delete_callout",
     "mcp__mesh__snapshot",
+    "mcp__mesh__export_transcript",
+    "mcp__mesh__mesh_dimensions_set",
 ]
 
 # The posture from the M5 brief's "decided and not open" section: bash runs
@@ -274,7 +276,7 @@ async def test_options_wired_into_the_real_client():
         assert options.include_partial_messages is True
 
         # Fact 1: the mesh tools that never reach the broker, in their
-        # namespaced form. The three that leave something on disk are absent,
+        # namespaced form. The five that leave something on disk are absent,
         # which is what makes each of them a card the human sees.
         assert options.allowed_tools == EXPECTED_PRE_ALLOWED_TOOLS
         for name in EXPECTED_NEVER_PRE_ALLOWED:
@@ -336,7 +338,7 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
         assert list(servers) == ["mesh"]
         assert servers["mesh"]["type"] == "sdk"
         assert servers["mesh"]["name"] == "mesh"
-        assert len(mesh_tools.tools) == 19
+        assert len(mesh_tools.tools) == 20
     finally:
         await session.close()
 

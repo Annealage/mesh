@@ -120,7 +120,7 @@ def _enhanced_analysis(stl_path):
 
 
 def build(serve_dir):
-    """Return the two CAD tools, bound to ``serve_dir``."""
+    """Return the three CAD tools, bound to ``serve_dir``."""
 
     @tool(
         "mesh_verify",
@@ -159,18 +159,15 @@ def build(serve_dir):
 
     @tool(
         "mesh_dimensions",
-        "Read, write, or list entries in the project's dimensions.json — "
+        "Read or list entries in the project's dimensions.json — "
         "the single source of truth for all measured values that the model "
         "script reads.  Actions: 'read' (full file), 'get' (one key by "
-        "dotted path), 'set' (one key with value and optional note), "
-        "'list' (all leaf keys with values).",
-        {"action": str, "key": str, "value": str, "note": str},
+        "dotted path), 'list' (all leaf keys with values).",
+        {"action": str, "key": str},
     )
     async def mesh_dimensions(args):
         action = args.get("action", "")
         key = args.get("key", "")
-        value = args.get("value", "")
-        note = args.get("note", "")
 
         if action == "read":
             dims = _read_dims(serve_dir)
@@ -199,23 +196,35 @@ def build(serve_dir):
                 return fail("key %r not found in dimensions.json" % key)
             return ok({"key": key, "value": val})
 
-        if action == "set":
-            if not key:
-                return fail("'set' needs a key (dotted path)")
-            if not value:
-                return fail("'set' needs a value (JSON-encoded, e.g. '78.38')")
-            try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
-                return fail("value must be valid JSON (e.g. 78.38, '\"text\"', '[1,2]')")
-            dims = _read_dims(serve_dir) or {}
-            _set_path(dims, key, parsed)
-            if note:
-                notes = dims.setdefault("_notes", {})
-                notes[key] = note
-            written = _write_dims(serve_dir, dims)
-            return ok({"key": key, "value": parsed, "written": written})
+        return fail("unknown action %r; use 'read', 'get', or 'list'" % action)
 
-        return fail("unknown action %r; use 'read', 'get', 'set', or 'list'" % action)
+    @tool(
+        "mesh_dimensions_set",
+        "Set a measured value in the project's dimensions.json.  "
+        "key is a dotted path (e.g. 'radiator.ear_height_y'), "
+        "value is JSON-encoded (e.g. '78.38'), and note is an optional "
+        "provenance note (e.g. 'caliper across ears, photo IMG_0142').",
+        {"key": str, "value": str, "note": str},
+    )
+    async def mesh_dimensions_set(args):
+        key = args.get("key", "")
+        value = args.get("value", "")
+        note = args.get("note", "")
 
-    return [mesh_verify, mesh_dimensions]
+        if not key:
+            return fail("needs a key (dotted path, e.g. 'radiator.ear_height_y')")
+        if not value:
+            return fail("needs a value (JSON-encoded, e.g. '78.38')")
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return fail("value must be valid JSON (e.g. 78.38, '\"text\"', '[1,2]')")
+        dims = _read_dims(serve_dir) or {}
+        _set_path(dims, key, parsed)
+        if note:
+            notes = dims.setdefault("_notes", {})
+            notes[key] = note
+        written = _write_dims(serve_dir, dims)
+        return ok({"key": key, "value": parsed, "written": written})
+
+    return [mesh_verify, mesh_dimensions, mesh_dimensions_set]
