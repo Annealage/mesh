@@ -19,6 +19,7 @@ Signed-off-by: Your Name <you@example.com>
 - One logical change per pull request. Small focused PRs are easier to review and revert.
 - Include a test or a reproducer in the same PR where it is reasonable to do so.
 - Run `uv run --extra dev pytest -q` locally before pushing.
+- Install the pre-commit hook once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit`. CI's `lint` job runs the identical hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
 
 ## Contribution licensing
 

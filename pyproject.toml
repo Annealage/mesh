@@ -78,7 +78,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "pytest-asyncio>=0.23"]
+# pre-commit>=4.6: no upper cap, matching pytest-asyncio's own convention
+# above - a stable CLI driver with no API this project imports, only ever
+# invoked as `pre-commit` (CONTRIBUTING.md, .pre-commit-config.yaml).
+dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6"]
 # The browser suite, kept out of `dev` because it also needs a browser binary
 # installed separately (`playwright install chromium`), which is a much larger
 # download than the rest of the test dependencies put together. Declared rather

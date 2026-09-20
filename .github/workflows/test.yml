@@ -97,10 +97,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.1.0
-      - name: ruff check
-        run: uvx ruff check src tests
-      - name: ruff format
-        run: uvx ruff format --check src tests
+      - name: pre-commit
+        # Runs the exact same two ruff hooks, pinned to the exact same
+        # ruff release, as .pre-commit-config.yaml - one source of truth
+        # for what "lint clean" means, shared with the local git hook
+        # (CONTRIBUTING.md) instead of drifting from it.
+        run: uvx pre-commit run --all-files --show-diff-on-failure
 
   # Separate from the matrix above: this needs a chromium download, which is
   # larger than every other test dependency combined, so it runs once on one
