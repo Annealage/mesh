@@ -404,16 +404,18 @@ Targets: no hardware; needs real accounts already configured on the host
 running the tests to actually execute a passing run - this repo's own
 development host has `claude`, `codex`, and `omp` all already installed
 and authenticated, so this phase's live tier was actually run for real
-against them (not merely skip-path-verified). Results: Claude/haiku passed
-for real; Codex/gpt-5.6-luna authenticated and completed a real round trip
-through the real `codex app-server` (proving the fix and plumbing work
-end-to-end) but the account had hit its ChatGPT usage limit, so the
-observed reply was a quota rejection rather than the expected text - a
-real account-state fact, not a code defect; the omp CLI's binary
-disappeared from this host mid-session (its symlink target directory was
-removed outside this repository's control), so that leg could not be
-exercised in this run. A CI runner with none of these three configured
-will see all three skip cleanly, never error or silently misrun.
+against them (not merely skip-path-verified). First run: Claude/haiku
+passed for real; Codex/gpt-5.6-luna authenticated and completed a real
+round trip through the real `codex app-server` (proving the fix and
+plumbing work end-to-end) but the account had hit its ChatGPT usage limit,
+so the observed reply was a quota rejection rather than the expected
+text; the omp CLI's binary had moved to a new path on this host mid-
+session, so that leg could not be exercised with the old path. Retried
+later the same day with the usage limit reset and the new omp path on
+`PATH`: all three passed for real (`3 passed, 1117 deselected` on
+`pytest -m integration -v -rs`). A CI runner with none of these three
+configured will see all three skip cleanly, never error or silently
+misrun.
 
 Tests: the skip-path itself, i.e. `pytest -m integration -q` on a host
 with none of the three CLIs on `PATH` reports all three tests skipped,
@@ -450,7 +452,7 @@ Ticket: `planning/tickets/phase7_live-integration-tests.md`.
 | Three drivers drift in approval/tool/sandbox behavior over time | `session/base.py`'s Protocol and `tools/registry.py`'s classification stay the single source of truth every driver adapts to, not three independent policies. |
 | `.github/workflows/test.yml`'s `uv run --extra dev pytest -q` installs neither `--extra codex` nor `omp-rpc`, so `tests/test_codex_session.py`/`tests/test_mcp_bridge.py`/`tests/test_omp_session.py` need manual dependency installation to even collect in CI as currently configured (flagged in Phase 3 and Phase 4's progress reports, not fixed by either since it falls outside both phases' stated anchors) | **RESOLVED 2026-09-20**: `--extra codex` added to the CI pytest invocation; `omp-rpc` installed via `uv pip install` against the synced environment, pinned to the same commit `session/omp.py`'s module docstring documents as verified (not declared as a `pyproject.toml` extra - a direct git dependency there would break the real PyPI publish workflow). Verified locally: the exact CI command passes 1062. |
 | `backend=local` (`session/omp.py`) hard-required `local_base_url`, forcing reconfiguration of an `omp` install that already had its own named providers configured (**RESOLVED 2026-09-20**, found by the user directly during Phase 7's own live-test run) | `local_base_url` is now genuinely optional; unset, `model` passes straight through to `omp`'s own `--model` flag against whatever providers the host's `omp` is already configured with, no config synthesis. Five new unit tests (`tests/test_omp_session.py`) cover both branches; the live omp test exercises the new path directly. See `20260920_phase7-correction.md`. |
-| Phase 7's live tests were unverifiable against a real pass in this development environment | **Superseded 2026-09-20**: this repo's own development host has `claude`/`codex`/`omp` all already installed and authenticated, so the live tier was run for real, not just skip-path-verified. Claude/haiku passed for real; Codex/gpt-5.6-luna authenticated and round-tripped for real but hit a real ChatGPT account usage limit (an account-state fact, not a code defect); omp's binary disappeared from this host mid-session (outside this repo's control) before its leg could run. A host without these CLIs configured (e.g. a fresh CI runner) still skips all three cleanly rather than erroring or silently misrunning. |
+| Phase 7's live tests were unverifiable against a real pass in this development environment | **RESOLVED 2026-09-20**: this repo's own development host has `claude`/`codex`/`omp` all already installed and authenticated, so the live tier was run for real, not just skip-path-verified. First run: Claude/haiku passed; Codex hit a real account usage limit; omp's binary had moved to a new host path mid-session. Retried later the same day with the limit reset and the new omp path on `PATH`: all three passed for real. A host without these CLIs configured (e.g. a fresh CI runner) still skips all three cleanly rather than erroring or silently misrunning. |
 
 ## Progress tracking
 

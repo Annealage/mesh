@@ -135,6 +135,32 @@ Full default suite: `pytest tests/ --ignore=tests/test_viewer_e2e.py -q` -
 new test coverage). `ruff check`/`ruff format --check` clean on every file
 touched by this correction.
 
+## Retry, later the same day: all three passed for real
+
+The Codex usage limit was time-boxed ("try again at 2:17 PM"), and the
+`omp` binary had moved rather than vanished - the user pointed at its new
+location directly:
+`/home/corona/cc-pi-bridge/trial-omp/node_modules/.bin/omp` (a working
+`node_modules/.bin` shim to `dist/cli.js`, `omp/18.1.22`, replacing the
+now-gone `~/.local/bin/omp` symlink this correction's first pass observed).
+With that directory prepended to `PATH` for the test run (no repo change,
+no reconfiguration - the same binary a human on this host would now run),
+`pytest -m integration -v -rs` was re-run in full:
+
+```
+tests/test_codex_session_live.py::test_real_codex_backend_completes_a_turn PASSED
+tests/test_omp_session_live.py::test_real_omp_backend_completes_a_turn PASSED
+tests/test_sdk_session_live.py::test_real_claude_backend_completes_a_turn PASSED
+3 passed, 1117 deselected, 1 warning in 37.36s
+```
+
+All three backends now have a genuine, real, on-demand passing live run on
+this host, with zero reconfiguration: Claude/haiku, Codex/gpt-5.6-luna, and
+omp/titan-qwen3.8-27b (via the `base_url=None` pass-through path this
+correction's fix added). This closes out the acceptance criterion Phase
+7's own ticket named and that this correction's first pass could only get
+two-of-three of.
+
 ## Lesson, stated plainly
 
 Two mistakes compounded: inventing a credential-plumbing requirement
