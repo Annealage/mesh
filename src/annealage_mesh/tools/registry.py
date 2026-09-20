@@ -54,7 +54,7 @@ from claude_agent_sdk import create_sdk_mcp_server
 
 from .. import __version__
 from ..viewers import CallError, NoViewerConnected, ViewerGone
-from . import MESH_SERVER_NAME, fail, model_tools, namespaced, review_tools, viewer_tools
+from . import MESH_SERVER_NAME, cad_tools, fail, model_tools, namespaced, review_tools, viewer_tools
 
 #: Changes nothing. Pre-allowed, and not gated by the pause switch.
 READ_CLASS = (
@@ -66,6 +66,8 @@ READ_CLASS = (
     "list_callouts",
     "capture_view",
     "measure",
+    "mesh_verify",
+    "mesh_dimensions",
 )
 
 #: Changes what is on screen and nothing else. Pre-allowed, because a card per
@@ -276,6 +278,7 @@ class MeshTools:
             model_tools.build(serve_dir)
             + viewer_tools.build(bus)
             + review_tools.build(bus, serve_dir, session_id)
+            + cad_tools.build(serve_dir)
         )
         _verify(built)
         self.tools = tuple(

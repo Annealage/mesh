@@ -38,7 +38,7 @@ from .http.routes_viewer import VIEWER_HTML
 DEFAULT_PORT = 8765
 
 #: Subcommand names, recognised only as an exact first argument.
-SUBCOMMANDS = ("view", "init", "doctor")
+SUBCOMMANDS = ("view", "init", "migrate", "doctor")
 
 #: Environment variable Claude Code sets in its own shells. Its presence means
 #: this invocation is already inside an agent session, so agent mode would nest
@@ -75,8 +75,9 @@ def build_parser():
         prog="annealage-mesh",
         description="Build 3D-printable parts with an agent: a local 3D viewer beside a chat pane.",
         epilog="Subcommands: view (viewer only), init (scaffold a project), "
+        "migrate (bring an existing CadQuery project under Mesh), "
         "doctor (report what this machine has). A directory named like a "
-        "subcommand is still servable as ./view, ./init or ./doctor. "
+        "subcommand is still servable as ./view, ./init, ./migrate or ./doctor. "
         "-r/--resume takes its SID from the next token unconditionally, "
         'so "annealage-mesh -r mydir" reads mydir as SID, not as the '
         "directory to serve. Put DIR before -r/-c, or spell the id as "
@@ -213,6 +214,29 @@ def build_doctor_parser():
         "and which settings files are in play. Starts no server.",
     )
     _add_dir(ap)
+    return ap
+
+
+def build_migrate_parser():
+    ap = argparse.ArgumentParser(
+        prog="annealage-mesh migrate",
+        description="Bring an existing CadQuery project under Annealage Mesh. "
+        "Detects what you already have, scaffolds what is missing, "
+        "and prints a report. Idempotent: anything already there "
+        "is left alone.",
+    )
+    _add_dir(ap)
+    ap.add_argument(
+        "--no-git",
+        action="store_true",
+        help="do not run git init, and do not make the scaffold commit",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="rewrite the generated .gitignore and CLAUDE.md, which "
+        "are otherwise kept exactly as they are",
+    )
     return ap
 
 
@@ -556,6 +580,90 @@ def init_command(argv):
     return 0
 
 
+def _detect_existing(project_dir):
+    """Scan *project_dir* for pre-existing CadQuery project artefacts.
+
+    Returns a list of ``(label, detail)`` pairs describing what was found,
+    suitable for printing as a migration report.
+    """
+    found = []
+    dims = project_dir / project_module.DIMENSIONS_NAME
+    if dims.exists():
+        found.append(
+            ("dimensions", "found existing %s — kept as-is" % project_module.DIMENSIONS_NAME)
+        )
+
+    cadquery_scripts = []
+    for py in sorted(project_dir.glob("*.py")):
+        try:
+            text = py.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "import cadquery" in text or "from cadquery" in text:
+            cadquery_scripts.append(py.name)
+    if cadquery_scripts:
+        found.append(("model scripts", "found CadQuery scripts: %s" % ", ".join(cadquery_scripts)))
+
+    build_dir = project_dir / "build"
+    if build_dir.is_dir():
+        stls = sorted(build_dir.glob("*.stl"))
+        steps = sorted(build_dir.glob("*.step"))
+        exports = [p.name for p in stls + steps]
+        if exports:
+            found.append(
+                ("build artefacts", "found %s in build/: %s" % (len(exports), ", ".join(exports)))
+            )
+        else:
+            found.append(("build directory", "found build/ (empty)"))
+
+    for dirname in ("cad", "parametric-cad-design"):
+        d = project_dir / dirname
+        if d.is_dir():
+            found.append(("helper scripts", "found existing %s/ directory" % dirname))
+
+    return found
+
+
+def migrate_command(argv):
+    """``annealage-mesh migrate``: detect, scaffold, and report."""
+    args = build_migrate_parser().parse_args(argv)
+    serve_dir, message = _resolved_dir(args.dir)
+    if serve_dir is None:
+        sys.stderr.write("error: %s\n" % message)
+        return 2
+
+    # Phase 1: detect what already exists.
+    existing = _detect_existing(serve_dir)
+
+    # Phase 2: scaffold what is missing (idempotent).
+    result = project_module.ensure_project(serve_dir, git=not args.no_git, force=args.force)
+
+    # Phase 3: report.
+    sys.stdout.write("migrating %s\n" % serve_dir)
+    if existing:
+        sys.stdout.write("\nexisting project artefacts:\n")
+        for _label, detail in existing:
+            sys.stdout.write("  %s\n" % detail)
+    else:
+        sys.stdout.write("\nno existing CadQuery artefacts detected\n")
+
+    lines = scaffold_report(result, serve_dir)
+    if lines:
+        # scaffold_report's first line is "project <dir>"; skip it since we
+        # already printed the header above.
+        sys.stdout.write("\nscaffold:\n")
+        for line in lines[1:]:
+            sys.stdout.write("%s\n" % line)
+    else:
+        sys.stdout.write("\nscaffold: project was already complete; nothing added\n")
+
+    for name in result.kept:
+        sys.stdout.write("  kept as it is: %s\n" % name)
+
+    sys.stdout.write("\nnext steps:\n  run annealage-mesh %s to start the viewer\n" % args.dir)
+    return 0
+
+
 def doctor_command(argv):
     """``annealage-mesh doctor``: report and exit, taking no lock and no port."""
     args = build_doctor_parser().parse_args(argv)
@@ -595,6 +703,8 @@ def main(argv=None):
     command, rest = _split_command(argv)
     if command == "init":
         return init_command(rest)
+    if command == "migrate":
+        return migrate_command(rest)
     if command == "doctor":
         return doctor_command(rest)
 

@@ -2,7 +2,7 @@
 
 Annealage Mesh is a little web tool for building 3D-printable parts with an agent, by pointing at them. You give it a folder, it serves up a 3D viewer in the browser with a Claude Code chat pane beside it, and the two of you get to work in there.
 
-Ask for a part and the agent writes the CAD script in that folder, runs it, and the STL turns up in the viewer. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script.
+Ask for a part and the agent writes a CadQuery script in that folder, runs it, and the STL turns up in the viewer. Click the face that's wrong, say what's wrong with it, and off it goes to fix the script. The project ships a full CadQuery-based modeling pipeline — dimension management, robust solid helpers, self-verification, and print-prep scripts — so neither you nor the agent has to figure out the toolchain.
 
 ![Annealage Mesh: the model with a human's orange pin and the agent's cyan callouts, the review panel, and the chat pane mid-answer](https://raw.githubusercontent.com/Annealage/mesh/v2.0.0/docs/mesh-three-pane.png)
 
@@ -44,13 +44,14 @@ Point it at a folder:
 
     annealage-mesh ./build
 
-It sets the folder up if it isn't already (a `models/` and `images/` directory, a `CLAUDE.md` stub, a `.gitignore`, and `git init` with one commit if git is installed), starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
+It sets the folder up if it isn't already (a `dimensions.json` number set, a `model.py` scaffold with PEP-723 inline deps for CadQuery, a `cad/` directory of helper scripts, `models/` and `images/` directories, a `CLAUDE.md` stub, a `.gitignore`, and `git init` with one commit if git is installed), starts a local server, prints the URL with a per-run token in it, and opens your browser. Every `.stl` in there shows up in the viewer, toggle them on/off in the side panel.
 
-There are three subcommands for when you want less than all of that:
+There are four subcommands for when you want less than all of that:
 
     annealage-mesh view ./build     # the viewer alone: no agent, no scaffold, no git
     annealage-mesh init ./build     # set the folder up and stop
     annealage-mesh doctor ./build   # what's installed, what's configured, then stop
+    annealage-mesh migrate ./build  # got an older project? add the new CAD scaffold to it
 
 If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./view` and it's read as the directory. Running inside Claude Code already? The bare form flips to viewer-only and says so, so you don't get an agent inside an agent.
 
@@ -71,6 +72,18 @@ It works on a phone too, the three panes become tabs and navigation is all touch
 Sessions are kept, so `-c` picks up the most recent conversation for that folder and `-r` lists what's there. Reloading the browser mid-turn doesn't lose anything, the conversation belongs to the session rather than the socket.
 
 There's a fuller walkthrough in [docs/user-guide.md](docs/user-guide.md) covering the loop, the flags, remote access and what to do when something's off.
+
+## The CAD pipeline
+
+Mesh ships a CadQuery-based pipeline for parametric modeling. It's five stages, each building on the last:
+
+1. **Evidence → dimensions** — caliper measurements go into `dimensions.json`, one source of truth. Measured values are sacred; derived numbers get computed in the model script, not baked into the JSON.
+2. **Scaffold** — `model.py` reads that file, uses PEP-723 inline deps (`uv run model.py` just works), and models the reference hardware first so the printable part is placed against real geometry.
+3. **Robust solids** — CadQuery geometry with OCCT kernel safety. The bundled `cad/robust_solids.py` handles the sharp edges: `safe_fillet` tries radii largest-first and falls back, `assert_valid` catches the silent boolean failures that OCCT won't tell you about.
+4. **Verify** — `cad/section_probe.py` slices the mesh, probes points, and checks watertightness before the human ever sees it. Cross-section PNGs go into `images/` so you can eyeball interior walls.
+5. **Print prep** — orientation, splitting hollow parts into open-face trays, plate layout, and watertight export via `cad/export_watertight.py`. Repairs are volume-guarded so they never silently reshape the part.
+
+The helpers are CadQuery-specific, but the viewer itself just watches for STL output. If you'd rather use OpenSCAD, build123d, or anything else that produces STLs, the viewer still works — you just won't have the helper scripts.
 
 A few files turn up in the served folder:
 
@@ -97,7 +110,7 @@ It binds to `127.0.0.1` by default, and the startup banner tells you what it's r
 
 ## For AI agents
 
-If you're an agent (or setting one up) working outside the chat pane, the contract is still just two JSON files in the served folder, unchanged.
+If you're an agent (or setting one up) working outside the chat pane, the contract is two JSON files in the served folder, plus two MCP tools, unchanged from the simple contract it started with.
 
 Read the human's feedback from `mesh-comments.json`:
 
@@ -122,6 +135,11 @@ Write your own callouts to `mesh-callouts.json` and they show up as cyan pins in
     }
 
 `point` and `comment` are the only fields that really matter, the rest are display niceties.
+
+Two MCP tools complement the file contract:
+
+- `mesh_verify` — run an STL quality check (open edges, volume, body count) and get the result back structured. Same checks as `cad/section_probe.py verify`, but callable from any MCP client.
+- `mesh_dimensions` — read, write, and update entries in `dimensions.json` without hand-editing the file. Enforces the measured-vs-derived separation.
 
 There's also a Claude Code skill in `skill/` that wires this up as a workflow, so you can just tell Claude to use Annealage Mesh when it's working on printable models.
 

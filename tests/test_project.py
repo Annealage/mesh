@@ -111,18 +111,30 @@ def _run_that_must_not_be_called(argv, **kwargs):
 
 def test_ensure_project_scaffolds_an_empty_directory(tmp_path):
     """A fresh call over an empty directory creates both scaffold
-    directories and both generated files, and reports every one of them
-    through ``created`` rather than ``kept``."""
+    directories, the CAD scaffold (dimensions.json, model.py, cad/ with
+    helper scripts), and both generated files, and reports every one of
+    them through ``created`` rather than ``kept``."""
     git = _FakeGit(state="clear", toplevel=tmp_path)
     result = project.ensure_project(tmp_path, run=git, which=_which_git_present)
 
-    assert set(result.created) == {"models", "images", ".gitignore", "CLAUDE.md"}
+    assert set(result.created) >= {
+        "models",
+        "images",
+        ".gitignore",
+        "CLAUDE.md",
+        "dimensions.json",
+        "model.py",
+        "cad",
+    }
     assert result.kept == ()
     assert result.regenerated == ()
     assert (tmp_path / "models").is_dir()
     assert (tmp_path / "images").is_dir()
     assert (tmp_path / ".gitignore").is_file()
     assert (tmp_path / "CLAUDE.md").is_file()
+    assert (tmp_path / "dimensions.json").is_file()
+    assert (tmp_path / "model.py").is_file()
+    assert (tmp_path / "cad").is_dir()
 
 
 def test_ensure_project_does_not_scaffold_a_review_directory(tmp_path):
@@ -170,7 +182,15 @@ def test_ensure_project_is_idempotent_on_a_second_call(tmp_path):
     second = project.ensure_project(tmp_path, run=second_git, which=_which_git_present)
 
     assert second.created == ()
-    assert set(second.kept) == {"models", "images", ".gitignore", "CLAUDE.md"}
+    assert set(second.kept) >= {
+        "models",
+        "images",
+        ".gitignore",
+        "CLAUDE.md",
+        "dimensions.json",
+        "model.py",
+        "cad",
+    }
     assert second.regenerated == ()
     assert second.git == project.GitResult(False, False, "already a git repository")
     assert ("git", "init") not in [c[:2] for c in second_git.calls]
@@ -189,8 +209,8 @@ def test_force_regenerates_gitignore_and_claude_md_but_never_the_directories(tmp
     result = project.ensure_project(tmp_path, force=True, git=False, which=_which_git_absent)
 
     assert result.created == ()
-    assert result.kept == ("models", "images")
-    assert set(result.regenerated) == {".gitignore", "CLAUDE.md"}
+    assert set(result.kept) >= {"models", "images", "cad"}
+    assert set(result.regenerated) >= {".gitignore", "CLAUDE.md", "dimensions.json", "model.py"}
     assert (tmp_path / ".gitignore").read_text() == project.gitignore_body()
     assert (tmp_path / "CLAUDE.md").read_text() == project.claude_md_body(tmp_path)
 

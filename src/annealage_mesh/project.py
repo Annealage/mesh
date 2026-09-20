@@ -55,6 +55,13 @@ from . import paths
 # apart from each other.
 SCAFFOLD_DIRS = ("models", paths.IMAGES_DIRNAME)
 
+# The CAD scaffold: a helper-scripts directory, a dimension file, and a
+# model template.  These are created by ``ensure_project`` alongside the
+# viewer scaffold above.
+CAD_DIR = "cad"
+DIMENSIONS_NAME = "dimensions.json"
+MODEL_NAME = "model.py"
+
 GITIGNORE_NAME = ".gitignore"
 CLAUDE_MD_NAME = "CLAUDE.md"
 
@@ -128,6 +135,10 @@ def gitignore_body():
         ".mesh/\n"
         "!.mesh/config.toml\n"
         "\n"
+        "# build/ holds intermediate STEP/STL output from the model script;\n"
+        "# regenerate from source, don't commit.\n"
+        "build/\n"
+        "\n"
         "# models/ and images/ stay tracked: STL/3MF inputs and\n"
         "# agent-generated output, and uploads, sketch composites and\n"
         "# captured views, are the evidence a review depends on.\n"
@@ -143,27 +154,33 @@ def claude_md_body(project_dir):
     ``project_dir``.
 
     Written for whichever agent finds itself working in this folder, stating
-    the same exchange-file contract the published skill documents: where a
-    human's submitted pins land, where an agent's own callouts belong, and
-    that a chat pane driving this same folder may already be attached. An
-    agent that opens this file with no memory of any skill still knows the
-    shape of the folder it is standing in.
+    the exchange-file contract the published skill documents AND the full
+    five-stage CAD workflow so an agent that opens this file with no memory
+    of any skill still knows how to drive the project.
     """
+    from .cad.scaffold import claude_md_cad_section
+
     name = Path(project_dir).resolve().name
     models_dir = SCAFFOLD_DIRS[0]
     paragraphs = [
         "# %s" % name,
-        "This folder is served by `annealage-mesh`, a local viewer for the "
-        "STL and 3MF files under `%s/`, with an optional chat pane beside it "
-        "where an agent can work in this same folder while a human watches "
-        "the model update live." % models_dir,
+        "This folder is served by Annealage Mesh — a local 3D viewer with a "
+        "chat pane, where an agent writes CAD scripts, the parts appear "
+        "live, and the human pins feedback on the geometry.",
+        claude_md_cad_section(),
         "## Layout",
         "- `%s/` holds the model files the viewer indexes, including "
         "anything regenerated while an agent session is attached; the "
         "viewer picks up a changed file with no restart." % models_dir,
-        "- `%s/` holds uploads, sketch composites and captured views, meant "
-        "to be committed as evidence of what a part looked like at some "
-        "point in review." % paths.IMAGES_DIRNAME,
+        "- `%s/` holds uploads, sketch composites, cross-section PNGs and "
+        "captured views, meant to be committed as evidence of what a part "
+        "looked like at some point in review." % paths.IMAGES_DIRNAME,
+        "- `%s` is the single source of truth for all measured values; "
+        "the model script reads it, never hardcodes a dimension." % DIMENSIONS_NAME,
+        "- `model.py` is the CadQuery build script; run with "
+        "`uv run model.py` to regenerate `%s/*.step` and `%s/*.stl`." % (models_dir, models_dir),
+        "- `%s/` holds helper scripts for robust fillets, verification, "
+        "watertight export, and pin coordinate transforms." % CAD_DIR,
         "- `%s` and `%s` hold the human's pinned comments, written by the "
         "viewer when a pin is submitted; re-read the `.json` file after "
         "asking for feedback." % (paths.COMMENTS_JSON_NAME, paths.COMMENTS_LOG_NAME),
@@ -175,10 +192,10 @@ def claude_md_body(project_dir):
         "## Mesh tools",
         "When an agent session is attached, the `mesh` MCP server exposes "
         "tools for the camera, part visibility, pins, callouts, measurement, "
-        "screenshots and transcript export, all acting on the same viewer "
-        "the human is looking at. Prefer them over hand-editing the files "
-        "above while a session is attached: they keep the viewer in sync "
-        "with no extra step.",
+        "screenshots, transcript export, STL verification, and dimension "
+        "management — all acting on the same viewer the human is looking at. "
+        "Prefer them over hand-editing the exchange files while a session "
+        "is attached: they keep the viewer in sync with no extra step.",
     ]
     return "\n\n".join(paragraphs) + "\n"
 
@@ -312,18 +329,21 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
 
     Idempotent: a second call over a folder this already scaffolded writes
     nothing and reports every file and directory it found already in place
-    through ``kept``. ``force`` regenerates the two generated files,
-    ``.gitignore`` and ``CLAUDE.md``, when they already exist; it has no
-    effect on the two scaffold directories, which are never rewritten once
-    present, and no effect on git, which this function never re-initialises
-    or re-commits once a repository already exists at or above
-    ``project_dir``.
+    through ``kept``.  ``force`` regenerates generated files (``.gitignore``,
+    ``CLAUDE.md``, ``dimensions.json``, ``model.py``) when they already
+    exist; it has no effect on the scaffold directories or on the ``cad/``
+    helper scripts, which are never rewritten once present, and no effect on
+    git, which this function never re-initialises or re-commits once a
+    repository already exists at or above ``project_dir``.
 
     ``git=False`` skips the git side entirely and leaves ``result.git`` as
     ``None``, which is how ``--no-git`` is meant to read: "nothing was even
     attempted", distinct from every outcome ``_ensure_git`` can report for a
     call that did attempt it.
     """
+    from .cad import HELPER_SCRIPTS, script_source
+    from .cad.scaffold import dimensions_json_body, model_py_body
+
     project_dir = paths.resolve_serve_dir(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
 
@@ -331,6 +351,7 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
     kept = []
     regenerated = []
 
+    # ── Viewer scaffold directories ──────────────────────────────
     for name in SCAFFOLD_DIRS:
         target = project_dir / name
         if target.exists():
@@ -339,10 +360,35 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
             target.mkdir(parents=True)
             created.append(name)
 
+    # ── Generated files (overwritten by --force) ─────────────────
     _scaffold_file(project_dir, GITIGNORE_NAME, gitignore_body(), force, created, kept, regenerated)
     _scaffold_file(
         project_dir, CLAUDE_MD_NAME, claude_md_body(project_dir), force, created, kept, regenerated
     )
+    _scaffold_file(
+        project_dir, DIMENSIONS_NAME, dimensions_json_body(), force, created, kept, regenerated
+    )
+    _scaffold_file(project_dir, MODEL_NAME, model_py_body(), force, created, kept, regenerated)
+
+    # ── CAD helper scripts directory ─────────────────────────────
+    cad_target = project_dir / CAD_DIR
+    if cad_target.exists():
+        kept.append(CAD_DIR)
+    else:
+        cad_target.mkdir(parents=True)
+        created.append(CAD_DIR)
+
+    # Copy each bundled helper script into the project's cad/ directory.
+    # Never overwrite an existing script (the user may have modified it);
+    # force has no effect here — the scripts are scaffolded once.
+    for script_name in HELPER_SCRIPTS:
+        script_target = cad_target / script_name
+        rel = "%s/%s" % (CAD_DIR, script_name)
+        if script_target.exists():
+            kept.append(rel)
+        else:
+            paths.atomic_replace(script_target, script_source(script_name).encode("utf-8"))
+            created.append(rel)
 
     git_result = _ensure_git(project_dir, run=run, which=which) if git else None
 

@@ -90,6 +90,17 @@ dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6"]
 # end at all: undeclared, they are silently not run.
 e2e = ["playwright"]
 
+# Enhanced STL verification (watertight/volume/body analysis) in the
+# mesh_verify MCP tool.  Without this extra the tool still returns basic
+# geometry facts (triangle count, bounding box) from the package's own
+# dependency-free STL reader, but open-edge counts, volume and body-count
+# analysis need trimesh's mesh processing.  Kept optional because trimesh
+# pulls in numpy (~20 MB) and the base install is otherwise pure-Python
+# plus the Claude Agent SDK.  The agent's own CadQuery model scripts
+# declare their deps via PEP-723 inline metadata and do not need this
+# extra at all.
+cad = ["trimesh", "numpy"]
+
 # Optional, unlike claude-agent-sdk, because it is an alternative backend
 # (settings.py's `backend` key) rather than the default: an install that
 # only ever runs the Claude backend should not pay for a second CLI it

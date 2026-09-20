@@ -7,6 +7,7 @@ This is the full walkthrough for using Mesh to build and review a 3D-printable p
 - [First run](#first-run)
 - [The three panes](#the-three-panes)
 - [The modelling loop](#the-modelling-loop)
+- [The CAD pipeline](#the-cad-pipeline)
 - [Placing pins](#placing-pins)
 - [Working with the agent](#working-with-the-agent)
 - [Attaching pictures, and sketching on the view](#attaching-pictures-and-sketching-on-the-view)
@@ -72,7 +73,85 @@ Repeat until the part is right, then print it.
 
 Two details make step 3 behave sensibly rather than fighting you. A part still being written to disk is waited for rather than shown, so you never see a half-generated mesh or a load failure for a file that was about to be fine. And a part regenerated twenty times leaves one mesh in the scene, not twenty stacked copies.
 
-Mesh does not choose your CAD toolchain, and does not supply one. Whatever the agent can install or run in that folder is what you get; OpenSCAD, build123d, CadQuery and a hand-written mesh generator all work the same way from Mesh's point of view, because all it watches for is the STL. If you have a preference, say so in the first message, or put it in a `CLAUDE.md` in the folder, which the agent reads.
+Mesh ships a CadQuery-based modelling pipeline by default. The `init` subcommand scaffolds a project with a self-running `model.py`, a `dimensions.json` for your measurements, and a set of helper scripts under `cad/` that handle OCCT kernel safety, self-verification and print preparation. The next section covers the pipeline in detail.
+
+Other toolchains still work. The viewer watches for STL files appearing or changing in the served directory, so anything that produces an STL — OpenSCAD, build123d, a hand-written mesh generator — works the same way from Mesh's point of view. If you have a preference, say so in the first message, or put it in a `CLAUDE.md` in the folder, which the agent reads.
+
+## The CAD pipeline
+
+The default CadQuery pipeline has five stages. Each builds on the last; skipping one stores up pain for later.
+
+1. **Evidence → dimensions** — caliper measurements off the hardware go into `dimensions.json`.
+2. **Scaffold** — `model.py` reads that file and models the reference hardware first, then the printable part.
+3. **Robust solids** — CadQuery geometry with OCCT kernel safety via the helper scripts.
+4. **Verify** — the agent self-checks the mesh before showing you.
+5. **Print prep** — orientation, splitting and watertight export.
+
+### dimensions.json
+
+Every measured value lives in one file. Group related values so the structure mirrors the object:
+
+```json
+{
+  "radiator": {
+    "ear_height_y": 78.38,
+    "full_x": 159.71,
+    "corner_cut": 12.0
+  },
+  "fan": { "nominal": 80.0, "bore_d": 76.5, "screw_pitch": 71.5 },
+  "part": { "wall": 2.4, "fit": 0.4 },
+  "_notes": {
+    "radiator.ear_height_y": "caliper across the ears, photo IMG_0142"
+  },
+  "_units": "mm"
+}
+```
+
+Measured values are ground truth from the hardware and are never silently changed. Derived values — centre offsets, half-widths — are computed in `model.py`, not baked into the JSON.
+
+### model.py
+
+The model script is self-running via `uv run model.py`, with no separate environment to set up. PEP-723 inline dependency metadata at the top of the file tells `uv` what to install:
+
+```python
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["cadquery>=2.4", "trimesh", "numpy"]
+# ///
+```
+
+It loads the number set from `dimensions.json`, builds the geometry in CadQuery, and writes STEP and STL files into `models/`. The viewer picks up the STL within a fraction of a second.
+
+### Helper scripts in cad/
+
+Four helper scripts live under `cad/` and are imported by `model.py` or run standalone:
+
+| Script | What it does |
+| --- | --- |
+| `robust_solids.py` | `safe_fillet` (tries radii largest-first, keeps the first valid result), `box_around` (spatial edge selector), `assert_valid` (raises on an invalid OCCT solid). Imported by `model.py`. |
+| `section_probe.py` | Cross-sections, point-in-solid probes, and watertight/volume/body-count checks. Run standalone to verify a mesh. |
+| `export_watertight.py` | Volume-guarded mesh repair and plate layout for split parts. `center_drop` and `build_split_plate` handle print-bed placement. |
+| `pin_to_model.py` | Inverts the export transform so a pin's STL-frame coordinates map back to model coordinates. Used when acting on human feedback after a split or centre-drop. |
+
+### Verifying a mesh
+
+Before asking for human review, the agent runs:
+
+    uv run cad/section_probe.py verify models/part.stl
+
+which reports open edges, volume and body count:
+
+    part.stl: open=0 vol=12340 bodies=1
+
+`open_edges == 0` and the expected body count are the green light. A volume that jumped means a boolean silently failed upstream.
+
+Cross-sections save a 2D outline PNG for visual inspection:
+
+    uv run cad/section_probe.py section models/part.stl --plane 0 0 1 --offset 10 -o images/section-z10.png
+
+Point-in-solid probes confirm a cavity is hollow or a corner got rounded:
+
+    uv run cad/section_probe.py probe models/part.stl 10 5 3  0 0 0
 
 ## Placing pins
 
@@ -152,7 +231,7 @@ The agent has the same ability as a tool, and unlike its viewer tools this one a
 
 ## Setting a folder up, and checking your machine
 
-`annealage-mesh <dir>` sets a folder up before it starts serving, and says what it created. What it makes: `models/` and `images/`, a `.gitignore` that ignores `.mesh/` except the shareable `config.toml`, a `CLAUDE.md` stub describing the folder's contract for an agent working in it, and a git repository with one commit if git is installed and the folder is not already in one. It is idempotent, so the second run creates nothing, and it never overwrites a `CLAUDE.md` you wrote yourself.
+`annealage-mesh <dir>` sets a folder up before it starts serving, and says what it created. What it makes: `models/` and `images/`, a `cad/` directory with the helper scripts (`robust_solids.py`, `section_probe.py`, `export_watertight.py`, `pin_to_model.py`), a `dimensions.json` stub, a `model.py` scaffold with PEP-723 inline deps ready to run via `uv run model.py`, a `.gitignore` that ignores `.mesh/` except the shareable `config.toml`, a `CLAUDE.md` stub describing the folder's contract for an agent working in it, and a git repository with one commit if git is installed and the folder is not already in one. It is idempotent, so the second run creates nothing, and it never overwrites a `CLAUDE.md` you wrote yourself.
 
 Nothing is ever committed after that first commit. A tool that quietly commits your working folder takes away your ability to stage your own work.
 

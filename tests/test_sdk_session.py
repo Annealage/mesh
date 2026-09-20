@@ -65,6 +65,8 @@ EXPECTED_PRE_ALLOWED_TOOLS = [
     "mcp__mesh__list_callouts",
     "mcp__mesh__capture_view",
     "mcp__mesh__measure",
+    "mcp__mesh__mesh_verify",
+    "mcp__mesh__mesh_dimensions",
     # View-class: changes only what is on the screen the human is watching, so
     # the pause switch is the control rather than a card per camera move.
     "mcp__mesh__set_view",
@@ -334,7 +336,7 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
         assert list(servers) == ["mesh"]
         assert servers["mesh"]["type"] == "sdk"
         assert servers["mesh"]["name"] == "mesh"
-        assert len(mesh_tools.tools) == 17
+        assert len(mesh_tools.tools) == 19
     finally:
         await session.close()
 

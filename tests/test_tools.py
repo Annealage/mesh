@@ -52,6 +52,8 @@ EXPECTED_READ_CLASS = (
     "list_callouts",
     "capture_view",
     "measure",
+    "mesh_verify",
+    "mesh_dimensions",
 )
 EXPECTED_VIEW_CLASS = (
     "set_view",
@@ -84,6 +86,8 @@ ARGS = {
     "list_callouts": {},
     "capture_view": {},
     "measure": {"a": "pin:1", "b": "pin:2"},
+    "mesh_verify": {"rel": "cube.stl"},
+    "mesh_dimensions": {"action": "read"},
     "set_view": {"target": [1, 2, 3]},
     "fit_view": {},
     "set_visibility": {"rel": "cube.stl", "visible": False},
@@ -142,6 +146,7 @@ class FakeBus:
 @pytest.fixture
 def project(tmp_path):
     (tmp_path / "cube.stl").write_bytes(_cube_stl())
+    (tmp_path / "dimensions.json").write_text('{"width": 10}\n')
     return tmp_path
 
 
