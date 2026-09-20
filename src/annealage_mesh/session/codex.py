@@ -342,7 +342,9 @@ class CodexSession:
                     # above and this call; nothing left to unblock.
                     pass
         try:
-            await self._run_blocking(self._client.turn_interrupt, self._thread_id, self._active_turn_id)
+            await self._run_blocking(
+                self._client.turn_interrupt, self._thread_id, self._active_turn_id
+            )
         except Exception as exc:
             # Best-effort, like SdkSession's interrupt: the turn is either
             # already finished or the child is gone, and both surface
@@ -706,7 +708,9 @@ class CodexSession:
         """
         method = notification.method
         payload = notification.payload
-        if method == "item/agentMessage/delta" and isinstance(payload, AgentMessageDeltaNotification):
+        if method == "item/agentMessage/delta" and isinstance(
+            payload, AgentMessageDeltaNotification
+        ):
             if payload.delta:
                 self._emit(TextDelta(turn=self._turn, text=payload.delta, viewer=viewer))
             return
@@ -765,7 +769,9 @@ class CodexSession:
         # Every other item kind (reasoning, plan, mcpToolCall, ...) has no
         # mesh event to become and is left unhandled.
 
-    def _handle_item_completed(self, payload: ItemCompletedNotification, viewer: Optional[str]) -> None:
+    def _handle_item_completed(
+        self, payload: ItemCompletedNotification, viewer: Optional[str]
+    ) -> None:
         item = payload.item.root
         if isinstance(item, CommandExecutionThreadItem):
             self._emit(
@@ -786,7 +792,9 @@ class CodexSession:
                 )
             )
 
-    def _handle_turn_completed(self, payload: TurnCompletedNotification, viewer: Optional[str]) -> None:
+    def _handle_turn_completed(
+        self, payload: TurnCompletedNotification, viewer: Optional[str]
+    ) -> None:
         turn = payload.turn
         # Codex has no per-turn cost figure comparable to the Claude API's
         # total_cost_usd (subscription billing does not meter a turn this
@@ -951,7 +959,7 @@ def _remediation_for(exc: BaseException) -> str:
 
 
 def _bundled_codex_binary_hint() -> str:
-    """" (the bundled binary mesh uses is at <path>)", or "" if it cannot be
+    """ " (the bundled binary mesh uses is at <path>)", or "" if it cannot be
     located -- the same defensive lookup diagnostics.py's _codex_cli_info
     makes, reused here so the remediation message names the exact binary
     this process would itself run rather than leaving a human to guess

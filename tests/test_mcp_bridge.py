@@ -313,7 +313,11 @@ async def test_proxy_list_tools_forwards_to_the_authority():
     fake_result = {
         "result": {
             "tools": [
-                {"name": "list_models", "description": "d", "inputSchema": {"type": "object", "properties": {}}}
+                {
+                    "name": "list_models",
+                    "description": "d",
+                    "inputSchema": {"type": "object", "properties": {}},
+                }
             ]
         }
     }

@@ -207,7 +207,10 @@ def test_collect_backend_claude_reports_only_claude_cli(monkeypatch, tmp_path):
     local endpoint neither backend uses."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     result = diagnostics.collect(
-        tmp_path, backend="claude", run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+        tmp_path,
+        backend="claude",
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
     )
     assert "claude_cli" in result
     assert "codex_cli" not in result
@@ -220,7 +223,10 @@ def test_collect_with_no_backend_resolved_reports_only_claude_cli(monkeypatch, t
     are simply omitted rather than the unmatched backend raising."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     result = diagnostics.collect(
-        tmp_path, backend=None, run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+        tmp_path,
+        backend=None,
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
     )
     assert "claude_cli" in result
     assert "codex_cli" not in result
@@ -245,7 +251,11 @@ def test_collect_backend_codex_reports_codex_cli_and_omits_omp_cli(monkeypatch, 
 
     result = diagnostics.collect(tmp_path, backend="codex", run=run, which=_no_binaries)
 
-    assert result["codex_cli"] == {"path": str(bundled_path), "version": "0.21.0", "source": "bundled"}
+    assert result["codex_cli"] == {
+        "path": str(bundled_path),
+        "version": "0.21.0",
+        "source": "bundled",
+    }
     assert "claude_cli" in result
     assert "omp_cli" not in result
 
@@ -319,13 +329,18 @@ def test_collect_backend_codex_reports_missing_binary_without_raising(monkeypatc
     monkeypatch.setattr(codex_cli_bin, "bundled_codex_path", _raise)
 
     result = diagnostics.collect(
-        tmp_path, backend="codex", run=_run_raises(FileNotFoundError("no ip binary")), which=_no_binaries
+        tmp_path,
+        backend="codex",
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
     )
 
     assert result["codex_cli"] == {"path": None, "version": None, "source": "missing"}
 
 
-def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(monkeypatch, tmp_path):
+def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     result = diagnostics.collect(
         tmp_path,

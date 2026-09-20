@@ -639,11 +639,10 @@ async def test_confirm_with_two_tools_in_flight_declines_rather_than_guessing():
         await loop.run_in_executor(None, fake.push_ui_request, FakeUiRequest("ui-1", "confirm"))
 
         assert fake.confirmations == [("ui-1", False)]
-        assert not any(
-            isinstance(e, PermissionRequest) for e in recorder.all[events_before:]
-        )
+        assert not any(isinstance(e, PermissionRequest) for e in recorder.all[events_before:])
     finally:
         await session.close()
+
 
 @pytest.mark.asyncio
 async def test_non_confirm_ui_requests_are_answered_without_hanging():
@@ -690,9 +689,7 @@ async def test_already_granted_write_class_tool_needs_no_extension_ui_request_at
         # never even lets create a request in the first place.
         result2 = await loop.run_in_executor(None, tool.execute, {"path": "b"}, None)
         assert result2["content"][0]["text"] == "wrote:b"
-        assert not any(
-            isinstance(e, PermissionRequest) for e in recorder.all[events_before:]
-        )
+        assert not any(isinstance(e, PermissionRequest) for e in recorder.all[events_before:])
         assert fake.confirmations == []
     finally:
         await session.close()

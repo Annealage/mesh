@@ -27,7 +27,12 @@ import asyncio
 import json
 
 import pytest
-from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny, PermissionUpdate, Transport
+from claude_agent_sdk import (
+    PermissionResultAllow,
+    PermissionResultDeny,
+    PermissionUpdate,
+    Transport,
+)
 from claude_agent_sdk.types import PermissionRuleValue
 
 from annealage_mesh.session import sdk as sdk_module

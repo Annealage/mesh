@@ -83,7 +83,9 @@ def _parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-async def _call_authority(client: httpx.AsyncClient, url: httpx.URL, method: str, params: dict) -> Any:
+async def _call_authority(
+    client: httpx.AsyncClient, url: httpx.URL, method: str, params: dict
+) -> Any:
     """POST one ``{"method": ..., "params": ...}`` request to mesh's ``/mcp``
     and return its ``"result"``, or raise ``AuthorityError``."""
     try:

@@ -165,7 +165,10 @@ def register_mcp_routes(app, *, mesh_tools, broker, token, allowed_origins=()):
         if error is not None:
             return error
         if not isinstance(data, dict) or not isinstance(data.get("method"), str):
-            return {"ok": False, "error": 'body must be {"method": "tools/list" | "tools/call", ...}'}, 400
+            return {
+                "ok": False,
+                "error": 'body must be {"method": "tools/list" | "tools/call", ...}',
+            }, 400
 
         method = data["method"]
         params = data.get("params") or {}

@@ -214,9 +214,12 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests deliberately open files without a context manager to hold a descriptor
-# across an assertion, and call blocking file APIs inside async tests, where
-# there is no event loop to starve but the test's own.
-"tests/*" = ["ASYNC230", "ASYNC240"]
+# across an assertion, call blocking file APIs inside async tests, and spawn
+# a real subprocess with blocking `subprocess.Popen` (rather than
+# `asyncio.create_subprocess_exec`) to exercise its actual stdin/exit
+# behaviour end to end - in every case there is no event loop to starve but
+# the test's own.
+"tests/*" = ["ASYNC220", "ASYNC230", "ASYNC240"]
 
 # `integration`-marked tests drive a real backend SDK/binary against a real
 # account or endpoint and complete an actual model turn - real network

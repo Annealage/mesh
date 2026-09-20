@@ -74,7 +74,9 @@ class FakeCodexClient:
         self.started = False
         self.initialized = False
         self.closed = False
-        self.account = SimpleNamespace(account=SimpleNamespace(type="chatgpt"), requires_openai_auth=False)
+        self.account = SimpleNamespace(
+            account=SimpleNamespace(type="chatgpt"), requires_openai_auth=False
+        )
         self.thread_start_params = None
         self.turn_start_calls = []
         self.interrupt_calls = []
@@ -110,7 +112,9 @@ class FakeCodexClient:
         self._next_turn += 1
         turn_id = "turn-%d" % self._next_turn
         self.turn_start_calls.append(
-            SimpleNamespace(thread_id=thread_id, input_items=input_items, params=params, turn_id=turn_id)
+            SimpleNamespace(
+                thread_id=thread_id, input_items=input_items, params=params, turn_id=turn_id
+            )
         )
         self._turn_queues[turn_id] = queue.Queue()
         return SimpleNamespace(turn=SimpleNamespace(id=turn_id))
