@@ -86,6 +86,7 @@ def register_settings_routes(
             port=port,
             backend=settings["backend"],
             local_base_url=settings["local_base_url"],
+            local_api_key=settings["local_api_key"],
         )
         facts = await loop.run_in_executor(None, collect)
         wire = settings.to_wire()

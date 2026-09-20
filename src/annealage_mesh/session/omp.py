@@ -407,12 +407,20 @@ class OmpSession:
         within it. Without ``local_base_url`` (this session is using
         `omp`'s own already-configured providers directly -- see
         ``start()``), there is no such registered provider to assume, so
-        ``model`` must itself be a ``"provider/model"`` reference, the same
-        form `omp`'s own ``--model`` flag documents (e.g.
-        ``"titan/qwen3.8-27b"``); ``RpcClient.set_model`` has no fuzzy/
-        provider-omitted form the way the CLI flag does, so a bare model id
-        here is a genuine error, not an assumption this method can resolve
-        on its own.
+        ``model`` is split on the first ``"/"`` into a ``"provider/model"``
+        pair, the same form `omp`'s own ``--model`` flag documents (e.g.
+        ``"titan/qwen3.8-27b"``). Deliberately no local check of whether the
+        split looks sensible (non-empty provider, non-empty model id,
+        anything else): ``RpcClient.set_model`` does no client-side
+        validation itself either (confirmed by reading ``omp_rpc/client.py``
+        -- it just sends the request), so `omp`'s own response is the real
+        validation here, exactly like every other RPC call this file makes.
+        A malformed reference surfaces as whatever error `omp` itself
+        returns, caught by ``ws.py``'s generic per-frame exception handler
+        like any other ``set_model`` failure -- there is no case this method
+        could reject locally that `omp` would not also reject, so guessing
+        at that in advance would only risk being wrong about what `omp`
+        actually accepts.
         """
         if model == self._model:
             return
@@ -420,12 +428,6 @@ class OmpSession:
             provider, model_id = _PROVIDER_ID, model
         else:
             provider, _, model_id = model.partition("/")
-            if not model_id:
-                raise ValueError(
-                    'set_model requires a "provider/model" reference (e.g. '
-                    '"titan/qwen3.8-27b"), matching omp\'s own --model flag, when '
-                    "backend=local has no local_base_url configured"
-                )
         await self._run_blocking(self._client.set_model, provider, model_id)
         self._model = model
         self._emit(AgentModelChanged(model=model))

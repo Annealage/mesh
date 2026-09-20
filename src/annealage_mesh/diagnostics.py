@@ -90,6 +90,7 @@ def collect(
     port=None,
     backend=None,
     local_base_url=None,
+    local_api_key=None,
     run=subprocess.run,
     which=shutil.which,
     urlopen=urllib.request.urlopen,
@@ -111,8 +112,9 @@ def collect(
     never pays for locating the bundled Codex runtime or probing a local
     endpoint neither backend uses. ``claude_cli`` carries no equivalent
     gate: it predates the multi-backend project and this ticket does not
-    change that. ``local_base_url`` is only read when ``backend == "local"``;
-    a caller resolving diagnostics for another backend need not pass it.
+    change that. ``local_base_url``/``local_api_key`` are only read when
+    ``backend == "local"``; a caller resolving diagnostics for another
+    backend need not pass either.
 
     ``run`` and ``which`` are the same seam ``net.py`` and ``project.py``
     use for their own subprocess calls, so a test can pin exactly what
@@ -146,7 +148,9 @@ def collect(
     if backend == "codex":
         facts["codex_cli"] = _codex_cli_info(run=run, which=which)
     if backend == "local":
-        facts["omp_cli"] = _omp_info(local_base_url, which=which, run=run, urlopen=urlopen)
+        facts["omp_cli"] = _omp_info(
+            local_base_url, local_api_key, which=which, run=run, urlopen=urlopen
+        )
     return facts
 
 
@@ -228,7 +232,7 @@ def _codex_cli_info(*, run, which):
     return {"path": path, "version": _tool_version(path, run=run), "source": "bundled"}
 
 
-def _omp_info(local_base_url, *, run, which, urlopen):
+def _omp_info(local_base_url, local_api_key=None, *, run, which, urlopen):
     """``{"path", "version", "source", "python_client_installed",
     "endpoint"}`` for the local backend, mirroring ``_codex_cli_info``'s
     shape with two additions: unlike Claude/Codex, whose only failure mode
@@ -243,6 +247,11 @@ def _omp_info(local_base_url, *, run, which, urlopen):
     project never bundles (`session/omp.py` spawns whatever ``omp``
     resolves to on ``PATH``), so there is no bundled path to prefer the way
     the Claude/Codex SDKs' own wheels provide one.
+
+    ``local_api_key`` is only used to detect the one local misconfiguration
+    ``OmpSession.start()`` itself now refuses (an api key set with no
+    ``local_base_url`` to attach it to) -- never included in the returned
+    dict, so its value never reaches a diagnostics report or HTTP response.
     """
     found = _safe_which(which, "omp")
     if found:
@@ -250,7 +259,7 @@ def _omp_info(local_base_url, *, run, which, urlopen):
     else:
         info = {"path": None, "version": None, "source": "missing"}
     info["python_client_installed"] = _omp_rpc_importable()
-    info["endpoint"] = _local_endpoint_info(local_base_url, urlopen=urlopen)
+    info["endpoint"] = _local_endpoint_info(local_base_url, local_api_key, urlopen=urlopen)
     return info
 
 
@@ -270,29 +279,68 @@ def _omp_rpc_importable():
         return False
 
 
-def _local_endpoint_info(base_url, *, urlopen):
+def _local_endpoint_info(base_url, local_api_key=None, *, urlopen):
     """Whether ``base_url`` answers at all, without a real model call: a
     ``HEAD`` request with a short timeout is enough to learn "something is
     listening here", which is the one fact worth reporting before blaming
     the model call itself. Any HTTP-level response, even an error status
     such as 404 or 405 for a server that does not implement ``HEAD``, still
     counts as reachable: the point is a live listener, not a specific route.
+
+    ``local_api_key`` set with no ``base_url`` is the one local
+    misconfiguration ``OmpSession.start()`` itself now refuses outright (an
+    api key has nothing to attach to without a synthesized provider) -- so
+    it is reported here as ``"misconfigured": True`` rather than the normal
+    "using omp's own configured providers" state, before startup ever gets
+    the chance to fail on it. The key's value itself never appears in the
+    returned dict.
     """
     if not base_url:
-        return {"configured": False, "reachable": False, "status": None, "error": "local_base_url is not set"}
+        if local_api_key:
+            return {
+                "configured": False,
+                "reachable": False,
+                "status": None,
+                "error": (
+                    "local_api_key is set without local_base_url; local_api_key only "
+                    "applies to an arbitrary local_base_url endpoint, since a provider "
+                    "omp already knows about carries its own credentials"
+                ),
+                "misconfigured": True,
+            }
+        return {
+            "configured": False,
+            "reachable": False,
+            "status": None,
+            "error": "local_base_url is not set",
+            "misconfigured": False,
+        }
     request = urllib.request.Request(base_url, method="HEAD")
     try:
         with urlopen(request, timeout=_OMP_REACHABILITY_TIMEOUT_S) as response:
             status = getattr(response, "status", None)
-            return {"configured": True, "reachable": True, "status": status, "error": None}
+            return {
+                "configured": True,
+                "reachable": True,
+                "status": status,
+                "error": None,
+                "misconfigured": False,
+            }
     except urllib.error.HTTPError as exc:
-        return {"configured": True, "reachable": True, "status": exc.code, "error": None}
+        return {
+            "configured": True,
+            "reachable": True,
+            "status": exc.code,
+            "error": None,
+            "misconfigured": False,
+        }
     except Exception as exc:
         return {
             "configured": True,
             "reachable": False,
             "status": None,
             "error": "%s: %s" % (type(exc).__name__, exc),
+            "misconfigured": False,
         }
 
 

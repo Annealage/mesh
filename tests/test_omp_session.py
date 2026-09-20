@@ -410,18 +410,22 @@ async def test_set_model_without_base_url_splits_the_provider_model_reference():
 
 
 @pytest.mark.asyncio
-async def test_set_model_without_base_url_rejects_a_bare_model_id():
+async def test_set_model_without_base_url_passes_a_bare_model_id_straight_through():
     """No synthesized provider exists to assume for a bare id the way
-    ``base_url``-mode's own ``_PROVIDER_ID`` can; `omp`'s own
-    ``RpcClient.set_model`` has no fuzzy/provider-omitted form the way its
-    CLI ``--model`` flag does, so this must fail rather than guess."""
+    ``base_url``-mode's own ``_PROVIDER_ID`` can, and this method makes no
+    local guess about what `omp` will accept: ``model.partition("/")``
+    finding no ``"/"`` puts the whole string in ``provider`` and an empty
+    string in ``model_id``, sent to the RPC exactly as split -- `omp`'s own
+    ``set_model`` response is the real validation, not a local pre-check."""
     session, fake, recorder, broker = await _started_session(
         model="titan/qwen3.8-27b", base_url=None
     )
     try:
-        with pytest.raises(ValueError, match="provider/model"):
-            await session.set_model("qwen3.9-70b")
-        assert fake.set_model_calls == []
+        await session.set_model("qwen3.9-70b")
+        assert fake.set_model_calls == [("qwen3.9-70b", "")]
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "qwen3.9-70b"
     finally:
         await session.close()
 

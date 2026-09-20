@@ -399,7 +399,9 @@ def diagnostics_report(facts):
                 'git+https://github.com/can1357/oh-my-pi.git#subdirectory=python/omp-rpc"`'
             )
         endpoint = omp_cli["endpoint"]
-        if not endpoint["configured"]:
+        if endpoint["misconfigured"]:
+            lines.append("  local endpoint   : MISCONFIGURED (%s)" % endpoint["error"])
+        elif not endpoint["configured"]:
             lines.append(
                 "  local endpoint   : local_base_url not set; using omp's own "
                 "already-configured providers directly"
@@ -563,16 +565,20 @@ def doctor_command(argv):
         return 2
     backend = None
     local_base_url = None
+    local_api_key = None
     try:
         resolved = settings_module.resolve(serve_dir)
         backend = resolved["backend"]
         local_base_url = resolved["local_base_url"]
+        local_api_key = resolved["local_api_key"]
     except settings_module.SettingsError:
         # A doctor invocation must still report everything else it can when
         # the settings files themselves are what is broken; codex_cli/omp_cli
         # are simply omitted rather than the whole command failing.
         pass
-    facts = diagnostics.collect(serve_dir, backend=backend, local_base_url=local_base_url)
+    facts = diagnostics.collect(
+        serve_dir, backend=backend, local_base_url=local_base_url, local_api_key=local_api_key
+    )
     sys.stdout.write("\n".join(diagnostics_report(facts)) + "\n")
     return 0
 

@@ -291,7 +291,13 @@ def test_collect_backend_local_reports_omp_cli_and_omits_codex_cli(monkeypatch, 
         "version": "0.9.0",
         "source": "path",
         "python_client_installed": True,
-        "endpoint": {"configured": True, "reachable": True, "status": 200, "error": None},
+        "endpoint": {
+            "configured": True,
+            "reachable": True,
+            "status": 200,
+            "error": None,
+            "misconfigured": False,
+        },
     }
     assert "claude_cli" in result
     assert "codex_cli" not in result
@@ -333,7 +339,44 @@ def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(
         "reachable": False,
         "status": None,
         "error": "local_base_url is not set",
+        "misconfigured": False,
     }
+
+
+def test_collect_backend_local_with_api_key_but_no_base_url_reports_endpoint_misconfigured(
+    monkeypatch, tmp_path
+):
+    """``local_api_key`` set with no ``local_base_url`` is exactly the
+    combination ``OmpSession.start()`` now refuses outright; ``collect``
+    surfaces it as ``misconfigured`` before startup ever gets the chance to
+    fail on it, distinct from the healthy no-``local_base_url`` state."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    result = diagnostics.collect(
+        tmp_path,
+        backend="local",
+        local_base_url=None,
+        local_api_key="sk-example",
+        run=_run_raises(FileNotFoundError("no ip binary")),
+        which=_no_binaries,
+    )
+    assert result["omp_cli"]["endpoint"]["misconfigured"] is True
+
+
+def test_doctor_command_reports_misconfigured_local_endpoint(monkeypatch, tmp_path, capsys):
+    """The doctor report's local-endpoint line distinguishes a real
+    misconfiguration from the healthy "no local_base_url, using omp's own
+    providers" state -- a human reading `doctor` output must see this
+    before agent startup fails on it, not after."""
+    monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
+    config_path = tmp_path / ".mesh" / "config.toml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text('backend = "local"\nlocal_api_key = "sk-example"\n')
+    assert cli.doctor_command([str(tmp_path)]) == 0
+    report = capsys.readouterr().out.splitlines()
+    assert any(
+        line.startswith("  local endpoint   : MISCONFIGURED (") and "local_api_key" in line
+        for line in report
+    )
 
 
 def test_collect_backend_local_reports_missing_omp_uninstalled_client_and_dead_endpoint_without_raising(
@@ -367,6 +410,7 @@ def test_collect_backend_local_reports_missing_omp_uninstalled_client_and_dead_e
             "reachable": False,
             "status": None,
             "error": "ConnectionRefusedError: Connection refused",
+            "misconfigured": False,
         },
     }
 
@@ -562,7 +606,13 @@ def test_omp_info_reports_present_binary_installed_client_and_reachable_endpoint
         "version": "0.9.0",
         "source": "path",
         "python_client_installed": True,
-        "endpoint": {"configured": True, "reachable": True, "status": 200, "error": None},
+        "endpoint": {
+            "configured": True,
+            "reachable": True,
+            "status": 200,
+            "error": None,
+            "misconfigured": False,
+        },
     }
 
 
@@ -592,6 +642,7 @@ def test_omp_info_reports_missing_binary_uninstalled_client_and_unreachable_endp
             "reachable": False,
             "status": None,
             "error": "ConnectionRefusedError: Connection refused",
+            "misconfigured": False,
         },
     }
 
@@ -603,6 +654,27 @@ def test_local_endpoint_info_reports_not_configured_when_no_base_url_is_set():
         "reachable": False,
         "status": None,
         "error": "local_base_url is not set",
+        "misconfigured": False,
+    }
+
+
+def test_local_endpoint_info_reports_misconfigured_when_api_key_set_without_base_url():
+    """``OmpSession.start()`` refuses this exact combination outright (an
+    api key has nothing to attach to without a synthesized provider), so
+    diagnostics must surface it as a real misconfiguration, distinct from
+    the healthy "no base_url, using omp's own providers" state, before
+    startup gets the chance to fail on it."""
+    info = diagnostics._local_endpoint_info(None, "sk-example", urlopen=_forbidden_urlopen)
+    assert info == {
+        "configured": False,
+        "reachable": False,
+        "status": None,
+        "error": (
+            "local_api_key is set without local_base_url; local_api_key only applies "
+            "to an arbitrary local_base_url endpoint, since a provider omp already "
+            "knows about carries its own credentials"
+        ),
+        "misconfigured": True,
     }
 
 
@@ -844,6 +916,7 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_local(
             "reachable": False,
             "status": None,
             "error": "local_base_url is not set",
+            "misconfigured": False,
         },
     }
     assert settings_body["diagnostics"]["omp_cli"] == expected_omp_cli

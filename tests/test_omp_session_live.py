@@ -22,6 +22,7 @@ host's `omp` knows about, with its own credentials.
 """
 
 import asyncio
+import os
 import shutil
 
 import pytest
@@ -34,6 +35,8 @@ LIVE_PROMPT = "Reply with exactly the single word PONG and nothing else, no punc
 
 # The "provider/model" reference this host's omp is already configured
 # with, exactly as typed at the CLI (`omp --model titan/qwen3.8-27b`).
+# Override with MESH_LIVE_OMP_MODEL for a different account/config, never
+# required -- same convention as the Claude/Codex live tests.
 DEFAULT_MODEL = "titan/qwen3.8-27b"
 
 
@@ -79,13 +82,14 @@ async def _wait_for_turn_end(events, *, timeout):
 )
 @pytest.mark.asyncio
 async def test_real_omp_backend_completes_a_turn(tmp_path):
+    model = os.environ.get("MESH_LIVE_OMP_MODEL") or DEFAULT_MODEL
     events = []
     session = OmpSession(
         events.append,
         cwd=str(tmp_path),
         session_id="live-omp",
         broker=PermissionBroker(events.append, timeout=30.0, no_viewer_grace=0.05),
-        model=DEFAULT_MODEL,
+        model=model,
     )
     session.on_viewer_presence(1)
     try:
