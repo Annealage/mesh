@@ -1,4 +1,4 @@
-# Multi-backend agent roadmap [ALL 6 PHASES COMPLETE - 2026-09-20]
+# Multi-backend agent roadmap [PHASES 1-6 COMPLETE, PHASE 7 IN PROGRESS - 2026-09-20]
 
 Date: 2026-09-19
 HEAD: 58f78db34e
@@ -352,6 +352,61 @@ panel report identical, backend-appropriate content for all three backends.
 Workflow shape: sonnet implementation, haiku tests, one opus review (not
 adversarial). Ticket: `planning/tickets/phase6_diagnostics.md`.
 
+## Phase 7 - Real on-demand integration tests
+
+Goal: an opt-in, automated `pytest -m integration` tier proves the real
+`openai_codex`/`omp_rpc`/`claude_agent_sdk` packages - not the
+fake-transport doubles every other test in this rollout drives - actually
+authenticate and complete one real turn against a real account/endpoint,
+for all three backends. Closes an acceptance criterion Phase 3's and
+Phase 4's own tickets named ("manual integration pass") but that neither
+phase actually performed before being marked complete.
+
+Why this order: last, since it needs all three drivers finished and stable
+(Phases 3-5) to be worth automating rather than re-testing a moving
+target.
+
+Work items:
+1. `pyproject.toml`: `[tool.pytest.ini_options]` registers the
+   `integration` marker and excludes it from every default run via
+   `addopts = "-m 'not integration'"`.
+2. `tests/test_sdk_session_live.py`, `tests/test_codex_session_live.py`,
+   `tests/test_omp_session_live.py`: each constructs the real driver class
+   (no fake `client_factory`/`transport`), submits one trivial text-only
+   prompt, and asserts a real reply - `pytest.mark.skipif` on its own
+   backend's required `MESH_LIVE_*` env vars so the tier stays usable
+   per-backend.
+3. `.github/workflows/integration.yml`: `workflow_dispatch`-only job
+   mapping repo/environment secrets to the `MESH_LIVE_*` variables.
+
+Targets: no hardware; needs real accounts/endpoints to actually execute a
+passing run (Anthropic API key, OpenAI API key logged into an isolated
+`CODEX_HOME`, a reachable OpenAI-compatible endpoint for the omp backend)
+- none available in this environment, so this phase's own verification is
+limited to proving the skip path is correct and the default suite is
+unaffected; documented as such rather than claimed as an executed live
+pass.
+
+Tests: the skip-path itself, i.e. `pytest -m integration -q` with no
+`MESH_LIVE_*` variables set reports all three tests skipped, never errored
+or silently absent; `pytest -q` (bare) still collects and passes the same
+1062 tests as before this phase.
+
+Exit criteria: a human who exports the documented `MESH_LIVE_*` variables
+and runs `pytest -m integration -q`, or triggers
+`.github/workflows/integration.yml` with the equivalent secrets
+configured, gets a real pass/fail against the real backend for all three;
+the default test suite is provably unaffected either way.
+
+Workflow shape: implementation on sonnet (three independent files, built
+in parallel), automated verification on haiku/direct bash (the skip-path
+run), adversarial review on opus - specifically checking the marker
+exclusion is genuinely effective from every default entry point, no test
+ever constructs a real driver with `broker=None`, and the credential/
+config isolation (`CODEX_HOME`, omp's `PATH` seam) actually holds even
+along the skip path. Looped until clean. Ticket:
+`planning/tickets/phase7_live-integration-tests.md`.
+
 ## Risk register
 
 | Risk | Mitigation |
@@ -362,6 +417,7 @@ adversarial). Ticket: `planning/tickets/phase6_diagnostics.md`.
 | omp custom-provider wire shape assumed rather than verified (Q4) | Phase 4 blocks on reading `omp://providers.md`'s full custom-provider schema section before generating provider config. |
 | Three drivers drift in approval/tool/sandbox behavior over time | `session/base.py`'s Protocol and `tools/registry.py`'s classification stay the single source of truth every driver adapts to, not three independent policies. |
 | `.github/workflows/test.yml`'s `uv run --extra dev pytest -q` installs neither `--extra codex` nor `omp-rpc`, so `tests/test_codex_session.py`/`tests/test_mcp_bridge.py`/`tests/test_omp_session.py` need manual dependency installation to even collect in CI as currently configured (flagged in Phase 3 and Phase 4's progress reports, not fixed by either since it falls outside both phases' stated anchors) | **RESOLVED 2026-09-20**: `--extra codex` added to the CI pytest invocation; `omp-rpc` installed via `uv pip install` against the synced environment, pinned to the same commit `session/omp.py`'s module docstring documents as verified (not declared as a `pyproject.toml` extra - a direct git dependency there would break the real PyPI publish workflow). Verified locally: the exact CI command passes 1062. |
+| Phase 7's own three live tests are unverified against a real pass in this environment - no Anthropic/OpenAI API key or reachable omp endpoint is available here | The skip path (the one thing verifiable here) is exercised for real and asserted to report all three tests skipped with a clear reason, never errored or silently absent; the ticket documents exactly which `MESH_LIVE_*` variables a human must export to get a real pass/fail, and this is stated plainly as unexecuted rather than claimed as a passing live run. |
 
 ## Progress tracking
 

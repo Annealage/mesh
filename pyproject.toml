@@ -217,3 +217,24 @@ ignore = [
 # across an assertion, and call blocking file APIs inside async tests, where
 # there is no event loop to starve but the test's own.
 "tests/*" = ["ASYNC230", "ASYNC240"]
+
+# `integration`-marked tests drive a real backend SDK/binary against a real
+# account or endpoint and complete an actual model turn - real network
+# calls, real credentials, real (small) cost, and no fake-transport
+# determinism. `addopts` excludes them from every default `pytest`
+# invocation (`uv run --extra dev pytest -q`, this project's own CI
+# `test.yml`) so a plain test run - local or CI - never depends on secrets
+# or reachability it may not have. They are opt-in only, run with
+# `pytest -m integration`, which overrides `addopts`'s own `-m` value
+# rather than combining with it (pytest resolves a repeated `-m` option to
+# its last occurrence, and CLI-supplied options are appended after
+# `addopts`). Each individual test still skips itself, with a clear reason,
+# when its own required credentials are not set - see
+# `tests/test_sdk_session_live.py`, `tests/test_codex_session_live.py`,
+# `tests/test_omp_session_live.py`, and
+# `planning/tickets/phase7_live-integration-tests.md`.
+[tool.pytest.ini_options]
+addopts = "-m 'not integration'"
+markers = [
+    "integration: drives a real backend SDK/binary and a real account or endpoint; opt-in only, run with `-m integration`",
+]
