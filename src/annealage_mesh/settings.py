@@ -187,7 +187,11 @@ SETTING_KEYS = (
         layers=(USER, PROJECT),
         effect="restart",
         description=(
-            "The model the agent backend uses. Unset falls back to the backend's own default."
+            "The model the agent backend uses. Unset falls back to the backend's own "
+            "default. For backend=local with no local_base_url set, this is a "
+            '"provider/model" reference (e.g. "titan/qwen3.8-27b") against whatever '
+            "providers the omp CLI is already configured with, the same form its own "
+            "--model flag accepts."
         ),
         py_type=str,
         nullable=True,
@@ -231,8 +235,10 @@ SETTING_KEYS = (
         description=(
             "Which agent backend this session uses: claude (claude-agent-sdk, "
             "Claude subscription or API billing), codex (OpenAI's openai-codex "
-            "SDK, ChatGPT subscription or API billing), or local (an arbitrary "
-            "OpenAI-compatible endpoint via local_base_url)."
+            "SDK, ChatGPT subscription or API billing), or local (a real omp CLI "
+            "already installed and configured on this host -- its own already-"
+            "configured providers by default, or an arbitrary OpenAI-compatible "
+            "endpoint via local_base_url)."
         ),
         py_type=str,
         choices=("claude", "codex", "local"),
@@ -244,8 +250,11 @@ SETTING_KEYS = (
         layers=(USER, PROJECT),
         effect="restart",
         description=(
-            "The OpenAI-compatible base URL the local backend talks to. Only "
-            "used when backend is local."
+            "The OpenAI-compatible base URL an arbitrary, self-hosted endpoint "
+            "backend=local talks to. Only used when backend is local, and only "
+            "needed for an endpoint the omp CLI does not already know about as a "
+            "named provider -- leave unset to use omp exactly as already configured "
+            'on this host (see the model key\'s "provider/model" form).'
         ),
         py_type=str,
         nullable=True,
@@ -257,8 +266,10 @@ SETTING_KEYS = (
         layers=(USER, PROJECT),
         effect="restart",
         description=(
-            "The API key sent to local_base_url, if the endpoint requires one. "
-            "Only used when backend is local."
+            "The API key sent to local_base_url, if that endpoint requires one. "
+            "Only used when backend is local and local_base_url is set -- a "
+            "provider omp already knows about (local_base_url unset) carries its "
+            "own credentials instead."
         ),
         py_type=str,
         nullable=True,

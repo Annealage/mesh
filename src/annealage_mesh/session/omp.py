@@ -398,44 +398,86 @@ class OmpSession:
         model_id: str) -> ModelInfo``, confirmed by reading
         ``omp_rpc/client.py`` directly) is the method this calls through
         ``_run_blocking``, exactly like every other one-shot ``RpcClient``
-        call in this file. ``_PROVIDER_ID`` is the same custom-provider id
-        this session's own ``models.yml`` registers at ``start()``, so a
-        live switch stays scoped to the provider `omp` already knows this
-        session by.
+        call in this file.
+
+        With ``local_base_url`` configured, ``_PROVIDER_ID`` is the same
+        custom-provider id this session's own ``models.yml`` registers at
+        ``start()``, so a live switch stays scoped to the provider `omp`
+        already knows this session by, and ``model`` is the bare model id
+        within it. Without ``local_base_url`` (this session is using
+        `omp`'s own already-configured providers directly -- see
+        ``start()``), there is no such registered provider to assume, so
+        ``model`` must itself be a ``"provider/model"`` reference, the same
+        form `omp`'s own ``--model`` flag documents (e.g.
+        ``"titan/qwen3.8-27b"``); ``RpcClient.set_model`` has no fuzzy/
+        provider-omitted form the way the CLI flag does, so a bare model id
+        here is a genuine error, not an assumption this method can resolve
+        on its own.
         """
         if model == self._model:
             return
-        await self._run_blocking(self._client.set_model, _PROVIDER_ID, model)
+        if self._base_url:
+            provider, model_id = _PROVIDER_ID, model
+        else:
+            provider, _, model_id = model.partition("/")
+            if not model_id:
+                raise ValueError(
+                    'set_model requires a "provider/model" reference (e.g. '
+                    '"titan/qwen3.8-27b"), matching omp\'s own --model flag, when '
+                    "backend=local has no local_base_url configured"
+                )
+        await self._run_blocking(self._client.set_model, provider, model_id)
         self._model = model
         self._emit(AgentModelChanged(model=model))
 
     # -- lifecycle --------------------------------------------------------------
 
     async def start(self) -> None:
-        """Write this run's throwaway agent dir, launch `omp`, and register
-        every listener; never raise. See ``SdkSession.start``'s docstring for
-        why: the HTTP server starts independently and must keep serving the
-        viewer whatever the agent does.
+        """Write this run's throwaway agent dir (if ``local_base_url`` is
+        set), launch `omp`, and register every listener; never raise. See
+        ``SdkSession.start``'s docstring for why: the HTTP server starts
+        independently and must keep serving the viewer whatever the agent
+        does.
         """
         self._loop = asyncio.get_running_loop()
-        if not self._base_url:
+        if self._api_key and not self._base_url:
             self._fail(
                 ValueError(
-                    "local_base_url is not configured; set it in settings before "
-                    "using backend=local"
+                    "local_api_key is set without local_base_url; local_api_key only "
+                    "applies to an arbitrary local_base_url endpoint, since a provider "
+                    "omp already knows about carries its own credentials"
                 )
             )
             return
-        model_id = self._model or _DEFAULT_MODEL_ID
         try:
-            self._agent_dir, api_key_env = _write_agent_dir(
-                self._base_url, self._api_key, model_id, self.session_id
-            )
-            env = {"PI_CODING_AGENT_DIR": str(self._agent_dir)}
-            env.update(api_key_env)
+            if self._base_url:
+                # An arbitrary/self-hosted OpenAI-compatible endpoint `omp`
+                # does not already know about: synthesize this session's own
+                # throwaway custom provider (models.yml) pointing at it, the
+                # same as before this method grew the branch below.
+                model_id = self._model or _DEFAULT_MODEL_ID
+                self._agent_dir, api_key_env = _write_agent_dir(
+                    self._base_url, self._api_key, model_id, self.session_id
+                )
+                env = {"PI_CODING_AGENT_DIR": str(self._agent_dir)}
+                env.update(api_key_env)
+                model_arg = "%s/%s" % (_PROVIDER_ID, model_id)
+            else:
+                # No local_base_url: use `omp` exactly as already configured
+                # on this host -- no PI_CODING_AGENT_DIR override, so its own
+                # provider registry and credential resolution are untouched.
+                # `self._model` (e.g. "titan/qwen3.8-27b", or None to take
+                # omp's own default) is passed straight through to
+                # ``--model``, the same fuzzy provider/model reference a
+                # human would type at the CLI. `RpcClient.start()` merges
+                # `env` onto `os.environ` rather than replacing it
+                # (confirmed by reading ``omp_rpc/client.py``), so the empty
+                # dict here changes nothing about the child's environment.
+                env = {}
+                model_arg = self._model
             self._client = self._client_factory(
                 executable="omp",
-                model="%s/%s" % (_PROVIDER_ID, model_id),
+                model=model_arg,
                 cwd=self.cwd,
                 env=env,
                 # Every built-in tool disabled: the model's only capabilities
@@ -575,9 +617,7 @@ class OmpSession:
             text = assistant_event.get("delta") or ""
             if text:
                 turn = self._turn
-                self._loop.call_soon_threadsafe(
-                    self._emit, TextDelta(turn=turn, text=text)
-                )
+                self._loop.call_soon_threadsafe(self._emit, TextDelta(turn=turn, text=text))
         elif kind == "error":
             error = assistant_event.get("error")
             if error is not None:
@@ -693,9 +733,7 @@ class OmpSession:
                 try:
                     self._on_sdk_session_id(session_id)
                 except Exception as exc:
-                    sys.stderr.write(
-                        "warning: could not record the omp session id: %r\n" % (exc,)
-                    )
+                    sys.stderr.write("warning: could not record the omp session id: %r\n" % (exc,))
 
     def _fail(self, exc: BaseException, viewer: Optional[str] = None) -> None:
         """Report a failure as an event and mark the session unavailable.

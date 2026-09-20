@@ -45,10 +45,10 @@ from annealage_mesh.session.base import (
     ToolUse,
 )
 from annealage_mesh.session.omp import (
+    _PROVIDER_ID,
     OmpSession,
     _api_key_env_name,
     _build_custom_provider,
-    _PROVIDER_ID,
     _write_agent_dir,
 )
 from annealage_mesh.session.permissions import PermissionBroker
@@ -329,14 +329,51 @@ async def test_set_model_to_a_model_other_than_the_startup_one_is_not_rejected_b
 
 
 @pytest.mark.asyncio
-async def test_missing_base_url_fails_without_launching_omp():
+async def test_no_base_url_uses_omp_own_configured_providers_directly():
+    """With no ``local_base_url``, this session must not synthesize a
+    custom provider at all: ``model`` goes straight to `omp` as the
+    ``"provider/model"`` reference a human would type at the CLI (e.g.
+    ``"titan/qwen3.8-27b"``), against whatever providers `omp` is already
+    configured with on its own, and ``PI_CODING_AGENT_DIR`` is left unset
+    so `omp`'s own default agent dir and credential resolution are
+    untouched."""
+    session, fake, recorder, broker = await _started_session(
+        model="titan/qwen3.8-27b", base_url=None
+    )
+    try:
+        assert fake.kwargs["model"] == "titan/qwen3.8-27b"
+        assert "PI_CODING_AGENT_DIR" not in fake.kwargs["env"]
+        assert fake.kwargs["env"] == {}
+        assert session.agent_status() == AGENT_READY
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_no_base_url_with_no_model_passes_none_through_to_omp():
+    """No ``model`` either: `omp` falls back to its own default the same
+    way a bare ``omp`` CLI invocation would, rather than this session
+    inventing a placeholder model string."""
+    session, fake, recorder, broker = await _started_session(model=None, base_url=None)
+    try:
+        assert fake.kwargs["model"] is None
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_api_key_without_base_url_fails_without_launching_omp():
+    """``local_api_key`` only means something alongside a synthesized
+    custom provider; without ``local_base_url`` there is no such provider
+    for it to authenticate, so this is a misconfiguration this session
+    catches itself rather than silently ignoring the key."""
     recorder = EventRecorder()
     broker = PermissionBroker(recorder, timeout=2.0, no_viewer_grace=0.05)
     factory_calls = []
 
     def _client_factory(**kwargs):
         factory_calls.append(kwargs)
-        raise AssertionError("must not construct a client with no local_base_url")
+        raise AssertionError("must not construct a client with an inconsistent config")
 
     session = OmpSession(
         recorder,
@@ -344,6 +381,7 @@ async def test_missing_base_url_fails_without_launching_omp():
         session_id="mesh-sess-1",
         broker=broker,
         base_url=None,
+        api_key="secret-key",
         tool_table=_tool_table(),
         client_factory=_client_factory,
     )
@@ -352,7 +390,40 @@ async def test_missing_base_url_fails_without_launching_omp():
     assert factory_calls == []
     error = await recorder.next()
     assert isinstance(error, AgentError)
+    assert "local_api_key" in error.remediation
     assert "local_base_url" in error.remediation
+
+
+@pytest.mark.asyncio
+async def test_set_model_without_base_url_splits_the_provider_model_reference():
+    session, fake, recorder, broker = await _started_session(
+        model="titan/qwen3.8-27b", base_url=None
+    )
+    try:
+        await session.set_model("titan/qwen3.9-70b")
+        assert fake.set_model_calls == [("titan", "qwen3.9-70b")]
+        event = await recorder.next()
+        assert isinstance(event, AgentModelChanged)
+        assert event.model == "titan/qwen3.9-70b"
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_set_model_without_base_url_rejects_a_bare_model_id():
+    """No synthesized provider exists to assume for a bare id the way
+    ``base_url``-mode's own ``_PROVIDER_ID`` can; `omp`'s own
+    ``RpcClient.set_model`` has no fuzzy/provider-omitted form the way its
+    CLI ``--model`` flag does, so this must fail rather than guess."""
+    session, fake, recorder, broker = await _started_session(
+        model="titan/qwen3.8-27b", base_url=None
+    )
+    try:
+        with pytest.raises(ValueError, match="provider/model"):
+            await session.set_model("qwen3.9-70b")
+        assert fake.set_model_calls == []
+    finally:
+        await session.close()
 
 
 def test_build_custom_provider_writes_the_given_env_var_name_as_apikey():

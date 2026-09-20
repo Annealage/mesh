@@ -400,7 +400,10 @@ def diagnostics_report(facts):
             )
         endpoint = omp_cli["endpoint"]
         if not endpoint["configured"]:
-            lines.append("  local endpoint   : not configured; set local_base_url")
+            lines.append(
+                "  local endpoint   : local_base_url not set; using omp's own "
+                "already-configured providers directly"
+            )
         elif endpoint["reachable"]:
             lines.append("  local endpoint   : reachable")
         else:

@@ -8,29 +8,26 @@ and complete one trivial text-only turn.
 real ``claude`` subprocess actually starts, authenticates, and replies. This
 file closes that gap, gated behind the ``integration`` marker (opt-in only,
 excluded from every default run by ``pyproject.toml``'s own `addopts`) and a
-``pytest.mark.skipif`` on its own required credential, so a default
-``pytest`` invocation never depends on it and a developer with no Anthropic
-account never has it silently run.
+check that the ``claude`` CLI is on ``PATH``, so a default ``pytest``
+invocation never depends on it and a host with no ``claude`` installed never
+has it silently run.
 
-``MESH_LIVE_ANTHROPIC_API_KEY``, not the bare ``ANTHROPIC_API_KEY`` a shell
-commonly has set for unrelated reasons, is what gates this test on
-purpose - see the phase 7 ticket's "Env vars" section. The real
-``ANTHROPIC_API_KEY`` the CLI subprocess needs is set via ``monkeypatch`` for
-the duration of the test only, from that value.
-
-Verified against ``claude_agent_sdk``'s installed
-``_internal/transport/subprocess_cli.py`` before writing this: the real
-subprocess transport builds its child's environment as
-``{**inherited_env, "CLAUDE_CODE_ENTRYPOINT": ..., **self._options.env, ...}``
-where ``inherited_env`` is ``os.environ`` (minus ``CLAUDECODE``) copied
-wholesale, and ``SdkSession`` never passes a custom ``env`` into
-``ClaudeAgentOptions``. So a plain ``monkeypatch.setenv`` on this test
-process, with no separate passthrough, is sufficient for the child to see
-``ANTHROPIC_API_KEY``.
+No API key is set or required here: ``claude_agent_sdk``'s real subprocess
+transport inherits ``os.environ`` wholesale (confirmed by reading the
+installed ``_internal/transport/subprocess_cli.py`` before writing this),
+and ``SdkSession`` never overrides it, so the spawned ``claude`` subprocess
+authenticates through whatever this host's ``claude`` CLI is already logged
+into (OAuth credentials at ``~/.claude/.credentials.json``, or an ambient
+``ANTHROPIC_API_KEY``) -- the same account any other ``claude`` invocation
+on this host already uses. ``tests/conftest.py``'s autouse
+``isolated_user_config`` fixture only isolates ``XDG_CONFIG_HOME`` (mesh's
+own workspace-trust store), a path the real ``claude`` CLI's own credential
+file does not live under, so it does not interfere with this.
 """
 
 import asyncio
 import os
+import shutil
 
 import pytest
 
@@ -39,6 +36,10 @@ from annealage_mesh.session.permissions import PermissionBroker
 from annealage_mesh.session.sdk import SdkSession
 
 LIVE_PROMPT = "Reply with exactly the single word PONG and nothing else, no punctuation."
+
+# The model this test exercises. Override with MESH_LIVE_CLAUDE_MODEL for a
+# different account/config, never required.
+DEFAULT_MODEL = "haiku"
 
 
 async def _wait_for_turn_end(events: list, timeout: float) -> None:
@@ -69,21 +70,12 @@ def _diagnose(events: list) -> str:
 
 @pytest.mark.integration
 @pytest.mark.skipif(
-    not os.environ.get("MESH_LIVE_ANTHROPIC_API_KEY"),
-    # `.get(...)` (a falsy check), not `"X" not in os.environ`: GitHub
-    # Actions expands an unset secret to an empty string rather than
-    # omitting the env var entirely, so a presence check alone would let
-    # a dispatch with no MESH_LIVE_ANTHROPIC_API_KEY secret configured
-    # attempt a real run with an empty key instead of skipping.
-    reason="set MESH_LIVE_ANTHROPIC_API_KEY to run the live Claude test",
+    not shutil.which("claude"),
+    reason="the claude CLI is not on PATH; install and log it in to run the live Claude test",
 )
 @pytest.mark.asyncio
-async def test_real_claude_backend_completes_a_turn(tmp_path, monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", os.environ["MESH_LIVE_ANTHROPIC_API_KEY"])
-    # `or "haiku"`, not `.get(..., "haiku")`: the same empty-string-from-
-    # GitHub-Actions concern applies to the optional override, not just
-    # the required key above.
-    model = os.environ.get("MESH_LIVE_CLAUDE_MODEL") or "haiku"
+async def test_real_claude_backend_completes_a_turn(tmp_path):
+    model = os.environ.get("MESH_LIVE_CLAUDE_MODEL") or DEFAULT_MODEL
     events: list = []
     session = SdkSession(
         events.append,

@@ -849,5 +849,8 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_local(
     assert settings_body["diagnostics"]["omp_cli"] == expected_omp_cli
 
     assert ("  omp CLI          : 0.9.0  (%s)" % str(omp_script)) in report
-    assert "  local endpoint   : not configured; set local_base_url" in report
+    assert (
+        "  local endpoint   : local_base_url not set; using omp's own "
+        "already-configured providers directly"
+    ) in report
     assert not any(line.startswith("  omp_rpc package  :") for line in report)

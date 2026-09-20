@@ -1,44 +1,38 @@
 name: integration
 
-# On-demand only, by design: these tests drive real backend SDKs/binaries
-# against real accounts and a real endpoint, spending real API/inference
-# cost and depending on reachability this repo cannot guarantee. No
+# On-demand only, by design: these tests drive real backend CLIs/SDKs
+# against real accounts, spending real API/inference cost. No
 # `push`/`pull_request`/`workflow_call` trigger - a human must explicitly
 # run this from the Actions tab (or `gh workflow run integration.yml`).
-# See planning/tickets/phase7_live-integration-tests.md for the full design
-# and exactly what each secret below is for.
+# See planning/tickets/phase7_live-integration-tests.md for the full design.
 #
-# Repository (or environment) secrets this workflow expects, none of which
-# it can provision itself:
-#   MESH_LIVE_ANTHROPIC_API_KEY - Claude backend, API-key auth
-#   MESH_LIVE_OPENAI_API_KEY    - Codex backend, logged into an isolated
-#                                  CODEX_HOME the test itself creates
-#   MESH_LIVE_OMP_BASE_URL      - the reachable OpenAI-compatible endpoint
-#                                  the omp backend test talks to
-#   MESH_LIVE_OMP_API_KEY       - optional; omit for a keyless endpoint
-#   MESH_LIVE_OMP_EXECUTABLE    - absolute path, on this runner, to a real
-#                                  `omp` binary - deliberately no bare-PATH
-#                                  fallback (see the ticket for why)
-# Optional overrides (repo variables, not secrets - not sensitive):
-#   MESH_LIVE_CLAUDE_MODEL (default "haiku")
-#   MESH_LIVE_CODEX_MODEL  (default "gpt-5.6-luna")
-#   MESH_LIVE_OMP_MODEL    (default "qwen3.8-27b")
+# Unlike an earlier version of this workflow, these tests need no
+# mesh-specific secret scheme: each live test (tests/test_sdk_session_live.py,
+# tests/test_codex_session_live.py, tests/test_omp_session_live.py)
+# constructs the real session class with no reconfiguration at all, the same
+# way a human would run `claude`/`codex`/`omp` directly - it authenticates
+# through whichever account that CLI is already logged into on the runner,
+# and skips at collection time (never errors) if the CLI itself is not on
+# PATH.
 #
-# A backend whose secret(s) are unset skips that backend's test rather than
-# failing the job - see each live test file's own skipif reason.
+# That means `runs-on: ubuntu-latest` below is a placeholder: a fresh
+# GitHub-hosted runner has none of `claude`/`codex`/`omp` installed or
+# authenticated, so every test in this tier will skip cleanly (not fail)
+# until this points at a runner - most realistically self-hosted - that
+# already has all three set up, exactly the way this repo's own development
+# host does. There is no verified, repeatable install+auth channel for any
+# of the three CLIs to script here (`claude`/`codex` logins are normally
+# interactive OAuth; `omp`'s own provider configuration, e.g. whatever
+# "titan" names, is host-specific and has no public install channel this
+# project can pin a commit for) - a human wiring up a real runner for this
+# workflow is a prerequisite this file does not attempt to fabricate.
 #
-# What this workflow deliberately does NOT do: install a real `omp`
-# binary. This project has no verified, repeatable install path for it -
-# unlike `openai-codex` and `omp-rpc`, it is not a Python package this
-# repo's own dependency chain can pin a commit for (see session/omp.py's
-# module docstring: omp-rpc is the Python *client*; `omp` itself is a
-# separate binary distributed elsewhere). Before this workflow can pass its
-# omp leg, whoever enables it must add a step here that installs a real
-# `omp` build on the runner (matching whatever distribution channel is
-# current - a curl-based installer, a container image, or a self-hosted
-# runner with it already present) and set `MESH_LIVE_OMP_EXECUTABLE` to its
-# resulting path. Until that step exists, the omp leg's secrets stay unset
-# and it skips cleanly, same as running this locally without them.
+# Optional, non-sensitive overrides (repo variables) if a configured
+# runner's accounts should use different models than each test's own
+# default (Claude: "haiku", Codex: "gpt-5.6-luna", omp: "titan/qwen3.8-27b"):
+#   MESH_LIVE_CLAUDE_MODEL
+#   MESH_LIVE_CODEX_MODEL
+#   MESH_LIVE_OMP_MODEL
 
 on:
   workflow_dispatch:
@@ -69,12 +63,7 @@ jobs:
 
       - name: run the live integration tier
         env:
-          MESH_LIVE_ANTHROPIC_API_KEY: ${{ secrets.MESH_LIVE_ANTHROPIC_API_KEY }}
-          MESH_LIVE_OPENAI_API_KEY: ${{ secrets.MESH_LIVE_OPENAI_API_KEY }}
-          MESH_LIVE_OMP_BASE_URL: ${{ secrets.MESH_LIVE_OMP_BASE_URL }}
-          MESH_LIVE_OMP_API_KEY: ${{ secrets.MESH_LIVE_OMP_API_KEY }}
-          MESH_LIVE_OMP_EXECUTABLE: ${{ secrets.MESH_LIVE_OMP_EXECUTABLE }}
           MESH_LIVE_CLAUDE_MODEL: ${{ vars.MESH_LIVE_CLAUDE_MODEL }}
           MESH_LIVE_CODEX_MODEL: ${{ vars.MESH_LIVE_CODEX_MODEL }}
           MESH_LIVE_OMP_MODEL: ${{ vars.MESH_LIVE_OMP_MODEL }}
-        run: uv run --extra dev --extra codex pytest -m integration -q
+        run: uv run --extra dev --extra codex pytest -m integration -q -rs
