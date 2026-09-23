@@ -5,6 +5,7 @@ This is the full walkthrough for using Mesh to build and review a 3D-printable p
 ## Contents
 
 - [First run](#first-run)
+- [Choosing an agent backend](#choosing-an-agent-backend)
 - [The three panes](#the-three-panes)
 - [The modelling loop](#the-modelling-loop)
 - [The CAD pipeline](#the-cad-pipeline)
@@ -48,6 +49,37 @@ The startup output is worth reading once, because it tells you four things you w
 The URL carries a per-run token in its fragment, which the browser keeps out of server logs and out of the `Referer` header. The **exposure line** says what the server is reachable on, and prints every run whether or not you passed `--host`, because a default is exactly the case where nobody typed a flag to remind them. The **agent posture** line says which containment is actually in effect rather than the one that was requested; if a dependency is missing it says so and names it.
 
 Your browser opens automatically. `--no-open` stops that.
+
+## Choosing an agent backend
+
+Mesh drives one of three agents, and none of them is the default:
+
+- **claude**: Claude Code, through `claude-agent-sdk`. Uses your Claude subscription or API key.
+- **codex**: OpenAI's Codex, through the `openai-codex` package. Uses your ChatGPT subscription or API key.
+- **omp**: Oh My Pi, with every provider it's configured for, local models included. Needs the `omp-rpc` package alongside the `omp` CLI.
+
+A backend counts as installed when its CLI is on your `PATH` and the Python package Mesh talks to it through is importable. `annealage-mesh doctor` lists which ones it found.
+
+If no setting names a backend, agent mode works it out. With one installed it just uses that one and says so on the first line of output. With more than one it asks:
+
+    More than one agent backend is installed. Which one should this session use?
+      1) claude
+      2) codex
+      3) omp
+    Backend [1-3]: 3
+    Use omp by default from now on? [y/N]: y
+    saved backend = omp as your default in /home/you/.config/annealage-mesh/settings.toml
+
+Answer `y` and you won't be asked again on this machine. Answer `n` and the choice holds for this run only. With no terminal to ask on, say from a script or a service, it refuses to guess and exits, naming the backends it found.
+
+To pick one without the question:
+
+    annealage-mesh ./part --backend codex                  # this run only
+    annealage-mesh ./part --backend codex --save-default   # and keep it for every project
+
+`--save-default` writes `backend` to your own `settings.toml`, so it follows you into every project. A project can still pin its own by setting `backend` in its `.mesh/config.toml`, which is committed and wins over your default; that's the right place for it when a part's workflow depends on one agent. The Settings window's backend field writes there too.
+
+For omp, two more settings cover an OpenAI-compatible endpoint omp doesn't already know about as a provider: `omp_base_url` and, if that endpoint needs one, `omp_api_key`. Leave both unset to use omp exactly as it's already configured, and name the model as `provider/model` (for example `--model titan/qwen3.8-27b`), the same form omp's own `--model` takes.
 
 ## The three panes
 
@@ -168,7 +200,7 @@ Pins are yours and editable; callouts from the agent are read-only, and the two 
 
 ## Working with the agent
 
-The chat pane is a Claude Code session whose working directory **is** the folder being served. So it can read the CAD script that generated the STLs, run the generator, measure the mesh, and edit the source, all in the place the models came from.
+The chat pane is an agent session, on whichever [backend](#choosing-an-agent-backend) this run uses, whose working directory **is** the folder being served. So it can read the CAD script that generated the STLs, run the generator, measure the mesh, and edit the source, all in the place the models came from.
 
 Useful things to ask, in rough order of how much they play to the tool's strengths:
 
@@ -204,7 +236,7 @@ A sketch is a picture, not coordinates. If you need the agent to have exact mode
 
 ## Settings, and where a value came from
 
-The gear in the topbar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
+The gear in the topbar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode, backend), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
 
 Every field says where its current value came from, because there are four places it could be and knowing which one is the difference between fixing it in a second and hunting for it. Highest wins:
 
@@ -213,7 +245,7 @@ Every field says where its current value came from, because there are four place
 3. Your own `settings.toml`, which lives outside the project (on Linux, `~/.config/annealage-mesh/settings.toml`) and applies to every project you open.
 4. The built-in default.
 
-Editing a field writes it to the layer that key belongs to, which is not a choice the window offers because the key already decides it. The three agent fields, model, effort and permission mode, go to the project's `.mesh/config.toml`: they are properties of the work rather than of you, and a part that needs a particular model needs it for whoever opens the folder next. Host, port, whether a browser opens and the two viewer preferences go to your own `settings.toml`, since they are properties of your machine and your habits. Anything that cannot change without a restart, which is host, port, the browser-opening and all three agent fields, says "takes effect next run" instead of pretending otherwise. There is deliberately no live rebind; moving a listening socket out from under open connections is not worth the complexity when restarting costs a second.
+Editing a field writes it to the layer that key belongs to, which is not a choice the window offers because the key already decides it. The agent fields, model, effort, permission mode and backend, go to the project's `.mesh/config.toml`: they are properties of the work rather than of you, and a part that needs a particular model needs it for whoever opens the folder next. Host, port, whether a browser opens and the two viewer preferences go to your own `settings.toml`, since they are properties of your machine and your habits. Anything that cannot change without a restart, which is host, port, the browser-opening and every agent field, says "takes effect next run" instead of pretending otherwise. There is deliberately no live rebind; moving a listening socket out from under open connections is not worth the complexity when restarting costs a second.
 
 If you save a new port, the field afterwards shows the port you saved and the note underneath tells you which one the running server is still on. Two facts, both true, neither hidden.
 
@@ -241,7 +273,7 @@ Nothing is ever committed after that first commit. A tool that quietly commits y
 
 If git is installed but has no `user.email`, the repository is created and the commit is skipped, and it tells you that rather than inventing an identity.
 
-`annealage-mesh doctor ./part` prints what this machine has and what this project looks like: Python, the `claude` CLI's path and version and whether it came bundled with the SDK or off your `PATH`, git, whether the sandbox dependencies are present, which settings files exist, and whether a lock is held on the folder. It starts no server and takes no lock, so it is safe to run against a directory that already has one running. It is the same set of facts the Diagnostics block shows, from the same code.
+`annealage-mesh doctor ./part` prints what this machine has and what this project looks like: Python, which agent backends are installed, the `claude` CLI's path and version and whether it came bundled with the SDK or off your `PATH`, git, whether the sandbox dependencies are present, which settings files exist, and whether a lock is held on the folder. It starts no server and takes no lock, so it is safe to run against a directory that already has one running. It is the same set of facts the Diagnostics block shows, from the same code.
 
 ## What the agent can do to the viewer
 
@@ -379,7 +411,9 @@ Only `.stl` files are served, and only ones that are regular files inside the se
 | `--origin ORIGIN` | An additional allowed browser `Origin`. Repeatable. For reverse proxies. |
 | `--token TOKEN` | Use this token instead of a generated one. |
 | `--no-open` | Do not open a browser. |
-| `--model MODEL` | Model for the agent. Defaults to whatever your `claude` CLI is set to. |
+| `--backend NAME` | `claude`, `codex` or `omp`. Unset, the installed one is used, or you're asked when there are several. |
+| `--save-default` | Keep this run's backend as your default for every project, in your `settings.toml`. |
+| `--model MODEL` | Model for the agent. Defaults to whatever the backend is set to. For omp, `provider/model`. |
 | `--effort LEVEL` | `low`, `medium`, `high`, `xhigh` or `max`. How much thinking per turn. |
 | `--permission-mode MODE` | `default`, `acceptEdits` or `plan`. `bypassPermissions` is not offered. |
 | `--no-agent` | Viewer only, the same thing the `view` subcommand does. |
@@ -390,19 +424,26 @@ Only `.stl` files are served, and only ones that are regular files inside the se
 | `-r [SID]`, `--resume [SID]` | Resume `SID`; with no id, list sessions and exit. |
 | `--version` | Print the version and exit. |
 
-And the three subcommands, each taking the same `dir` positional:
+And the four subcommands, each taking the same `dir` positional:
 
 | Command | Meaning |
 | --- | --- |
 | `view [DIR]` | Viewer only: no agent, no scaffolding, no git, no lock. Several may run against one directory. |
 | `init [DIR]` | Scaffold plus git, then exit. Takes `--no-git` and `--force`. |
+| `migrate [DIR]` | Bring an existing CadQuery project under Mesh: report what's already there, add what's missing, then exit. Takes `--no-git` and `--force`. |
 | `doctor [DIR]` | Print what this machine has and what this project looks like, then exit. |
 
 A subcommand is only recognised as the first argument, so a directory of models called `view` is still servable as `./view`. When `CLAUDECODE` is set in the environment, which is the case in any shell Claude Code starts, the bare form flips to viewer-only and prints a note saying so, rather than starting an agent inside an agent.
 
 ## When something is wrong
 
-**The chat pane says Unavailable.** The `claude` CLI could not start or is not authenticated. The pane shows the child's own error output, which is usually specific. The viewer and Submit keep working meanwhile.
+**Agent mode exits with "no agent backend found".** None of `claude`, `codex` or `omp` is installed where Mesh can use it. Install and sign in to one, or run `annealage-mesh view` for the viewer alone. `doctor` shows what it found.
+
+**Agent mode exits with "more than one agent backend found".** There's no terminal to ask on. Pass `--backend NAME`, and add `--save-default` to stop it happening again.
+
+**A settings file says `backend = "local"`.** That backend is now called `omp`, and `local_base_url`/`local_api_key` are now `omp_base_url`/`omp_api_key`. Change the names in the file the error points at.
+
+**The chat pane says Unavailable.** The backend's CLI could not start or is not signed in. The pane shows the child's own error output, which is usually specific. The viewer and Submit keep working meanwhile.
 
 **Agent mode exits with "needs bubblewrap and socat".** Install them (`apt install bubblewrap socat`), or run `--no-agent` for the viewer alone. Mesh refuses rather than running the agent's shell uncontained.
 

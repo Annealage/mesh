@@ -85,8 +85,8 @@ def register_settings_routes(
             bind=bind,
             port=port,
             backend=settings["backend"],
-            local_base_url=settings["local_base_url"],
-            local_api_key=settings["local_api_key"],
+            omp_base_url=settings["omp_base_url"],
+            omp_api_key=settings["omp_api_key"],
         )
         facts = await loop.run_in_executor(None, collect)
         wire = settings.to_wire()

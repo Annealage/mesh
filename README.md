@@ -40,11 +40,11 @@ Python 3.10+. Three small runtime dependencies: [microdot](https://github.com/mi
 
 ### Agent backends
 
-Three backends, each getting the same viewer tools, the same MCP surface, and the same permission model. The `--backend` flag or the `backend` key in your settings file picks which one a session uses.
+Three backends, each getting the same viewer tools, the same MCP surface, and the same permission model. None of them is the default: with one installed, Mesh uses it; with more than one, it asks which you want the first time and offers to remember the answer. `--backend NAME` picks one for a run, and `--backend NAME --save-default` keeps it for every project. The [user guide](docs/user-guide.md#choosing-an-agent-backend) covers the rest.
 
 - **Claude** (`--backend claude`): uses the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk). The SDK bundles the Claude Code CLI, so installing it pulls about 90 MB.
 - **Codex** (`--backend codex`): uses OpenAI's Codex CLI. Install `openai-codex` separately.
-- **OMP** (`--backend local`): uses [Oh My Pi](https://github.com/can1357/oh-my-pi) and all the providers it supports, including local models. Install `omp-rpc` from the oh-my-pi repo.
+- **OMP** (`--backend omp`): uses [Oh My Pi](https://github.com/can1357/oh-my-pi) and all the providers it supports, including local models. Install `omp-rpc` from the oh-my-pi repo.
 
 ## Usage
 

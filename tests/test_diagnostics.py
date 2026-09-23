@@ -260,7 +260,7 @@ def test_collect_backend_codex_reports_codex_cli_and_omits_omp_cli(monkeypatch, 
     assert "omp_cli" not in result
 
 
-def test_collect_backend_local_reports_omp_cli_and_omits_codex_cli(monkeypatch, tmp_path):
+def test_collect_backend_omp_reports_omp_cli_and_omits_codex_cli(monkeypatch, tmp_path):
     """``omp_cli`` carries the discovered binary, installed client and
     reachable endpoint together, ``claude_cli`` is still present, and
     ``codex_cli`` is absent entirely."""
@@ -289,8 +289,8 @@ def test_collect_backend_local_reports_omp_cli_and_omits_codex_cli(monkeypatch, 
 
     result = diagnostics.collect(
         tmp_path,
-        backend="local",
-        local_base_url="http://127.0.0.1:11434",
+        backend="omp",
+        omp_base_url="http://127.0.0.1:11434",
         run=run,
         which=which,
         urlopen=urlopen,
@@ -313,7 +313,7 @@ def test_collect_backend_local_reports_omp_cli_and_omits_codex_cli(monkeypatch, 
     assert "codex_cli" not in result
 
 
-# --- collect() reports a missing/not-logged-in codex or local backend clearly, never raising ---
+# --- collect() reports a missing/not-logged-in codex or omp backend clearly, never raising ---
 
 
 def test_collect_backend_codex_reports_missing_binary_without_raising(monkeypatch, tmp_path):
@@ -338,14 +338,14 @@ def test_collect_backend_codex_reports_missing_binary_without_raising(monkeypatc
     assert result["codex_cli"] == {"path": None, "version": None, "source": "missing"}
 
 
-def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(
+def test_collect_backend_omp_with_no_base_url_reports_endpoint_not_configured(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     result = diagnostics.collect(
         tmp_path,
-        backend="local",
-        local_base_url=None,
+        backend="omp",
+        omp_base_url=None,
         run=_run_raises(FileNotFoundError("no ip binary")),
         which=_no_binaries,
     )
@@ -353,24 +353,24 @@ def test_collect_backend_local_with_no_base_url_reports_endpoint_not_configured(
         "configured": False,
         "reachable": False,
         "status": None,
-        "error": "local_base_url is not set",
+        "error": "omp_base_url is not set",
         "misconfigured": False,
     }
 
 
-def test_collect_backend_local_with_api_key_but_no_base_url_reports_endpoint_misconfigured(
+def test_collect_backend_omp_with_api_key_but_no_base_url_reports_endpoint_misconfigured(
     monkeypatch, tmp_path
 ):
-    """``local_api_key`` set with no ``local_base_url`` is exactly the
+    """``omp_api_key`` set with no ``omp_base_url`` is exactly the
     combination ``OmpSession.start()`` now refuses outright; ``collect``
     surfaces it as ``misconfigured`` before startup ever gets the chance to
-    fail on it, distinct from the healthy no-``local_base_url`` state."""
+    fail on it, distinct from the healthy no-``omp_base_url`` state."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     result = diagnostics.collect(
         tmp_path,
-        backend="local",
-        local_base_url=None,
-        local_api_key="sk-example",
+        backend="omp",
+        omp_base_url=None,
+        omp_api_key="sk-example",
         run=_run_raises(FileNotFoundError("no ip binary")),
         which=_no_binaries,
     )
@@ -379,25 +379,25 @@ def test_collect_backend_local_with_api_key_but_no_base_url_reports_endpoint_mis
 
 def test_doctor_command_reports_misconfigured_local_endpoint(monkeypatch, tmp_path, capsys):
     """The doctor report's local-endpoint line distinguishes a real
-    misconfiguration from the healthy "no local_base_url, using omp's own
+    misconfiguration from the healthy "no omp_base_url, using omp's own
     providers" state -- a human reading `doctor` output must see this
     before agent startup fails on it, not after."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     config_path = tmp_path / ".mesh" / "config.toml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text('backend = "local"\nlocal_api_key = "sk-example"\n')
+    config_path.write_text('backend = "omp"\nomp_api_key = "sk-example"\n')
     assert cli.doctor_command([str(tmp_path)]) == 0
     report = capsys.readouterr().out.splitlines()
     assert any(
-        line.startswith("  local endpoint   : MISCONFIGURED (") and "local_api_key" in line
+        line.startswith("  omp endpoint     : MISCONFIGURED (") and "omp_api_key" in line
         for line in report
     )
 
 
-def test_collect_backend_local_reports_missing_omp_uninstalled_client_and_dead_endpoint_without_raising(
+def test_collect_backend_omp_reports_missing_omp_uninstalled_client_and_dead_endpoint_without_raising(
     monkeypatch, tmp_path
 ):
-    """The local backend's three independent failure modes -- no ``omp`` on
+    """The omp backend's three independent failure modes -- no ``omp`` on
     PATH, ``omp_rpc`` not installed, and the endpoint refusing connections
     -- all reported together rather than any of them raising."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
@@ -408,8 +408,8 @@ def test_collect_backend_local_reports_missing_omp_uninstalled_client_and_dead_e
 
     result = diagnostics.collect(
         tmp_path,
-        backend="local",
-        local_base_url="http://127.0.0.1:11434",
+        backend="omp",
+        omp_base_url="http://127.0.0.1:11434",
         run=_run_raises(FileNotFoundError("no ip binary")),
         which=_no_binaries,
         urlopen=urlopen,
@@ -662,31 +662,31 @@ def test_omp_info_reports_missing_binary_uninstalled_client_and_unreachable_endp
     }
 
 
-def test_local_endpoint_info_reports_not_configured_when_no_base_url_is_set():
-    info = diagnostics._local_endpoint_info(None, urlopen=_forbidden_urlopen)
+def test_omp_endpoint_info_reports_not_configured_when_no_base_url_is_set():
+    info = diagnostics._omp_endpoint_info(None, urlopen=_forbidden_urlopen)
     assert info == {
         "configured": False,
         "reachable": False,
         "status": None,
-        "error": "local_base_url is not set",
+        "error": "omp_base_url is not set",
         "misconfigured": False,
     }
 
 
-def test_local_endpoint_info_reports_misconfigured_when_api_key_set_without_base_url():
+def test_omp_endpoint_info_reports_misconfigured_when_api_key_set_without_base_url():
     """``OmpSession.start()`` refuses this exact combination outright (an
     api key has nothing to attach to without a synthesized provider), so
     diagnostics must surface it as a real misconfiguration, distinct from
     the healthy "no base_url, using omp's own providers" state, before
     startup gets the chance to fail on it."""
-    info = diagnostics._local_endpoint_info(None, "sk-example", urlopen=_forbidden_urlopen)
+    info = diagnostics._omp_endpoint_info(None, "sk-example", urlopen=_forbidden_urlopen)
     assert info == {
         "configured": False,
         "reachable": False,
         "status": None,
         "error": (
-            "local_api_key is set without local_base_url; local_api_key only applies "
-            "to an arbitrary local_base_url endpoint, since a provider omp already "
+            "omp_api_key is set without omp_base_url; omp_api_key only applies "
+            "to an arbitrary omp_base_url endpoint, since a provider omp already "
             "knows about carries its own credentials"
         ),
         "misconfigured": True,
@@ -859,7 +859,7 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_codex(
 ):
     """``doctor_command`` and ``GET /settings`` each do their own settings
     resolution and their own call into ``diagnostics.collect``; a regression
-    that dropped ``backend``/``local_base_url`` from either real resolution
+    that dropped ``backend``/``omp_base_url`` from either real resolution
     path, or that stopped the route from shipping ``diagnostics`` at all,
     must fail here. Driven through the real CLI entry point and a real
     request via microdot's ``TestClient``
@@ -893,17 +893,17 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_codex(
 
 
 @pytest.mark.asyncio
-async def test_doctor_report_and_settings_payload_agree_for_backend_local(
+async def test_doctor_report_and_settings_payload_agree_for_backend_omp(
     monkeypatch, tmp_path, capsys
 ):
-    """Same parity claim as the codex test, for the local backend's richer
+    """Same parity claim as the codex test, for the omp backend's richer
     ``omp_cli`` shape (binary, python client and endpoint reachability all
     reported together), again through the real ``doctor_command`` and a real
     ``GET /settings`` request rather than two hand-built ``collect`` calls."""
     monkeypatch.setattr(diagnostics, "_bundled_claude_path", lambda: None)
     monkeypatch.setattr(diagnostics.importlib.util, "find_spec", lambda name: object())
 
-    settings.apply(tmp_path, {"backend": "local"})
+    settings.apply(tmp_path, {"backend": "omp"})
 
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -930,7 +930,7 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_local(
             "configured": False,
             "reachable": False,
             "status": None,
-            "error": "local_base_url is not set",
+            "error": "omp_base_url is not set",
             "misconfigured": False,
         },
     }
@@ -938,7 +938,7 @@ async def test_doctor_report_and_settings_payload_agree_for_backend_local(
 
     assert ("  omp CLI          : 0.9.0  (%s)" % str(omp_script)) in report
     assert (
-        "  local endpoint   : local_base_url not set; using omp's own "
+        "  omp endpoint     : omp_base_url not set; using omp's own "
         "already-configured providers directly"
     ) in report
     assert not any(line.startswith("  omp_rpc package  :") for line in report)

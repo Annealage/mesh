@@ -46,12 +46,12 @@ const ORIGIN_TEXT = {
 
 // Choices for the keys that have them, so the window offers a select rather
 // than a free-text box that can only be got wrong. An empty value means "not
-// set", which is a legal state for all three agent keys.
+// set", which is a legal state for every agent key.
 const CHOICES = {
   effort: ["", "low", "medium", "high", "xhigh", "max"],
   permission_mode: ["", "default", "acceptEdits", "plan"],
   up_axis: ["z", "y"],
-  backend: ["claude", "codex", "local"],
+  backend: ["", "claude", "codex", "omp"],
 };
 
 let current = null;

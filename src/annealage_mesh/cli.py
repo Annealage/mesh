@@ -29,7 +29,7 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, diagnostics, lock, net, paths, sessions
+from . import __version__, backends, diagnostics, lock, net, paths, sessions
 from . import app as app_module
 from . import project as project_module
 from . import settings as settings_module
@@ -120,9 +120,15 @@ def build_parser():
     ap.add_argument(
         "--backend",
         default=None,
-        choices=("claude", "codex", "local"),
-        help="which agent backend this session uses: claude, codex, or "
-        "local (omp). Defaults to whatever your settings say",
+        choices=settings_module.BACKENDS,
+        help="which agent backend this session uses: claude, codex or omp. "
+        "Unset, it uses the one installed, and asks if there is more than one",
+    )
+    ap.add_argument(
+        "--save-default",
+        action="store_true",
+        help="keep the backend this run uses (from --backend, or the one you "
+        "pick when asked) as your default for every project",
     )
     ap.add_argument(
         "--effort",
@@ -372,6 +378,15 @@ def diagnostics_report(facts):
     lines = ["Annealage Mesh %s" % facts["mesh_version"]]
     python = facts["python"]
     lines.append("  python           : %s  (%s)" % (python["version"], python["executable"]))
+    installed = facts.get("backends_installed", [])
+    lines.append(
+        "  agent backends   : %s"
+        % (
+            ", ".join(installed) + " installed"
+            if installed
+            else "none installed (claude, codex or omp on PATH); agent mode cannot run"
+        )
+    )
 
     cli = facts["claude_cli"]
     if cli["source"] == "missing":
@@ -423,16 +438,16 @@ def diagnostics_report(facts):
             )
         endpoint = omp_cli["endpoint"]
         if endpoint["misconfigured"]:
-            lines.append("  local endpoint   : MISCONFIGURED (%s)" % endpoint["error"])
+            lines.append("  omp endpoint     : MISCONFIGURED (%s)" % endpoint["error"])
         elif not endpoint["configured"]:
             lines.append(
-                "  local endpoint   : local_base_url not set; using omp's own "
+                "  omp endpoint     : omp_base_url not set; using omp's own "
                 "already-configured providers directly"
             )
         elif endpoint["reachable"]:
-            lines.append("  local endpoint   : reachable")
+            lines.append("  omp endpoint     : reachable")
         else:
-            lines.append("  local endpoint   : NOT REACHABLE (%s)" % endpoint["error"])
+            lines.append("  omp endpoint     : NOT REACHABLE (%s)" % endpoint["error"])
 
     git = facts["git"]
     lines.append(
@@ -671,20 +686,20 @@ def doctor_command(argv):
         sys.stderr.write("error: %s\n" % message)
         return 2
     backend = None
-    local_base_url = None
-    local_api_key = None
+    omp_base_url = None
+    omp_api_key = None
     try:
         resolved = settings_module.resolve(serve_dir)
         backend = resolved["backend"]
-        local_base_url = resolved["local_base_url"]
-        local_api_key = resolved["local_api_key"]
+        omp_base_url = resolved["omp_base_url"]
+        omp_api_key = resolved["omp_api_key"]
     except settings_module.SettingsError:
         # A doctor invocation must still report everything else it can when
         # the settings files themselves are what is broken; codex_cli/omp_cli
         # are simply omitted rather than the whole command failing.
         pass
     facts = diagnostics.collect(
-        serve_dir, backend=backend, local_base_url=local_base_url, local_api_key=local_api_key
+        serve_dir, backend=backend, omp_base_url=omp_base_url, omp_api_key=omp_api_key
     )
     sys.stdout.write("\n".join(diagnostics_report(facts)) + "\n")
     return 0
@@ -695,6 +710,45 @@ def _split_command(argv):
     if argv and argv[0] in SUBCOMMANDS:
         return argv[0], argv[1:]
     return None, argv
+
+
+def _settle_backend(resolved, serve_dir, save_default):
+    """``resolved`` with a backend in it, saving that backend as the user's
+    default when asked to.
+
+    A backend already named by a flag or a settings file is kept. Otherwise
+    the installed ones decide: one is used without a question, several are
+    offered at the terminal (``backends.choose``). The choice is carried
+    into the rest of this run as a flag unless it was saved, in which case
+    it now resolves from the user file like any saved setting.
+    """
+    backend = resolved["backend"]
+    flags = resolved.flags
+    if backend is None:
+        available = backends.detect()
+        interactive = sys.stdin.isatty() and sys.stdout.isatty()
+        backend, chose_save = backends.choose(available, interactive=interactive)
+        save_default = save_default or chose_save
+        if len(available) == 1:
+            sys.stdout.write("backend: %s (the only one installed)\n" % backend)
+        flags["backend"] = backend
+    if not save_default:
+        return settings_module.resolve(serve_dir, flags=flags)
+    if resolved.provenance("backend") != settings_module.FLAG:
+        flags.pop("backend", None)
+    resolved, _written = settings_module.apply(
+        serve_dir, {"backend": backend}, flags=flags, layer=settings_module.USER
+    )
+    sys.stdout.write(
+        "saved backend = %s as your default in %s\n"
+        % (backend, settings_module.user_settings_path())
+    )
+    if resolved.provenance("backend") == settings_module.PROJECT:
+        sys.stdout.write(
+            "note: this project's .mesh/config.toml sets backend = %s, which "
+            "outranks your default here\n" % resolved["backend"]
+        )
+    return resolved
 
 
 def main(argv=None):
@@ -731,6 +785,7 @@ def main(argv=None):
             ("-r/--resume", args.resume is not None),
             ("--model", args.model is not None),
             ("--backend", args.backend is not None),
+            ("--save-default", args.save_default),
             ("--effort", args.effort is not None),
             ("--permission-mode", args.permission_mode is not None),
             ("--trust-project-config", args.trust_project_config),
@@ -791,6 +846,12 @@ def main(argv=None):
     trusted_digest = None
 
     if mode == "agent":
+        try:
+            resolved_settings = _settle_backend(resolved_settings, serve_dir, args.save_default)
+        except (backends.NoBackend, settings_module.SettingsError) as exc:
+            sys.stderr.write("error: %s\n" % exc)
+            return 2
+
         # Checked before a session is resolved, a lock taken or a port bound, so
         # a host that cannot sandbox is told once and clearly, rather than
         # starting and printing a posture line that says the agent's shell is
@@ -917,13 +978,13 @@ def main(argv=None):
         Branches on ``resolved_settings["backend"]``: all three build a real
         session. ``openai_codex``/``session.codex`` are imported only inside
         the ``codex`` branch, and ``omp_rpc``/``session.omp`` only inside the
-        ``local`` branch, so a ``claude``-backend run never pays for either
+        ``omp`` branch, so a ``claude``-backend run never pays for either
         optional dependency.
         """
         if mode != "agent":
             return None
         backend = resolved_settings["backend"]
-        if backend not in ("claude", "codex", "local"):
+        if backend not in settings_module.BACKENDS:
             raise AssertionError("unreachable: settings.py validates backend's choices")
 
         from .session.permissions import PermissionBroker
@@ -975,11 +1036,11 @@ def main(argv=None):
             built_session.append(session)
             return session
 
-        if backend == "local":
+        if backend == "omp":
             # Imported only in this branch, per the module docstring's own
             # "keep the claude backend free of an unnecessary dependency
-            # import" intent: omp_rpc is an optional extra (the `local`
-            # extra in pyproject.toml), and a claude-backend run must not
+            # import" intent: omp_rpc is a separately installed package
+            # (see session/omp.py), and a claude-backend run must not
             # require it to be installed.
             from .session.omp import OmpSession
 
@@ -989,8 +1050,8 @@ def main(argv=None):
                 session_id=mesh_sid,
                 broker=broker,
                 model=resolved_settings["model"],
-                base_url=resolved_settings["local_base_url"],
-                api_key=resolved_settings["local_api_key"],
+                base_url=resolved_settings["omp_base_url"],
+                api_key=resolved_settings["omp_api_key"],
                 # Mirrors SdkSession's mcp_servers=bus.mesh_tools.mcp_servers:
                 # a snapshot taken once, at construction, rather than a live
                 # reference to the tool server this run already built.

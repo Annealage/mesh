@@ -70,6 +70,9 @@ _PERMISSION_MODE_CHOICES = ("default", "acceptEdits", "plan")
 _EFFORT_CHOICES = ("low", "medium", "high", "xhigh", "max")
 _UP_AXIS_CHOICES = ("z", "y")
 
+#: Every agent backend, in no order of preference: none is the default.
+BACKENDS = ("claude", "codex", "omp")
+
 
 class SettingsError(Exception):
     """A settings value, file or requested change was refused.
@@ -188,7 +191,7 @@ SETTING_KEYS = (
         effect="restart",
         description=(
             "The model the agent backend uses. Unset falls back to the backend's own "
-            "default. For backend=local with no local_base_url set, this is a "
+            "default. For backend=omp with no omp_base_url set, this is a "
             '"provider/model" reference (e.g. "titan/qwen3.8-27b") against whatever '
             "providers the omp CLI is already configured with, the same form its own "
             "--model flag accepts."
@@ -228,30 +231,32 @@ SETTING_KEYS = (
     ),
     Key(
         name="backend",
-        type_name='"claude" or "codex" or "local"',
-        default="claude",
+        type_name='"claude" or "codex" or "omp" or null',
+        default=None,
         layers=(USER, PROJECT),
         effect="restart",
         description=(
             "Which agent backend this session uses: claude (claude-agent-sdk, "
             "Claude subscription or API billing), codex (OpenAI's openai-codex "
-            "SDK, ChatGPT subscription or API billing), or local (a real omp CLI "
-            "already installed and configured on this host -- its own already-"
-            "configured providers by default, or an arbitrary OpenAI-compatible "
-            "endpoint via local_base_url)."
+            "SDK, ChatGPT subscription or API billing), or omp (the Oh My Pi CLI "
+            "with every provider it is configured for, including local models, "
+            "or an arbitrary OpenAI-compatible endpoint via omp_base_url). "
+            "Unset: agent mode uses whichever one is on PATH, and asks when "
+            "there is more than one."
         ),
         py_type=str,
-        choices=("claude", "codex", "local"),
+        nullable=True,
+        choices=BACKENDS,
     ),
     Key(
-        name="local_base_url",
+        name="omp_base_url",
         type_name="str or null",
         default=None,
         layers=(USER, PROJECT),
         effect="restart",
         description=(
             "The OpenAI-compatible base URL an arbitrary, self-hosted endpoint "
-            "backend=local talks to. Only used when backend is local, and only "
+            "backend=omp talks to. Only used when backend is omp, and only "
             "needed for an endpoint the omp CLI does not already know about as a "
             "named provider -- leave unset to use omp exactly as already configured "
             'on this host (see the model key\'s "provider/model" form).'
@@ -260,15 +265,15 @@ SETTING_KEYS = (
         nullable=True,
     ),
     Key(
-        name="local_api_key",
+        name="omp_api_key",
         type_name="str or null",
         default=None,
         layers=(USER, PROJECT),
         effect="restart",
         description=(
-            "The API key sent to local_base_url, if that endpoint requires one. "
-            "Only used when backend is local and local_base_url is set -- a "
-            "provider omp already knows about (local_base_url unset) carries its "
+            "The API key sent to omp_base_url, if that endpoint requires one. "
+            "Only used when backend is omp and omp_base_url is set -- a "
+            "provider omp already knows about (omp_base_url unset) carries its "
             "own credentials instead."
         ),
         py_type=str,
@@ -574,9 +579,9 @@ def _toml_value(value):
 
 
 _HEADER_COMMENT = (
-    "# Written by annealage-mesh's settings window. A comment added here by\n"
-    "# hand does not survive the next save from that window: only the\n"
-    "# key/value pairs below are read back and re-emitted.\n"
+    "# Written by annealage-mesh (its settings window, or --save-default).\n"
+    "# A comment added here by hand does not survive the next save: only\n"
+    "# the key/value pairs below are read back and re-emitted.\n"
     "\n"
 )
 
@@ -604,7 +609,7 @@ def _serialize_mapping(mapping):
     return "".join(lines).encode("utf-8")
 
 
-def apply(project_dir, changes, *, flags=None):
+def apply(project_dir, changes, *, flags=None, layer=None):
     """Validate and write ``changes`` (``{name: value}``), then return
     ``(resolve(project_dir, flags=flags), {"user": [names], "project":
     [names]})`` naming which keys landed in which file.
@@ -619,6 +624,11 @@ def apply(project_dir, changes, *, flags=None):
     Refuses a ``token`` key, an unknown key, a value of the wrong type, or
     ``permission_mode: "bypassPermissions"`` outright: none of those may
     ever be written to a config file.
+
+    ``layer`` writes every change to that one file instead of each key's own
+    ``write_layer``: ``--save-default`` uses it to put ``backend`` in the
+    user file, where it applies to every project, rather than in this
+    project's. A key that may not live at ``layer`` is refused.
     """
     project_dir = Path(project_dir)
 
@@ -632,12 +642,17 @@ def apply(project_dir, changes, *, flags=None):
         key = KEYS_BY_NAME.get(name)
         if key is None:
             raise SettingsError("%r is not a mesh setting" % name)
-        _check_value(key, value, layer=key.write_layer, source="the requested change to %r" % name)
-        validated[key] = value
+        target = layer or key.write_layer
+        if target not in key.layers:
+            raise SettingsError(
+                "%r may only be set at the %s layer" % (name, " or ".join(key.layers))
+            )
+        _check_value(key, value, layer=target, source="the requested change to %r" % name)
+        validated[key] = (value, target)
 
     by_layer = {USER: {}, PROJECT: {}}
-    for key, value in validated.items():
-        by_layer[key.write_layer][key.name] = value
+    for key, (value, target) in validated.items():
+        by_layer[target][key.name] = value
 
     prepared = {}
     for layer, layer_changes in by_layer.items():

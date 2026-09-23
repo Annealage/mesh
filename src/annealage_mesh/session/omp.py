@@ -1,4 +1,4 @@
-"""The real agent session for the local/arbitrary-endpoint backend: an
+"""The real agent session for the omp (Oh My Pi) backend: an
 ``omp_rpc.RpcClient`` behind the ``AgentSession`` seam.
 
 **Where ``omp_rpc`` actually comes from.** It is not on PyPI under
@@ -20,7 +20,7 @@ carries a direct URL dependency -- declaring one here would break this
 project's real publish workflow (`.github/workflows/publish.yml`), not
 merely be inconvenient. Until `omp-rpc` publishes real PyPI releases (at
 which point this becomes a normal `"omp-rpc>=X,<Y"` extra, mirroring
-`codex`'s), a `backend = "local"` deployment installs it with the command
+`codex`'s), a `backend = "omp"` deployment installs it with the command
 above as a manual, documented prerequisite. This module imports the real
 package rather than re-implementing the wire protocol, because a maintained,
 MIT-licensed client that already handles v2 chunk reassembly, message
@@ -138,7 +138,7 @@ loader accepts a `.yml` path with JSON content without complaint, and this
 avoids adding a YAML dependency for a one-off machine-generated file no
 human ever hand-edits.
 
-``local_api_key``, when set, is never written into ``models.yml`` as a
+``omp_api_key``, when set, is never written into ``models.yml`` as a
 literal string: `omp`'s own ``apiKey`` resolution (`omp://providers.md`)
 treats that field as an environment-variable name first and a leading
 ``!`` as a shell command to run, so a literal secret that happens to
@@ -400,11 +400,11 @@ class OmpSession:
         ``_run_blocking``, exactly like every other one-shot ``RpcClient``
         call in this file.
 
-        With ``local_base_url`` configured, ``_PROVIDER_ID`` is the same
+        With ``omp_base_url`` configured, ``_PROVIDER_ID`` is the same
         custom-provider id this session's own ``models.yml`` registers at
         ``start()``, so a live switch stays scoped to the provider `omp`
         already knows this session by, and ``model`` is the bare model id
-        within it. Without ``local_base_url`` (this session is using
+        within it. Without ``omp_base_url`` (this session is using
         `omp`'s own already-configured providers directly -- see
         ``start()``), there is no such registered provider to assume, so
         ``model`` is split on the first ``"/"`` into a ``"provider/model"``
@@ -435,7 +435,7 @@ class OmpSession:
     # -- lifecycle --------------------------------------------------------------
 
     async def start(self) -> None:
-        """Write this run's throwaway agent dir (if ``local_base_url`` is
+        """Write this run's throwaway agent dir (if ``omp_base_url`` is
         set), launch `omp`, and register every listener; never raise. See
         ``SdkSession.start``'s docstring for why: the HTTP server starts
         independently and must keep serving the viewer whatever the agent
@@ -445,8 +445,8 @@ class OmpSession:
         if self._api_key and not self._base_url:
             self._fail(
                 ValueError(
-                    "local_api_key is set without local_base_url; local_api_key only "
-                    "applies to an arbitrary local_base_url endpoint, since a provider "
+                    "omp_api_key is set without omp_base_url; omp_api_key only "
+                    "applies to an arbitrary omp_base_url endpoint, since a provider "
                     "omp already knows about carries its own credentials"
                 )
             )
@@ -465,7 +465,7 @@ class OmpSession:
                 env.update(api_key_env)
                 model_arg = "%s/%s" % (_PROVIDER_ID, model_id)
             else:
-                # No local_base_url: use `omp` exactly as already configured
+                # No omp_base_url: use `omp` exactly as already configured
                 # on this host -- no PI_CODING_AGENT_DIR override, so its own
                 # provider registry and credential resolution are untouched.
                 # `self._model` (e.g. "titan/qwen3.8-27b", or None to take
@@ -625,12 +625,12 @@ class OmpSession:
             if error is not None:
                 message = _content_to_text(error)
             else:
-                message = "the local model reported an error"
+                message = "the model reported an error"
             self._loop.call_soon_threadsafe(
                 self._emit,
                 AgentError(
                     stderr=message,
-                    remediation="the local model reported an error during this turn; "
+                    remediation="the model reported an error during this turn; "
                     "the session otherwise remains ready",
                 ),
             )
@@ -764,7 +764,7 @@ class OmpSession:
 
 def _api_key_env_name(session_id: object) -> str:
     """A collision-resistant environment-variable name for one session's
-    ``local_api_key``, derived from ``session_id`` so two concurrent
+    ``omp_api_key``, derived from ``session_id`` so two concurrent
     ``OmpSession`` runs never share a name. `omp`'s own ``apiKey``
     resolution (`omp://providers.md`) tries an environment variable by
     this exact name first, before falling back to treating the string as a
@@ -926,18 +926,18 @@ def _content_to_text(content: Any) -> str:
 def _remediation_for(exc: BaseException) -> str:
     if isinstance(exc, ValueError):
         # This file's own configuration checks (e.g. a missing
-        # local_base_url) already write an actionable message; passing it
+        # omp_base_url) already write an actionable message; passing it
         # through avoids restating it more vaguely.
         return str(exc)
     name = type(exc).__name__
     if name == "FileNotFoundError":
         return (
             "the omp CLI could not be found on PATH; install it (see "
-            "https://omp.sh/) before using backend=local"
+            "https://omp.sh/) before using backend=omp"
         )
     if name == "RpcTimeoutError":
         return (
-            "omp did not become ready in time; check that local_base_url is "
+            "omp did not become ready in time; check that omp_base_url is "
             "reachable and that the omp CLI is not stuck waiting on input"
         )
     if name == "RpcProcessExitError":

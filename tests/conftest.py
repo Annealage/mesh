@@ -56,6 +56,20 @@ def isolated_user_config(tmp_path_factory, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("config")))
 
 
+@pytest.fixture(autouse=True)
+def one_backend_installed(monkeypatch):
+    """Report exactly one installed agent backend, ``claude``, for every test.
+
+    With no backend in any setting, agent mode picks from what is installed,
+    and asks when there is more than one. A test that let the real PATH
+    decide would pass on a machine with one CLI and fail on a CI runner with
+    none; ``tests/test_backends.py`` covers the choosing itself.
+    """
+    from annealage_mesh import backends
+
+    monkeypatch.setattr(backends, "detect", lambda **_kw: ("claude",))
+
+
 @pytest.fixture
 def served_dir(tmp_path):
     (tmp_path / "widget.stl").write_bytes(b"solid widget\nendsolid widget\n")

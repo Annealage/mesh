@@ -330,7 +330,7 @@ async def test_set_model_to_a_model_other_than_the_startup_one_is_not_rejected_b
 
 @pytest.mark.asyncio
 async def test_no_base_url_uses_omp_own_configured_providers_directly():
-    """With no ``local_base_url``, this session must not synthesize a
+    """With no ``omp_base_url``, this session must not synthesize a
     custom provider at all: ``model`` goes straight to `omp` as the
     ``"provider/model"`` reference a human would type at the CLI (e.g.
     ``"titan/qwen3.8-27b"``), against whatever providers `omp` is already
@@ -363,8 +363,8 @@ async def test_no_base_url_with_no_model_passes_none_through_to_omp():
 
 @pytest.mark.asyncio
 async def test_api_key_without_base_url_fails_without_launching_omp():
-    """``local_api_key`` only means something alongside a synthesized
-    custom provider; without ``local_base_url`` there is no such provider
+    """``omp_api_key`` only means something alongside a synthesized
+    custom provider; without ``omp_base_url`` there is no such provider
     for it to authenticate, so this is a misconfiguration this session
     catches itself rather than silently ignoring the key."""
     recorder = EventRecorder()
@@ -390,8 +390,8 @@ async def test_api_key_without_base_url_fails_without_launching_omp():
     assert factory_calls == []
     error = await recorder.next()
     assert isinstance(error, AgentError)
-    assert "local_api_key" in error.remediation
-    assert "local_base_url" in error.remediation
+    assert "omp_api_key" in error.remediation
+    assert "omp_base_url" in error.remediation
 
 
 @pytest.mark.asyncio

@@ -310,8 +310,8 @@ def test_emitter_round_trips_every_value_type_in_the_table(tmp_path):
             "effort": "high",
             "permission_mode": "acceptEdits",
             "backend": "codex",
-            "local_base_url": "http://localhost:11434",
-            "local_api_key": "test-key-123",
+            "omp_base_url": "http://localhost:11434",
+            "omp_api_key": "test-key-123",
         },
     )
 
@@ -333,8 +333,8 @@ def test_emitter_round_trips_every_value_type_in_the_table(tmp_path):
     assert project_mapping["effort"] == "high"
     assert project_mapping["permission_mode"] == "acceptEdits"
     assert project_mapping["backend"] == "codex"
-    assert project_mapping["local_base_url"] == "http://localhost:11434"
-    assert project_mapping["local_api_key"] == "test-key-123"
+    assert project_mapping["omp_base_url"] == "http://localhost:11434"
+    assert project_mapping["omp_api_key"] == "test-key-123"
 
     for key in settings.SETTING_KEYS:
         assert resolved.provenance(key.name) in (settings.USER, settings.PROJECT)

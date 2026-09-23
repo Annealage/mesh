@@ -66,7 +66,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import __version__, lock, net, paths, sessions, settings
+from . import __version__, backends, lock, net, paths, sessions, settings
 
 # Generous for a "--version" query and nothing more: a tool that cannot
 # answer this within five seconds is not going to answer it, and doctor
@@ -89,8 +89,8 @@ def collect(
     bind=None,
     port=None,
     backend=None,
-    local_base_url=None,
-    local_api_key=None,
+    omp_base_url=None,
+    omp_api_key=None,
     run=subprocess.run,
     which=shutil.which,
     urlopen=urllib.request.urlopen,
@@ -112,14 +112,14 @@ def collect(
     never pays for locating the bundled Codex runtime or probing a local
     endpoint neither backend uses. ``claude_cli`` carries no equivalent
     gate: it predates the multi-backend project and this ticket does not
-    change that. ``local_base_url``/``local_api_key`` are only read when
-    ``backend == "local"``; a caller resolving diagnostics for another
+    change that. ``omp_base_url``/``omp_api_key`` are only read when
+    ``backend == "omp"``; a caller resolving diagnostics for another
     backend need not pass either.
 
     ``run`` and ``which`` are the same seam ``net.py`` and ``project.py``
     use for their own subprocess calls, so a test can pin exactly what
     "git is missing" or "claude hangs" looks like without touching a real
-    binary. ``urlopen`` is the equivalent seam for the local backend's
+    binary. ``urlopen`` is the equivalent seam for the omp backend's
     endpoint-reachability probe, which is a network call rather than a
     subprocess one.
     """
@@ -130,6 +130,7 @@ def collect(
         },
         "mesh_version": __version__,
         "claude_cli": _claude_cli_info(run=run, which=which),
+        "backends_installed": list(backends.detect(which=which)),
         "git": _detect_git(run=run, which=which),
         "sandbox": _sandbox_info(),
         "project_root": (
@@ -147,9 +148,9 @@ def collect(
     }
     if backend == "codex":
         facts["codex_cli"] = _codex_cli_info(run=run, which=which)
-    if backend == "local":
+    if backend == "omp":
         facts["omp_cli"] = _omp_info(
-            local_base_url, local_api_key, which=which, run=run, urlopen=urlopen
+            omp_base_url, omp_api_key, which=which, run=run, urlopen=urlopen
         )
     return facts
 
@@ -232,11 +233,11 @@ def _codex_cli_info(*, run, which):
     return {"path": path, "version": _tool_version(path, run=run), "source": "bundled"}
 
 
-def _omp_info(local_base_url, local_api_key=None, *, run, which, urlopen):
+def _omp_info(omp_base_url, omp_api_key=None, *, run, which, urlopen):
     """``{"path", "version", "source", "python_client_installed",
-    "endpoint"}`` for the local backend, mirroring ``_codex_cli_info``'s
+    "endpoint"}`` for the omp backend, mirroring ``_codex_cli_info``'s
     shape with two additions: unlike Claude/Codex, whose only failure mode
-    is "the binary is missing", the local backend can fail in three
+    is "the binary is missing", the omp backend can fail in three
     independent ways worth telling apart -- the ``omp`` CLI missing, the
     ``omp_rpc`` Python client not installed, or a real `omp` pointed at a
     dead endpoint (no Ollama/llama.cpp running yet) -- so this reports all
@@ -248,9 +249,9 @@ def _omp_info(local_base_url, local_api_key=None, *, run, which, urlopen):
     resolves to on ``PATH``), so there is no bundled path to prefer the way
     the Claude/Codex SDKs' own wheels provide one.
 
-    ``local_api_key`` is only used to detect the one local misconfiguration
+    ``omp_api_key`` is only used to detect the one local misconfiguration
     ``OmpSession.start()`` itself now refuses (an api key set with no
-    ``local_base_url`` to attach it to) -- never included in the returned
+    ``omp_base_url`` to attach it to) -- never included in the returned
     dict, so its value never reaches a diagnostics report or HTTP response.
     """
     found = _safe_which(which, "omp")
@@ -259,7 +260,7 @@ def _omp_info(local_base_url, local_api_key=None, *, run, which, urlopen):
     else:
         info = {"path": None, "version": None, "source": "missing"}
     info["python_client_installed"] = _omp_rpc_importable()
-    info["endpoint"] = _local_endpoint_info(local_base_url, local_api_key, urlopen=urlopen)
+    info["endpoint"] = _omp_endpoint_info(omp_base_url, omp_api_key, urlopen=urlopen)
     return info
 
 
@@ -279,7 +280,7 @@ def _omp_rpc_importable():
         return False
 
 
-def _local_endpoint_info(base_url, local_api_key=None, *, urlopen):
+def _omp_endpoint_info(base_url, omp_api_key=None, *, urlopen):
     """Whether ``base_url`` answers at all, without a real model call: a
     ``HEAD`` request with a short timeout is enough to learn "something is
     listening here", which is the one fact worth reporting before blaming
@@ -287,7 +288,7 @@ def _local_endpoint_info(base_url, local_api_key=None, *, urlopen):
     such as 404 or 405 for a server that does not implement ``HEAD``, still
     counts as reachable: the point is a live listener, not a specific route.
 
-    ``local_api_key`` set with no ``base_url`` is the one local
+    ``omp_api_key`` set with no ``base_url`` is the one local
     misconfiguration ``OmpSession.start()`` itself now refuses outright (an
     api key has nothing to attach to without a synthesized provider) -- so
     it is reported here as ``"misconfigured": True`` rather than the normal
@@ -296,14 +297,14 @@ def _local_endpoint_info(base_url, local_api_key=None, *, urlopen):
     returned dict.
     """
     if not base_url:
-        if local_api_key:
+        if omp_api_key:
             return {
                 "configured": False,
                 "reachable": False,
                 "status": None,
                 "error": (
-                    "local_api_key is set without local_base_url; local_api_key only "
-                    "applies to an arbitrary local_base_url endpoint, since a provider "
+                    "omp_api_key is set without omp_base_url; omp_api_key only "
+                    "applies to an arbitrary omp_base_url endpoint, since a provider "
                     "omp already knows about carries its own credentials"
                 ),
                 "misconfigured": True,
@@ -312,7 +313,7 @@ def _local_endpoint_info(base_url, local_api_key=None, *, urlopen):
             "configured": False,
             "reachable": False,
             "status": None,
-            "error": "local_base_url is not set",
+            "error": "omp_base_url is not set",
             "misconfigured": False,
         }
     request = urllib.request.Request(base_url, method="HEAD")

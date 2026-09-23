@@ -8,7 +8,7 @@ Skips at collection time, with a clear reason, unless the ``omp`` CLI is on
 ``addopts = "-m 'not integration'"``; run this tier explicitly with
 ``pytest -m integration``.
 
-**No ``local_base_url``/config synthesis.** ``OmpSession`` supports two
+**No ``omp_base_url``/config synthesis.** ``OmpSession`` supports two
 modes (``session/omp.py``): given a ``base_url``, it synthesizes its own
 throwaway custom-provider config for an arbitrary, self-hosted endpoint
 `omp` does not already know about. Given no ``base_url``, it instead passes
