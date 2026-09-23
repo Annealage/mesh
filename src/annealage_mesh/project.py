@@ -329,12 +329,14 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
 
     Idempotent: a second call over a folder this already scaffolded writes
     nothing and reports every file and directory it found already in place
-    through ``kept``.  ``force`` regenerates generated files (``.gitignore``,
-    ``CLAUDE.md``, ``dimensions.json``, ``model.py``) when they already
-    exist; it has no effect on the scaffold directories or on the ``cad/``
-    helper scripts, which are never rewritten once present, and no effect on
-    git, which this function never re-initialises or re-commits once a
-    repository already exists at or above ``project_dir``.
+    through ``kept``.  ``force`` regenerates the two generated files
+    (``.gitignore`` and ``CLAUDE.md``) when they already exist.  It never
+    touches ``dimensions.json`` or ``model.py``: once written, those hold the
+    person's measurements and geometry, and a stub is no replacement for
+    either.  Nor the scaffold directories, nor the ``cad/`` helper scripts,
+    which are never rewritten once present, nor git, which this function
+    never re-initialises or re-commits once a repository already exists at
+    or above ``project_dir``.
 
     ``git=False`` skips the git side entirely and leaves ``result.git`` as
     ``None``, which is how ``--no-git`` is meant to read: "nothing was even
@@ -365,10 +367,12 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
     _scaffold_file(
         project_dir, CLAUDE_MD_NAME, claude_md_body(project_dir), force, created, kept, regenerated
     )
+
+    # ── Starting points for the person's own work (never overwritten) ──
     _scaffold_file(
-        project_dir, DIMENSIONS_NAME, dimensions_json_body(), force, created, kept, regenerated
+        project_dir, DIMENSIONS_NAME, dimensions_json_body(), False, created, kept, regenerated
     )
-    _scaffold_file(project_dir, MODEL_NAME, model_py_body(), force, created, kept, regenerated)
+    _scaffold_file(project_dir, MODEL_NAME, model_py_body(), False, created, kept, regenerated)
 
     # ── CAD helper scripts directory ─────────────────────────────
     cad_target = project_dir / CAD_DIR

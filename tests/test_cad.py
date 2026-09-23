@@ -155,13 +155,16 @@ class TestProjectScaffoldCAD:
         assert "model.py" in result.kept
         assert "cad" in result.kept
 
-    def test_force_regenerates_dimensions_json(self, tmp_path):
+    def test_force_never_overwrites_measurements_or_the_model_script(self, tmp_path):
+        """``migrate --force`` on a real project once replaced its measured
+        ``dimensions.json`` with the stub; both files are the person's work."""
         project.ensure_project(tmp_path, git=False)
-        (tmp_path / "dimensions.json").write_text('{"old": true}')
+        (tmp_path / "dimensions.json").write_text('{"measured": 42.5}')
+        (tmp_path / "model.py").write_text("# my geometry\n")
         result = project.ensure_project(tmp_path, git=False, force=True)
-        assert "dimensions.json" in result.regenerated
-        parsed = json.loads((tmp_path / "dimensions.json").read_text())
-        assert "width" in parsed  # regenerated to template
+        assert (tmp_path / "dimensions.json").read_text() == '{"measured": 42.5}'
+        assert (tmp_path / "model.py").read_text() == "# my geometry\n"
+        assert {"dimensions.json", "model.py"} <= set(result.kept)
 
     def test_force_does_not_regenerate_cad_helper_scripts(self, tmp_path):
         """Helper scripts are never overwritten by force — they are

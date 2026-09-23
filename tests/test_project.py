@@ -210,7 +210,7 @@ def test_force_regenerates_gitignore_and_claude_md_but_never_the_directories(tmp
 
     assert result.created == ()
     assert set(result.kept) >= {"models", "images", "cad"}
-    assert set(result.regenerated) >= {".gitignore", "CLAUDE.md", "dimensions.json", "model.py"}
+    assert set(result.regenerated) == {".gitignore", "CLAUDE.md"}
     assert (tmp_path / ".gitignore").read_text() == project.gitignore_body()
     assert (tmp_path / "CLAUDE.md").read_text() == project.claude_md_body(tmp_path)
 
