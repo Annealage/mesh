@@ -16,9 +16,9 @@ are things people run against a directory that already has a server on it.
 """
 
 import pytest
+from annealage_agent import lock, sessions, settings
 
 from annealage_mesh import cli
-from annealage_mesh.agent import lock, sessions, settings
 
 # Synchronous tests, unlike most of this suite: ``cli.main`` calls
 # ``asyncio.run`` itself, and that raises when it is entered from inside a loop
@@ -31,7 +31,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     asserted in ``tests/test_session_flags.py``; every test here is about the
     command surface instead, so the requirement is satisfied for all of them
     rather than each one passing or failing on what the host has installed."""
-    from annealage_mesh.agent.session import sdk
+    from annealage_agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 

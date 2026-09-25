@@ -47,8 +47,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from annealage_agent import files
+
 from . import paths
-from .agent import files
 
 # The two directories a served project needs. "images" is spelled from
 # files.IMAGES_DIRNAME rather than repeated as a literal, so the name the

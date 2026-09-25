@@ -7,7 +7,7 @@ files under it, not requests or responses. ``app.py`` and
 responses. The path-safety primitives underneath (``safe_join``, the guarded
 fixed-file reads and appends, atomic replacement, image and transcript
 creation) and the index of a packaged static tree are not Mesh's own and live
-in ``agent/files.py``, so the agent layer and every product share one
+in ``annealage_agent/files.py``, so the agent layer and every product share one
 implementation of them.
 
 Files Mesh exchanges with an agent, by fixed name in the served directory:
@@ -23,7 +23,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from .agent.files import resolve_serve_dir
+from annealage_agent.files import resolve_serve_dir
 
 COMMENTS_JSON_NAME = "mesh-comments.json"
 COMMENTS_LOG_NAME = "mesh-comments.log"
@@ -33,7 +33,7 @@ CALLOUTS_JSON_NAME = "mesh-callouts.json"
 # Used for model bytes and callouts.json, neither of which is a file an
 # outside party can place into the served directory under a name of their
 # choosing; a served directory's images/ subtree is, so /asset uses
-# agent/files.py's ASSET_CONTENT_TYPES instead of this map, and the packaged
+# annealage_agent/files.py's ASSET_CONTENT_TYPES instead of this map, and the packaged
 # static trees use its STATIC_CONTENT_TYPES.
 CONTENT_TYPES = {
     ".stl": "application/vnd.ms-pki.stl",

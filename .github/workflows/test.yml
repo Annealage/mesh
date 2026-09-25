@@ -4,12 +4,29 @@ on:
   push:
   pull_request:
   # Called by publish.yml, so a release cannot upload an artifact built from a
-  # commit whose suite was never run.
+  # commit whose suite was never run. A called workflow receives none of its
+  # caller's secrets unless they are declared here and passed explicitly, and
+  # the annealage-agent checkout below needs this one (temporary, see the
+  # comment above `jobs:`).
   workflow_call:
+    secrets:
+      ANNEALAGE_AGENT_READ_TOKEN:
+        required: true
 
+# Temporary, until annealage-agent is published (an open decision): Mesh
+# depends on it through a uv path source, `../agent` (pyproject.toml's
+# [tool.uv.sources]), so every job that resolves Mesh's dependencies checks
+# Mesh out into mesh/ and the agent package beside it into agent/, and runs
+# from mesh/. The agent repository is private while the brand is, so its
+# checkout needs a token with read access to it (the
+# ANNEALAGE_AGENT_READ_TOKEN secret). Once the package is on an index this
+# goes back to one plain checkout and the sources table goes away.
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mesh
     strategy:
       # Fail-fast off so one version's failure does not hide whether the others
       # pass, which is the whole reason for testing three of them.
@@ -22,9 +39,18 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          path: mesh
           # The version comes from the git tag (hatch-vcs), and the default
           # shallow checkout fetches none, which would build every install in
           # this job as a 0.0.0 fallback.
+          fetch-depth: 0
+
+      - name: check out annealage-agent beside mesh (temporary, see the top)
+        uses: actions/checkout@v7
+        with:
+          repository: Annealage/agent
+          path: agent
+          token: ${{ secrets.ANNEALAGE_AGENT_READ_TOKEN }}
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v10.1.0
@@ -37,11 +63,12 @@ jobs:
           # and restored before resolution. A miss costs what today costs; a hit
           # takes the SDK download out of the run entirely.
           enable-cache: true
-          # pyproject.toml alone: this project does not track a lockfile, so
-          # naming uv.lock here would key the cache on a file that is never
-          # present.
+          # The two pyproject.toml files alone: neither project tracks a
+          # lockfile, so naming uv.lock here would key the cache on a file
+          # that is never present.
           cache-dependency-glob: |
-            pyproject.toml
+            mesh/pyproject.toml
+            agent/pyproject.toml
 
       - name: install omp-rpc
         # Not a pyproject.toml extra: it is not on PyPI, and a direct git
@@ -61,27 +88,18 @@ jobs:
           "omp-rpc @ git+https://github.com/can1357/oh-my-pi.git@71c5eec978b0e7ce9ff057eb4e311f67f4f03eb9#subdirectory=python/omp-rpc"
 
       - name: run tests
-        # --extra codex: tests/test_codex_session.py and
-        # tests/test_mcp_bridge.py import openai_codex directly and would
-        # otherwise fail to collect at all, silently dropping their
-        # coverage from every run.
-        #
-        # On 3.10 omp-rpc is unavailable (requires >=3.11), so we exclude
-        # the omp test files that import it at the top level.
-        run: >-
-          uv run --extra dev --extra codex pytest -q
-          ${{ matrix.python-version == '3.10'
-          && '--ignore=tests/test_omp_session.py --ignore=tests/test_omp_session_live.py'
-          || '' }}
+        # --extra codex installs the Codex backend (annealage-agent[codex]),
+        # which agent mode imports when that backend is chosen.
+        run: uv run --extra dev --extra codex pytest -q
 
       # The Python suite covers no JavaScript at all, so a syntax error in a
-      # module under static/js/ or agent/static/ leaves it entirely green while
-      # the viewer fails to boot. This is two seconds and catches exactly that.
+      # module under static/js/ leaves it entirely green while the viewer
+      # fails to boot. This is two seconds and catches exactly that. The chat
+      # pane's modules are annealage-agent's, and its own CI checks them.
       - name: every browser module parses
         run: |
           for f in src/annealage_mesh/static/js/*.js \
-                   src/annealage_mesh/static/js/vendor/*.js \
-                   src/annealage_mesh/agent/static/*.js; do
+                   src/annealage_mesh/static/js/vendor/*.js; do
             node --check "$f" || exit 1
           done
 
@@ -121,20 +139,33 @@ jobs:
   # end at all, which is why it is a job and not an optional extra nobody runs.
   browser:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mesh
     steps:
       - uses: actions/checkout@v7
         with:
+          path: mesh
+          fetch-depth: 0
+
+      - name: check out annealage-agent beside mesh (temporary, see the top)
+        uses: actions/checkout@v7
+        with:
+          repository: Annealage/agent
+          path: agent
+          token: ${{ secrets.ANNEALAGE_AGENT_READ_TOKEN }}
           fetch-depth: 0
 
       - uses: astral-sh/setup-uv@v10.1.0
         with:
           python-version: "3.12"
           enable-cache: true
-          # pyproject.toml alone: this project does not track a lockfile, so
-          # naming uv.lock here would key the cache on a file that is never
-          # present.
+          # The two pyproject.toml files alone: neither project tracks a
+          # lockfile, so naming uv.lock here would key the cache on a file
+          # that is never present.
           cache-dependency-glob: |
-            pyproject.toml
+            mesh/pyproject.toml
+            agent/pyproject.toml
 
       - name: install chromium
         run: uv run --extra dev --extra e2e playwright install --with-deps chromium

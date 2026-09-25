@@ -7,5 +7,5 @@ rather than by whether they prompt.
 
 What every tool shares is not Mesh's: the result shapes (``ok``/``fail``), the
 model-visible naming, the pause gate and the failure mapping live in the agent
-layer's ``agent/tools.py``, which the handler modules import directly.
+layer's ``annealage_agent/tools.py``, which the handler modules import directly.
 """

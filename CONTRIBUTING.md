@@ -18,7 +18,7 @@ Signed-off-by: Your Name <you@example.com>
 - Rebase onto current `main` before submitting; do not merge `main` into your branch.
 - One logical change per pull request. Small focused PRs are easier to review and revert.
 - Include a test or a reproducer in the same PR where it is reasonable to do so.
-- Run `uv run --extra dev pytest -q` locally before pushing.
+- Run `uv run --extra dev pytest -q` locally before pushing. Until `annealage-agent` is published, uv resolves it from a sibling checkout (`../agent`, see `[tool.uv.sources]` in `pyproject.toml`), so check that repository out beside this one first.
 - Install the pre-commit hooks once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit` and a commit message without a `Signed-off-by:` line is rejected. CI's `lint` job runs the identical ruff hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
 
 ## Contribution licensing

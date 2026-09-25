@@ -8,20 +8,17 @@ symlinked directory aliasing a real one), so that shape is built once here
 rather than inline in every test that needs it.
 
 Importing ``annealage_mesh.product`` installs Mesh as this process's product
-(``agent/product.py``), which every agent-layer module reads its identity
-from; it is imported here so a test module that imports only agent-layer
-modules still runs as Mesh. ``swap_product`` is the one sanctioned way for a
-test to run as some other product, and it puts Mesh back afterwards.
+(``annealage_agent/product.py``), which every agent-layer module reads its
+identity from; it is imported here so a test module that imports only
+agent-layer modules still runs as Mesh. The agent layer's own tests, which
+run as other products, live in annealage-agent's suite.
 """
-
-import contextlib
 
 import pytest
 from microdot.test_client import TestClient
 
-from annealage_mesh.agent import product as agent_product
+from annealage_mesh import product  # noqa: F401  (installs Mesh as this process's product)
 from annealage_mesh.app import DEFAULT_PORT, create_app
-from annealage_mesh.product import MESH
 
 # Every app validates the inbound Host header against the address it is bound
 # to, so a test client has to send one that truthfully names this app or every
@@ -73,9 +70,9 @@ def one_backend_installed(monkeypatch):
     With no backend in any setting, agent mode picks from what is installed,
     and asks when there is more than one. A test that let the real PATH
     decide would pass on a machine with one CLI and fail on a CI runner with
-    none; ``tests/test_backends.py`` covers the choosing itself.
+    none; annealage-agent's suite covers the choosing itself.
     """
-    from annealage_mesh.agent import backends
+    from annealage_agent import backends
 
     monkeypatch.setattr(backends, "detect", lambda **_kw: ("claude",))
 
@@ -109,30 +106,3 @@ def nested_served_dir(tmp_path):
     (tmp_path / "linked").symlink_to(real_dir, target_is_directory=True)
 
     return tmp_path
-
-
-@contextlib.contextmanager
-def product_swapper():
-    """Yields ``swap(product)``, which installs ``product`` in place of Mesh;
-    on leaving the block Mesh's product, and every registration it made, is
-    restored however the block ends. ``swap_product`` is this as a fixture;
-    ``tests/test_product.py`` uses it directly to check the restore itself."""
-
-    def _swap(product):
-        agent_product.reset()
-        agent_product.install(product)
-
-    try:
-        yield _swap
-    finally:
-        agent_product.reset()
-        agent_product.install(MESH)
-
-
-@pytest.fixture
-def swap_product():
-    """``swap_product(product)`` installs ``product`` in place of Mesh for the
-    rest of one test; Mesh is restored afterwards, so nothing leaks into the
-    next test (``product_swapper``)."""
-    with product_swapper() as swap:
-        yield swap

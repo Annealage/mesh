@@ -14,9 +14,9 @@ whether some internal helper was called.
 import json
 
 import pytest
+from annealage_agent import sessions
 
 from annealage_mesh import cli
-from annealage_mesh.agent import sessions
 
 
 @pytest.fixture(autouse=True)
@@ -31,7 +31,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     stock CI runner, and the file would pass or fail according to what happened
     to be installed rather than according to the code under test.
     """
-    from annealage_mesh.agent.session import sdk
+    from annealage_agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
@@ -255,7 +255,7 @@ def test_no_agent_with_either_session_flag_exits_2(tmp_path, flags, capsys):
 def test_agent_mode_refuses_to_start_without_the_sandbox_dependencies(
     tmp_path, monkeypatch, capsys
 ):
-    from annealage_mesh.agent.session import sdk
+    from annealage_agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
 
@@ -280,7 +280,7 @@ def test_viewer_only_mode_starts_without_the_sandbox_dependencies(tmp_path, monk
     Asserted by getting past the check to the point where app.run is invoked,
     which the stub below records instead of serving.
     """
-    from annealage_mesh.agent.session import sdk
+    from annealage_agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("bwrap", "socat"))
     calls = _install_stub_run(monkeypatch)

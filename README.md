@@ -26,9 +26,9 @@ Or keep it around as a tool:
     # or
     pipx install annealage-mesh
 
-To run the unreleased `main` instead, point uv at the repo:
+To run unreleased work instead, check this repository out beside [annealage-agent](#the-agent-package), the two as sibling directories (`mesh/` and `agent/`), and run from the checkout:
 
-    uvx --from git+https://github.com/Annealage/mesh annealage-mesh ./path/to/part
+    cd mesh && uv run annealage-mesh ./path/to/part
 
 On Linux you'll also want `bubblewrap` and `socat`:
 
@@ -36,7 +36,11 @@ On Linux you'll also want `bubblewrap` and `socat`:
 
 That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running an uncontained one. macOS has its own sandbox built in so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer without an agent session and needs neither.
 
-Python 3.10+. Three small runtime dependencies: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find your settings file, and [tomli](https://github.com/hukkin/tomli) to read it on 3.10 (3.11+ has `tomllib` built in). three.js 0.160.0 is vendored and served locally, so the viewer needs no network access at all. Agent backends have their own dependencies (below).
+Python 3.10+. The chat pane, the agent backends, the permission cards and the rest of the agent side come from `annealage-agent` (below), which brings Mesh's small runtime dependencies with it: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find your settings file, and [tomli](https://github.com/hukkin/tomli) to read it on 3.10 (3.11+ has `tomllib` built in). three.js 0.160.0 is vendored and served locally, so the viewer needs no network access at all. Agent backends have their own dependencies (below).
+
+### The agent package
+
+Everything agent-side (the chat pane and its front end, the Claude, Codex and omp sessions, the permission broker, workspace trust, secret-path protection, `/ws`, `/mcp`, settings) is the separate `annealage-agent` package, shared by the Annealage products; Mesh supplies its viewer, its tools and its settings on top. It has not been published yet, so uv resolves it from the sibling checkout (`[tool.uv.sources]` in `pyproject.toml`), and **a Mesh release is blocked until `annealage-agent` is published**: a path dependency cannot ship in a wheel, and the publish workflow refuses to upload one.
 
 ### Agent backends
 
