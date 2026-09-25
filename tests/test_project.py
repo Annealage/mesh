@@ -11,6 +11,7 @@ skipped or refused).
 import pytest
 
 from annealage_mesh import project
+from annealage_mesh.agent import files
 
 
 class _Completed:
@@ -162,7 +163,7 @@ def test_claude_md_body_names_every_exchange_file(tmp_path):
     assert paths.COMMENTS_LOG_NAME in body
     assert paths.CALLOUTS_JSON_NAME in body
     assert "models/" in body
-    assert paths.IMAGES_DIRNAME in body
+    assert files.IMAGES_DIRNAME in body
 
 
 # --- idempotency and force --------------------------------------------------

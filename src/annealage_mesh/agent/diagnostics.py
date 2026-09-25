@@ -1,4 +1,4 @@
-"""What ``annealage-mesh doctor`` prints and what ``GET /settings`` returns
+"""What the product's ``doctor`` command prints and what ``GET /settings`` returns
 under its own ``diagnostics`` key: one collector, read by both, because the
 settings window's Diagnostics block exists to duplicate the terminal
 command for a person with no terminal, and a second function computing the
@@ -7,7 +7,7 @@ same facts a second way would give the two a chance to disagree.
 ``collect`` never raises. Every fact it gathers comes from a lookup that is
 routinely absent or broken on someone else's machine: no ``git`` on PATH, a
 platform whose ``claude-agent-sdk`` wheel carries no bundled binary and
-whose PATH has no ``claude`` either, a ``.mesh/lock`` left behind by a crash
+whose PATH has no ``claude`` either, a lock left behind by a crash
 mid write. A doctor command that raises on the question "what is wrong with
 this machine" has failed at its only job, so each such lookup becomes a
 value describing what happened (``None``, a ``"source": "missing"``, a
@@ -38,12 +38,8 @@ no SDK installed at all.
 
 The lock record is read without ever calling ``lock.acquire``: acquiring an
 unheld lock creates one, and a diagnostics report must never have that side
-effect. What is read is also deliberately incomplete. ``.mesh/lock`` holds
-the live per-run token guarding this project's agent-mode instance, and that
-token is discarded rather than surfaced here, whether it names this
-process's own run or, if a different pid holds the lock, someone else's: a
-diagnostics report is not a channel for handing back a still-valid
-credential.
+effect. The record holds a pid and a port and nothing secret (see
+``lock.py`` for why it no longer carries a token).
 
 Two lookups reach past ``net.py``'s and ``lock.py``'s public surface into a
 private helper each: ``net._reachable_addresses`` for the addresses this
@@ -66,7 +62,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import __version__, backends, lock, net, paths, sessions, settings
+from . import backends, files, lock, net, product, sessions, settings
 
 # Generous for a "--version" query and nothing more: a tool that cannot
 # answer this within five seconds is not going to answer it, and doctor
@@ -128,13 +124,15 @@ def collect(
             "version": platform.python_version(),
             "executable": sys.executable,
         },
-        "mesh_version": __version__,
+        # Keyed by the product's name ("mesh_version") because that is the
+        # key the product's own settings window reads.
+        product.current().version_fact: product.current().version,
         "claude_cli": _claude_cli_info(run=run, which=which),
         "backends_installed": list(backends.detect(which=which)),
         "git": _detect_git(run=run, which=which),
         "sandbox": _sandbox_info(),
         "project_root": (
-            str(paths.resolve_serve_dir(project_dir)) if project_dir is not None else None
+            str(files.resolve_serve_dir(project_dir)) if project_dir is not None else None
         ),
         "session_id": session_id,
         "bind": bind,
@@ -419,7 +417,7 @@ def _sandbox_info():
 
 
 def _lock_info(project_dir):
-    """The current state of ``.mesh/lock`` for ``project_dir``, or ``None``
+    """The current state of the project's lock for ``project_dir``, or ``None``
     when no lock file exists, read without ever calling ``lock.acquire``
     (which would create one where none is held).
 
@@ -431,9 +429,9 @@ def _lock_info(project_dir):
     """
     if project_dir is None:
         return None
-    path = lock.lock_path(sessions.mesh_dir(project_dir))
+    path = lock.lock_path(sessions.state_dir(project_dir))
     try:
-        pid, held_port, _token = lock._read_record(path)
+        pid, held_port = lock._read_record(path)
     except FileNotFoundError:
         return None
     except lock.LockCorrupt as exc:

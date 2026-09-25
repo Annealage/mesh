@@ -48,7 +48,8 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import Notification
 
-from annealage_mesh.session.base import (
+import annealage_mesh
+from annealage_mesh.agent.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
@@ -59,8 +60,8 @@ from annealage_mesh.session.base import (
     ToolUse,
     TurnEnd,
 )
-from annealage_mesh.session.codex import CodexSession
-from annealage_mesh.session.permissions import PermissionBroker
+from annealage_mesh.agent.session.codex import CodexSession
+from annealage_mesh.agent.session.permissions import PermissionBroker
 
 
 class FakeCodexClient:
@@ -429,15 +430,15 @@ async def test_allow_always_on_bash_is_downgraded_to_a_one_time_accept():
 
 
 def test_to_codex_decision_allow_with_no_remembered_tool_is_accept():
-    from annealage_mesh.session.codex import _to_codex_decision
-    from annealage_mesh.session.permissions import Decision
+    from annealage_mesh.agent.session.codex import _to_codex_decision
+    from annealage_mesh.agent.session.permissions import Decision
 
     assert _to_codex_decision(Decision(allow=True)) == {"decision": "accept"}
 
 
 def test_to_codex_decision_allow_with_a_remembered_tool_is_accept_for_session():
-    from annealage_mesh.session.codex import _to_codex_decision
-    from annealage_mesh.session.permissions import Decision
+    from annealage_mesh.agent.session.codex import _to_codex_decision
+    from annealage_mesh.agent.session.permissions import Decision
 
     assert _to_codex_decision(Decision(allow=True, remember_tool="FileChange")) == {
         "decision": "acceptForSession"
@@ -445,8 +446,8 @@ def test_to_codex_decision_allow_with_a_remembered_tool_is_accept_for_session():
 
 
 def test_to_codex_decision_deny_is_decline():
-    from annealage_mesh.session.codex import _to_codex_decision
-    from annealage_mesh.session.permissions import Decision
+    from annealage_mesh.agent.session.codex import _to_codex_decision
+    from annealage_mesh.agent.session.permissions import Decision
 
     assert _to_codex_decision(Decision(allow=False, message="no")) == {"decision": "decline"}
 
@@ -611,7 +612,7 @@ async def test_interrupt_completes_while_a_command_execution_approval_is_pending
 
 @pytest.mark.asyncio
 async def test_text_delta_becomes_one_text_delta_event():
-    from annealage_mesh.session.base import TextDelta
+    from annealage_mesh.agent.session.base import TextDelta
 
     session, fake, recorder, broker = await _started_session()
     try:
@@ -694,7 +695,7 @@ def test_mcp_config_overrides_is_empty_with_no_mesh_endpoint_given():
     assert session._mcp_config_overrides() == ()
 
 
-def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy():
+def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy(tmp_path, monkeypatch):
     """The exact shape ``planning/20260919_codex-mcp-bridge-finding.md``
     confirmed by reading ``client.py``'s launch-argument construction: each
     entry is one ``--config key=value`` flag, parsed by Codex as a TOML
@@ -702,12 +703,19 @@ def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy():
     not merely pattern-matched, so a quoting mistake this test's own string
     comparison could miss (an unescaped quote, a missing comma) is caught
     the same way Codex's own config parser would catch it.
+
+    The token is nowhere in them: every entry becomes part of the
+    app-server's command line, readable by any user through ``ps``. The
+    server is told only which environment variable to pass through, and the
+    token itself travels in the app-server's environment (next test).
     """
     try:
         import tomllib
     except ModuleNotFoundError:
         import tomli as tomllib
 
+    # A Codex home with no config.toml, so the developer's own is not read.
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     session = CodexSession(
         lambda e: None,
         cwd="/proj",
@@ -717,20 +725,54 @@ def test_mcp_config_overrides_is_valid_toml_registering_the_stdio_proxy():
         mcp_token='tok "en\\x',
     )
     overrides = session._mcp_config_overrides()
-    assert len(overrides) == 2
+    assert len(overrides) == 4
+    assert not any("tok" in entry for entry in overrides)
     parsed = tomllib.loads("\n".join(overrides))
     mesh = parsed["mcp_servers"]["mesh"]
     assert mesh["command"] == sys.executable
     assert mesh["args"] == [
         "-m",
-        "annealage_mesh.session.codex_mcp_stdio_bridge",
+        "annealage_mesh.agent.session.codex_mcp_stdio_bridge",
         "--host",
         "127.0.0.1",
         "--port",
         "8765",
-        "--token",
-        'tok "en\\x',
+        "--server-name",
+        "annealage-mesh",
+        "--server-version",
+        annealage_mesh.__version__,
     ]
+    assert mesh["env_vars"] == ["ANNEALAGE_AGENT_TOKEN"]
+    # Forwarded to the bridge, and kept out of the shells Codex runs for the
+    # model, which Codex does not do on its own for a *TOKEN* name.
+    assert parsed["shell_environment_policy"]["exclude"] == ["ANNEALAGE_AGENT_TOKEN"]
+    assert session._mcp_env() == {"ANNEALAGE_AGENT_TOKEN": 'tok "en\\x'}
+
+
+def test_the_shell_exclude_keeps_the_users_own_list(tmp_path, monkeypatch):
+    """A dotted --config override replaces the whole exclude list, so the
+    user's own top-level list is carried over rather than silently dropped
+    for the run."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    (tmp_path / "config.toml").write_text(
+        '[shell_environment_policy]\nexclude = ["AWS_*", "ANNEALAGE_AGENT_TOKEN"]\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    session = CodexSession(
+        lambda e: None, cwd="/proj", session_id="s", mcp_host="h", mcp_port=1, mcp_token="t"
+    )
+    parsed = tomllib.loads("\n".join(session._mcp_config_overrides()))
+    assert parsed["shell_environment_policy"]["exclude"] == ["AWS_*", "ANNEALAGE_AGENT_TOKEN"]
+
+
+def test_no_bridge_means_no_token_in_the_app_server_environment():
+    session = CodexSession(lambda e: None, cwd="/proj", session_id="s")
+    assert session._mcp_env() is None
 
 
 @pytest.mark.asyncio
@@ -766,5 +808,9 @@ async def test_start_threads_config_overrides_through_to_codex_config():
         assert session.agent_status() == AGENT_READY
         assert captured["config"].config_overrides == session._mcp_config_overrides()
         assert captured["config"].config_overrides != ()
+        # The token reaches the app-server through its environment, the one
+        # channel env_vars forwards to the bridge, and never its argv.
+        assert captured["config"].env == {"ANNEALAGE_AGENT_TOKEN": "ttt"}
+        assert not any("ttt" in entry for entry in captured["config"].config_overrides)
     finally:
         await session.close()

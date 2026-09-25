@@ -1,4 +1,4 @@
-"""``.mesh/lock``: refuses a second agent-mode instance in one project.
+"""``<state dir>/lock``: refuses a second agent-mode instance in one project.
 
 Two SDK clients resuming one session id, or two processes appending to one
 ``events.jsonl``, is corruption (plan section 3.4), so this module's only
@@ -7,9 +7,18 @@ merely discouraged. Viewer-only runs never call ``acquire``: several
 viewers on one project is the documented, supported case M4 already relies
 on, and only one of them may ever also be driving an agent.
 
-The file holds the holder's pid, port and per-run token as JSON, so a
-refused second start can print the URL of the instance that is already
-running instead of a bare refusal with no next step.
+The file holds the holder's pid and port as JSON, so a refused second start
+can say which process holds the project and where it is listening instead of
+a bare refusal with no next step.
+
+It deliberately holds no token. The lock lives inside the served directory,
+which the agent's own shell can read, sandboxed or not, and the browser token
+is what authorises a permission decision over ``/ws``: a token written here
+would let the agent read it back and approve its own permission cards. So a
+refused second start can name the running instance's address but not a URL
+that logs in; the link with the token is the one the running instance printed
+in its own banner. A record left by an older version that still carries a
+``token`` field is read without it.
 """
 
 from __future__ import annotations
@@ -22,6 +31,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import product
+
 LOCK_FILENAME = "lock"
 
 
@@ -32,20 +43,21 @@ class LockError(Exception):
 class LockHeld(LockError):
     """A live process already holds the lock.
 
-    ``pid``, ``port`` and ``token`` are the holder's own, read from the
-    lock file, so the caller can report the running instance's URL rather
-    than just refusing.
+    ``pid`` and ``port`` are the holder's own, read from the lock file, so the
+    caller can say where the running instance is rather than just refusing.
     """
 
-    def __init__(self, pid: int, port: int, token: str):
+    def __init__(self, pid: int, port: int):
         self.pid = pid
         self.port = port
-        self.token = token
-        super().__init__("annealage-mesh is already running here (pid %d, port %d)" % (pid, port))
+        super().__init__(
+            "%s is already running here (pid %d, port %d)"
+            % (product.current().distribution, pid, port)
+        )
 
 
 class LockCorrupt(LockError):
-    """The lock file exists but does not hold a valid pid/port/token record.
+    """The lock file exists but does not hold a valid pid/port record.
 
     Left in place rather than reclaimed: a file this module cannot parse is
     not proof anything is dead, and removing it on a guess is exactly the
@@ -54,8 +66,8 @@ class LockCorrupt(LockError):
     """
 
 
-def lock_path(mesh_dir: Path) -> Path:
-    return Path(mesh_dir) / LOCK_FILENAME
+def lock_path(state_dir: Path) -> Path:
+    return Path(state_dir) / LOCK_FILENAME
 
 
 def _pid_is_live(pid: int) -> bool:
@@ -81,23 +93,22 @@ def _pid_is_live(pid: int) -> bool:
 
 
 def _read_record(path: Path):
-    """Return ``(pid, port, token)`` from an existing lock file, or raise
+    """Return ``(pid, port)`` from an existing lock file, or raise
     ``LockCorrupt``. Never called on a path known not to exist."""
     try:
         raw = path.read_bytes()
         data = json.loads(raw)
         pid = int(data["pid"])
         port = int(data["port"])
-        token = str(data["token"])
     except FileNotFoundError:
         raise
     except (ValueError, KeyError, TypeError, OSError) as exc:
         raise LockCorrupt("%s exists but is not a valid lock record (%s)" % (path, exc)) from exc
-    return pid, port, token
+    return pid, port
 
 
 class Lock:
-    """A held ``.mesh/lock``, releasable exactly once.
+    """A held ``<state dir>/lock``, releasable exactly once.
 
     Returned only by a successful ``acquire``; the file descriptor this holds
     is the one whose inode ``_claim`` linked into place as the sole winner, so
@@ -169,7 +180,8 @@ def _claim(path: Path, payload: bytes) -> Optional["Lock"]:
         raise
     finally:
         # The temporary name has done its work whether or not the link landed,
-        # and leaving one behind would litter .mesh/ with a file per lost race.
+        # and leaving one behind would litter the state directory with a file
+        # per lost race.
         try:
             os.unlink(str(tmp))
         except OSError:
@@ -177,8 +189,8 @@ def _claim(path: Path, payload: bytes) -> Optional["Lock"]:
     return Lock(path, fd)
 
 
-def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lock:
-    """Create and hold ``.mesh/lock`` under ``mesh_dir``, or raise.
+def acquire(state_dir, port: int, *, pid: Optional[int] = None) -> Lock:
+    """Create and hold ``lock`` under ``state_dir``, or raise.
 
     Raises ``LockHeld`` if a live process already holds it, ``LockCorrupt``
     if the file exists but will not parse. A dead holder is reclaimed and
@@ -199,10 +211,10 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
     is tolerant of that below) but can never both believe they created it.
     """
     pid = os.getpid() if pid is None else pid
-    mesh_dir = Path(mesh_dir)
-    mesh_dir.mkdir(parents=True, exist_ok=True)
-    path = lock_path(mesh_dir)
-    payload = json.dumps({"pid": pid, "port": port, "token": token}).encode("utf-8")
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    path = lock_path(state_dir)
+    payload = json.dumps({"pid": pid, "port": port}).encode("utf-8")
 
     while True:
         acquired = _claim(path, payload)
@@ -210,7 +222,7 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
             return acquired
 
         try:
-            held_pid, held_port, held_token = _read_record(path)
+            held_pid, held_port = _read_record(path)
         except FileNotFoundError:
             # Released between this loop's failed create and this read
             # (the holder exited and released, or another process's own
@@ -219,11 +231,11 @@ def acquire(mesh_dir, port: int, token: str, *, pid: Optional[int] = None) -> Lo
             continue
 
         if _pid_is_live(held_pid):
-            raise LockHeld(held_pid, held_port, held_token)
+            raise LockHeld(held_pid, held_port)
 
         sys.stderr.write(
-            "annealage-mesh: reclaiming stale lock at %s (pid %d is no longer "
-            "running)\n" % (path, held_pid)
+            "%s: reclaiming stale lock at %s (pid %d is no longer "
+            "running)\n" % (product.current().distribution, path, held_pid)
         )
         try:
             os.unlink(path)

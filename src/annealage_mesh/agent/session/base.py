@@ -201,41 +201,6 @@ class TurnEnd(AgentEvent):
 
 
 @dataclasses.dataclass(frozen=True)
-class CalloutsChanged(AgentEvent):
-    """The callouts watcher's push, replacing the browser's 1.5 s poll.
-
-    Carries no payload: the browser refetches ``GET /callouts`` and hands
-    the result to ``store.setCallouts``, the single writer of that state
-    (M3's store contract). Putting the changed content in this event
-    instead would give that state a second writer.
-    """
-
-    kind: ClassVar[str] = "callouts_changed"
-    viewer: Optional[str] = None
-
-
-@dataclasses.dataclass(frozen=True)
-class ModelsChanged(AgentEvent):
-    """The served directory's set of models, or one model's bytes, changed.
-
-    This is what makes the tool a modelling loop rather than a review surface.
-    An agent that edits a CAD source and regenerates an STL has changed the
-    thing being discussed, and without this the viewer goes on showing the
-    previous geometry until the human reopens the page, which is the one moment
-    they are least likely to suspect the picture is stale.
-
-    Carries no payload, for the same reason ``CalloutsChanged`` does not: the
-    browser refetches ``/manifest`` and reloads geometry through the single
-    writer of that state. Naming the changed files here would put the same facts
-    on two paths, and the reload is cheap regardless, because ``/model`` answers
-    a conditional request and an unchanged part costs a 304.
-    """
-
-    kind: ClassVar[str] = "models_changed"
-    viewer: Optional[str] = None
-
-
-@dataclasses.dataclass(frozen=True)
 class PauseChanged(AgentEvent):
     """The human's pause switch moved, so the mesh tools that change the view or
     the project now refuse (or have stopped refusing).
@@ -291,11 +256,11 @@ class AgentStatus(AgentEvent):
 class AgentModelChanged(AgentEvent):
     """The active model changed mid-conversation, via ``session.set_model``.
 
-    Not to be confused with ``ModelsChanged`` above, which is about the
-    served directory's 3D-printable STL files -- a completely unrelated
-    concept that happens to share the word "model". This one is
-    ``Agent``-prefixed, matching ``AgentStatus``/``AgentError``: it is about
-    the conversation driver itself, never the served project.
+    Not to be confused with a product's own events about the files it serves
+    (Mesh's ``models_changed``, about its STL files), which share the word
+    "model" by coincidence. This one is ``Agent``-prefixed, matching
+    ``AgentStatus``/``AgentError``: it is about the conversation driver
+    itself, never the served project.
 
     Emitted once the switch actually took effect (after the live
     control-plane call each driver's ``set_model`` makes), so a picker
@@ -329,6 +294,51 @@ class AgentError(AgentEvent):
     stderr: str
     remediation: str
     viewer: Optional[str] = None
+
+
+#: Every event kind the agent layer emits itself. A product's own event
+#: classes (``Product.events``) are registered beside these by
+#: ``product.install`` and may not reuse one of their kinds: the chat pane and
+#: the transcript export both dispatch on ``kind`` alone, so a product event
+#: whose kind was ``turn_end`` would be read as the end of a turn.
+GENERIC_EVENTS = (
+    TextDelta,
+    ToolUse,
+    ToolResult,
+    PermissionRequest,
+    PermissionResolved,
+    TurnEnd,
+    PauseChanged,
+    ViewerPrimary,
+    AgentStatus,
+    AgentModelChanged,
+    SessionReset,
+    AgentError,
+)
+
+#: The installed product's event classes; see ``register_product_events``.
+PRODUCT_EVENTS: Tuple[type, ...] = ()
+
+
+def check_product_events(events) -> None:
+    """Raise ``ValueError`` if ``events`` cannot be registered: a class that
+    is not an ``AgentEvent`` with a kind of its own, or a kind already taken by
+    a generic event or by another of ``events``. Changes nothing."""
+    taken = {event.kind for event in GENERIC_EVENTS}
+    for event in events:
+        if not (isinstance(event, type) and issubclass(event, AgentEvent)) or not event.kind:
+            raise ValueError("product event %r is not an AgentEvent with a kind" % (event,))
+        if event.kind in taken:
+            raise ValueError("product event kind %r is already taken" % event.kind)
+        taken.add(event.kind)
+
+
+def register_product_events(events) -> None:
+    """Make ``events`` the product's event classes, replacing any registered
+    before. Called by ``product.install`` (after ``check_product_events``) and
+    ``product.reset`` only."""
+    global PRODUCT_EVENTS
+    PRODUCT_EVENTS = tuple(events)
 
 
 @runtime_checkable

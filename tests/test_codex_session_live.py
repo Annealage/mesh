@@ -34,9 +34,9 @@ import shutil
 
 import pytest
 
-from annealage_mesh.session.base import AGENT_READY, AgentError, TextDelta, TurnEnd
-from annealage_mesh.session.codex import CodexSession
-from annealage_mesh.session.permissions import PermissionBroker
+from annealage_mesh.agent.session.base import AGENT_READY, AgentError, TextDelta, TurnEnd
+from annealage_mesh.agent.session.codex import CodexSession
+from annealage_mesh.agent.session.permissions import PermissionBroker
 
 LIVE_PROMPT = "Reply with exactly the single word PONG and nothing else, no punctuation."
 

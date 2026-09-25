@@ -18,8 +18,8 @@ import json
 import pytest
 
 from annealage_mesh import paths
+from annealage_mesh.agent.session.events import EventLog
 from annealage_mesh.app import CalloutsWatcher
-from annealage_mesh.session.events import EventLog
 
 pytestmark = pytest.mark.asyncio
 

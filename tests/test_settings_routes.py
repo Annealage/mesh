@@ -21,7 +21,7 @@ import json
 import pytest
 from conftest import TEST_HOST, make_test_client
 
-from annealage_mesh import settings
+from annealage_mesh.agent import settings
 from annealage_mesh.app import DEFAULT_PORT, create_app
 
 pytestmark = pytest.mark.asyncio

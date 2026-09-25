@@ -29,10 +29,16 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import __version__, backends, diagnostics, lock, net, paths, sessions
+from . import (
+    __version__,
+    paths,
+    product,  # noqa: F401  (installs Mesh as this process's product)
+)
 from . import app as app_module
 from . import project as project_module
-from . import settings as settings_module
+from .agent import backends, diagnostics, launch, lock, net, sessions
+from .agent import settings as settings_module
+from .agent.http.routes_login import LoginNonces
 from .http.routes_viewer import VIEWER_HTML
 
 DEFAULT_PORT = 8765
@@ -107,7 +113,11 @@ def build_parser():
         "server under another name or scheme",
     )
     ap.add_argument(
-        "--token", default=None, help="use this per-run token instead of a generated one"
+        "--token",
+        default=None,
+        help="use this per-run browser token instead of a generated one. It is then "
+        "on this process's command line for the whole run, where any process on "
+        "this machine, the agent's shell included, can read it with ps",
     )
     ap.add_argument(
         "--no-open", action="store_true", help="do not try to open a browser automatically"
@@ -277,23 +287,12 @@ class _SdkRequirements:
     """
 
     def __getattr__(self, name):
-        from .session import sdk
+        from .agent.session import sdk
 
         return getattr(sdk, name)
 
 
 sdk_requirements = _SdkRequirements()
-
-
-def _resumable_sdk_id(serve_dir, mesh_sid):
-    """The SDK conversation id recorded for ``mesh_sid``, or None.
-
-    None is an ordinary outcome, not an error: a Mesh session whose client never
-    connected has no conversation to resume, and it is still resumable as a Mesh
-    session, just as a fresh conversation in the same folder.
-    """
-    info = sessions.get_session_info(serve_dir, mesh_sid)
-    return info.sdk_session_id if info is not None else None
 
 
 def flags_from(args):
@@ -882,7 +881,7 @@ def main(argv=None):
         # session-start hook running, and by the time a session exists that has
         # already happened. Viewer-only mode starts no agent CLI, so nothing in
         # the directory is ever read as configuration and the gate is moot.
-        from .session import workspace_trust
+        from .agent.session import workspace_trust
 
         trusted_digest = workspace_trust.config_digest(serve_dir)
         if trusted_digest != workspace_trust.EMPTY_DIGEST:
@@ -920,11 +919,15 @@ def main(argv=None):
         # one events.jsonl is corruption (plan section 3.4), so this has
         # no --allow-multiple escape hatch.
         try:
-            held_lock = lock.acquire(sessions.mesh_dir(serve_dir), port, token)
+            held_lock = lock.acquire(sessions.state_dir(serve_dir), port)
         except lock.LockHeld as exc:
+            # The lock holds no token (lock.py says why), so the running
+            # instance's address is all that can be named here; the link that
+            # logs in is the one its own banner printed.
             sys.stderr.write(
                 "error: %s\n  it is serving: %s\n"
-                % (exc, net.viewer_url(bind, exc.port, exc.token))
+                "  open the link printed in that instance's startup banner, which "
+                "carries its token\n" % (exc, net.server_url(bind, exc.port))
             )
             return 3
         except lock.LockCorrupt as exc:
@@ -956,7 +959,15 @@ def main(argv=None):
             held_lock.release()
         return 1
 
-    open_url = net.viewer_url(bind, port, token)
+    # The browser this run opens is launched with its URL on a command line,
+    # readable through ps, so that URL carries a single-use login nonce rather
+    # than the token (agent/http/routes_login.py). The banner keeps printing
+    # the reusable #t= link for a second tab or another device.
+    login = LoginNonces()
+    # The second per-run secret: the only credential /mcp accepts, handed to
+    # the Codex stdio bridge in place of the browser token above, which only
+    # the human's browser ever holds (agent/http/routes_mcp.py says why).
+    agent_token = net.generate_token()
 
     # Held so on_ready can report the posture the session actually got, rather
     # than the one that was asked for. A list with one slot because the factory
@@ -971,124 +982,24 @@ def main(argv=None):
         browser through, which is why this is a factory: the session must not
         exist before either of the things it uses.
 
-        Imported here rather than at module scope so that viewer-only mode, and
-        anything that only wants the CLI's argument parsing, never pays for
-        importing the SDK.
-
-        Branches on ``resolved_settings["backend"]``: all three build a real
-        session. ``openai_codex``/``session.codex`` are imported only inside
-        the ``codex`` branch, and ``omp_rpc``/``session.omp`` only inside the
-        ``omp`` branch, so a ``claude``-backend run never pays for either
-        optional dependency.
+        The backend switch itself is the agent layer's (``agent/launch.py``),
+        which imports each backend's session module only inside its own
+        branch, so viewer-only mode, and anything that only wants the CLI's
+        argument parsing, never pays for importing an agent SDK.
         """
         if mode != "agent":
             return None
-        backend = resolved_settings["backend"]
-        if backend not in settings_module.BACKENDS:
-            raise AssertionError("unreachable: settings.py validates backend's choices")
-
-        from .session.permissions import PermissionBroker
-
-        broker = PermissionBroker(
+        session = launch.build_session(
+            resolved_settings["backend"],
             on_event,
-            permissions_path=sessions.mesh_dir(serve_dir) / "permissions.toml",
-            viewer_url=open_url,
-        )
-        # app.py reads this back once build_session returns, to gate a
-        # write-class tool call arriving through /mcp with the exact same
-        # broker instance this session's own approval flow uses (its own
-        # comment on the bus.mesh_tools/bus.broker wiring seam explains why
-        # bus, not a new parameter here: build_session's (on_event, *, bus)
-        # signature is the shape every existing test fixture already
-        # assumes, and widening it would break all of them for a value only
-        # this real closure needs to hand back out).
-        bus.broker = broker
-
-        if backend == "codex":
-            # Imported only in this branch, per the module docstring's own
-            # "keep the claude backend free of an unnecessary dependency
-            # import" intent: openai-codex is an optional extra, and a
-            # claude-backend run must not require it to be installed.
-            from .session.codex import CodexSession
-
-            session = CodexSession(
-                on_event,
-                cwd=serve_dir,
-                session_id=mesh_sid,
-                broker=broker,
-                model=resolved_settings["model"],
-                effort=resolved_settings["effort"],
-                # The app-server resumes only a thread it already knows; a
-                # freshly created mesh session has no Codex thread id yet.
-                resume=_resumable_sdk_id(serve_dir, mesh_sid) if resumed else None,
-                on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
-                    serve_dir, mesh_sid, sdk_id
-                ),
-                # mesh's own /mcp endpoint (phase3_codex-tool-mcp-bridge.md):
-                # host is the bind this run resolved, never a hardcoded
-                # loopback, since app.py's allowed_hosts check only accepts
-                # the exact bind address a non-loopback run chose (a
-                # tailnet-bound server does not also accept 127.0.0.1).
-                mcp_host=bind.address,
-                mcp_port=port,
-                mcp_token=token,
-            )
-            built_session.append(session)
-            return session
-
-        if backend == "omp":
-            # Imported only in this branch, per the module docstring's own
-            # "keep the claude backend free of an unnecessary dependency
-            # import" intent: omp_rpc is a separately installed package
-            # (see session/omp.py), and a claude-backend run must not
-            # require it to be installed.
-            from .session.omp import OmpSession
-
-            session = OmpSession(
-                on_event,
-                cwd=serve_dir,
-                session_id=mesh_sid,
-                broker=broker,
-                model=resolved_settings["model"],
-                base_url=resolved_settings["omp_base_url"],
-                api_key=resolved_settings["omp_api_key"],
-                # Mirrors SdkSession's mcp_servers=bus.mesh_tools.mcp_servers:
-                # a snapshot taken once, at construction, rather than a live
-                # reference to the tool server this run already built.
-                tool_table=bus.mesh_tools.tool_table(),
-                on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
-                    serve_dir, mesh_sid, sdk_id
-                ),
-            )
-            built_session.append(session)
-            return session
-
-        from .session.sdk import SdkSession
-
-        session = SdkSession(
-            on_event,
-            cwd=serve_dir,
+            bus=bus,
+            serve_dir=serve_dir,
             session_id=mesh_sid,
-            broker=broker,
-            # The mesh tool server, built once by create_app and shared
-            # through bus.mesh_tools (see app.py's own comment on that
-            # channel) rather than built again here: the tools that never
-            # prompt are already in the session's own allow list, so nothing
-            # further is passed for them; the write-class ones are absent
-            # from every allow list, which is what makes them reach the
-            # broker above and therefore the human.
-            mcp_servers=bus.mesh_tools.mcp_servers,
-            model=resolved_settings["model"],
-            effort=resolved_settings["effort"],
-            permission_mode=resolved_settings["permission_mode"],
-            # The SDK resumes only a conversation it already knows; a
-            # freshly created mesh session has no SDK id to resume yet.
-            resume=_resumable_sdk_id(serve_dir, mesh_sid) if resumed else None,
-            on_sdk_session_id=lambda sdk_id: sessions.set_sdk_session_id(
-                serve_dir, mesh_sid, sdk_id
-            ),
-            # What the gate above accepted, so the session can refuse tool
-            # calls if it stops being true while the run is in progress.
+            resumed=resumed,
+            settings=resolved_settings,
+            mcp_host=bind.address,
+            mcp_port=port,
+            agent_token=agent_token,
             trusted_config_digest=trusted_digest,
         )
         built_session.append(session)
@@ -1134,7 +1045,8 @@ def main(argv=None):
             # callback fires.
             loop = asyncio.get_running_loop()
             try:
-                await loop.run_in_executor(None, webbrowser.open, open_url)
+                browser_url = net.login_url(bind, port, login.issue())
+                await loop.run_in_executor(None, webbrowser.open, browser_url)
             except Exception:
                 pass  # never fail startup just because a browser couldn't be opened
 
@@ -1146,10 +1058,12 @@ def main(argv=None):
                 port,
                 on_ready=on_ready,
                 token=token,
+                agent_token=agent_token,
                 extra_origins=tuple(args.origin),
                 mesh_session_id=mesh_sid,
                 build_session=build_session,
                 settings=resolved_settings,
+                login=login,
             )
         )
     except KeyboardInterrupt:

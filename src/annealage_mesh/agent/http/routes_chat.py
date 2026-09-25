@@ -22,8 +22,8 @@ one route in the process that writes into the human's project and a POST
 carrying a raw body is a CORS simple request, so no preflight stands in front
 of it; an unknown query key, ``kind`` given twice, or ``kind`` outside its
 whitelist; a missing or zero Content-Length; a Content-Length over
-``paths.MAX_IMAGE_BYTES``; a body whose bytes are not a PNG, JPEG or WEBP;
-and, once past every check above, whatever ``paths.create_unique_image_file``
+``files.MAX_IMAGE_BYTES``; a body whose bytes are not a PNG, JPEG or WEBP;
+and, once past every check above, whatever ``files.create_unique_image_file``
 itself refuses (an ``images/`` entry that cannot be written into, or every
 generated name already taken), plus a write that fails partway or a body
 shorter than its declared length.
@@ -36,7 +36,7 @@ The body is raw bytes, not multipart: microdot ships no multipart parser, and
 the one thing a client chooses about an upload, its kind (``upload`` or
 ``sketch``), fits in a query parameter. The written file's name, including
 its extension, never comes from the client; see
-``paths.create_unique_image_file`` and ``paths.sniff_image``.
+``files.create_unique_image_file`` and ``files.sniff_image``.
 """
 
 import asyncio
@@ -44,7 +44,7 @@ import functools
 import os
 import sys
 
-from .. import paths, sessions
+from .. import files, sessions
 from ..session import events
 from . import CHUNK_SIZE, read_json_body
 from .ws import _origin_is_allowed, _token_is_allowed, refusal
@@ -199,7 +199,7 @@ def _export_options(data):
 
 def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
     """Register ``POST /upload`` and ``POST /session/<sid>/export`` on ``app``."""
-    serve_dir = paths.resolve_serve_dir(serve_dir)
+    serve_dir = files.resolve_serve_dir(serve_dir)
 
     @app.post("/upload")
     async def upload(req):
@@ -221,11 +221,11 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
                 "ok": False,
                 "error": "Content-Length is required and must be greater than zero",
             }, 411
-        if content_length > paths.MAX_IMAGE_BYTES:
+        if content_length > files.MAX_IMAGE_BYTES:
             return {
                 "ok": False,
                 "error": "body is %d bytes, over the %d "
-                "byte image limit" % (content_length, paths.MAX_IMAGE_BYTES),
+                "byte image limit" % (content_length, files.MAX_IMAGE_BYTES),
             }, 413
 
         loop = asyncio.get_running_loop()
@@ -234,19 +234,19 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
         # read as the answer because a real socket's read(n) can return far
         # fewer than n bytes even mid-transfer, and treating a short first read
         # as the whole head would refuse a perfectly good, merely slow, upload.
-        # The loop stops at paths.SNIFF_MIN_BYTES because the sniffer looks no
+        # The loop stops at files.SNIFF_MIN_BYTES because the sniffer looks no
         # further: reading a declared 8 MiB to the end before refusing its
         # first twelve bytes would let any holder of the token make this
         # process buffer the whole cap per connection, and nothing here limits
         # concurrent connections or times out a slow read.
-        want = min(paths.SNIFF_MIN_BYTES, content_length)
+        want = min(files.SNIFF_MIN_BYTES, content_length)
         first = b""
         while len(first) < want:
             chunk = await req.stream.read(min(CHUNK_SIZE, content_length - len(first)))
             if not chunk:
                 break
             first += chunk
-        sniff = paths.sniff_image(first)
+        sniff = files.sniff_image(first)
         if sniff is None:
             return {
                 "ok": False,
@@ -256,13 +256,13 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
 
         try:
             created = await loop.run_in_executor(
-                None, paths.create_unique_image_file, serve_dir, kind, suffix
+                None, files.create_unique_image_file, serve_dir, kind, suffix
             )
         except FileExistsError:
             return {
                 "ok": False,
                 "error": "could not find a free name in "
-                "images/ after %d attempts" % paths.UNIQUE_IMAGE_NAME_ATTEMPTS,
+                "images/ after %d attempts" % files.UNIQUE_IMAGE_NAME_ATTEMPTS,
             }, 500
         except OSError as exc:
             # A directory this process cannot write into, a full filesystem, a
@@ -274,7 +274,7 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
             return {
                 "ok": False,
                 "error": "refusing to write: %s/ must be a "
-                "real directory this process can create a file in" % paths.IMAGES_DIRNAME,
+                "real directory this process can create a file in" % files.IMAGES_DIRNAME,
             }, 500
         fd, target = created
 
@@ -344,7 +344,7 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
         written = await loop.run_in_executor(None, target.stat)
         return {
             "ok": True,
-            "path": "%s/%s" % (paths.REVIEW_DIRNAME, target.name),
+            "path": "%s/%s" % (files.REVIEW_DIRNAME, target.name),
             "bytes": written.st_size,
             "format": fmt,
             "include": include,

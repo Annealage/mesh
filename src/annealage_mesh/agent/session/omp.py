@@ -166,6 +166,7 @@ from typing import Any, Callable, Optional
 
 from omp_rpc import RpcClient, host_tool
 
+from .. import product
 from . import turn_images
 from .base import (
     AGENT_CONNECTING,
@@ -182,11 +183,15 @@ from .base import (
     UnknownRequest,
 )
 
-# The provider id this session's generated `models.yml` registers its custom
-# endpoint under. Arbitrary and internal: nothing outside this file ever
-# needs to know it, since the `--model` flag this session builds always
-# carries the full "provider/modelId" reference.
-_PROVIDER_ID = "mesh-local"
+
+def _provider_id() -> str:
+    """The provider id this session's generated `models.yml` registers its
+    custom endpoint under, ``<product>-local`` (Mesh: ``mesh-local``).
+    Arbitrary and internal: nothing outside this file ever needs to know it,
+    since the `--model` flag this session builds always carries the full
+    "provider/modelId" reference."""
+    return "%s-local" % product.current().name
+
 
 # `settings.py`'s `model` key is nullable ("unset falls back to the backend's
 # own default"); a local/arbitrary endpoint has no real "default model" the
@@ -220,10 +225,10 @@ class OmpSession:
     keywords ``RpcClient()`` does and returning anything with its public
     method surface. Defaults to ``RpcClient`` itself.
 
-    ``tool_table`` is ``tools/registry.py``'s ``MeshTools.tool_table()``
+    ``tool_table`` is the product tool server's ``ToolServer.tool_table()``
     snapshot (``{name: ToolSpec(schema, description, handler, write)}``),
     taken once at construction the same way ``SdkSession`` is handed
-    ``bus.mesh_tools.mcp_servers`` once: every tool this session ever
+    ``bus.tools.mcp_servers`` once: every tool this session ever
     exposes to `omp` comes from this snapshot, registered as `omp` host
     tools rather than through a second transport (unlike Codex, which needs
     its own stdio-to-HTTP MCP bridge -- see this file's module docstring).
@@ -400,7 +405,7 @@ class OmpSession:
         ``_run_blocking``, exactly like every other one-shot ``RpcClient``
         call in this file.
 
-        With ``omp_base_url`` configured, ``_PROVIDER_ID`` is the same
+        With ``omp_base_url`` configured, ``_provider_id()`` is the same
         custom-provider id this session's own ``models.yml`` registers at
         ``start()``, so a live switch stays scoped to the provider `omp`
         already knows this session by, and ``model`` is the bare model id
@@ -425,7 +430,7 @@ class OmpSession:
         if model == self._model:
             return
         if self._base_url:
-            provider, model_id = _PROVIDER_ID, model
+            provider, model_id = _provider_id(), model
         else:
             provider, _, model_id = model.partition("/")
         await self._run_blocking(self._client.set_model, provider, model_id)
@@ -463,7 +468,7 @@ class OmpSession:
                 )
                 env = {"PI_CODING_AGENT_DIR": str(self._agent_dir)}
                 env.update(api_key_env)
-                model_arg = "%s/%s" % (_PROVIDER_ID, model_id)
+                model_arg = "%s/%s" % (_provider_id(), model_id)
             else:
                 # No omp_base_url: use `omp` exactly as already configured
                 # on this host -- no PI_CODING_AGENT_DIR override, so its own
@@ -772,7 +777,7 @@ def _api_key_env_name(session_id: object) -> str:
     not the secret, is the deliberate fix rather than a workaround.
     """
     digest = hashlib.sha256(str(session_id).encode("utf-8")).hexdigest()[:32]
-    return "MESH_OMP_API_KEY_%s" % digest
+    return "%s_OMP_API_KEY_%s" % (product.current().name.upper(), digest)
 
 
 def _build_custom_provider(base_url: str, api_key_env_name: Optional[str]) -> dict:
@@ -829,12 +834,12 @@ def _write_agent_dir(
     directory is removed here before re-raising, so a caller that has not
     yet recorded the path anywhere still cannot leak it.
     """
-    agent_dir = Path(tempfile.mkdtemp(prefix="mesh-omp-"))
+    agent_dir = Path(tempfile.mkdtemp(prefix="%s-omp-" % product.current().name))
     try:
         api_key_env_name = _api_key_env_name(session_id) if api_key else None
         provider = _build_custom_provider(base_url, api_key_env_name)
         provider["models"] = [{"id": model_id, "name": model_id}]
-        models_doc = {"providers": {_PROVIDER_ID: provider}}
+        models_doc = {"providers": {_provider_id(): provider}}
         (agent_dir / "models.yml").write_text(json.dumps(models_doc, indent=2))
     except Exception:
         shutil.rmtree(agent_dir, ignore_errors=True)

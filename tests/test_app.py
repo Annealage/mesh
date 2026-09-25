@@ -15,6 +15,7 @@ import pytest
 from conftest import make_test_client
 
 from annealage_mesh import app as app_module
+from annealage_mesh.agent import app as agent_app
 
 pytestmark = pytest.mark.asyncio
 
@@ -92,7 +93,7 @@ async def test_run_returns_promptly_when_cancelled_with_a_connection_still_open(
 ):
     # Bounds the shutdown drain wait tightly so the test itself stays fast;
     # the property under test is that the bound is honoured, not its value.
-    monkeypatch.setattr(app_module, "SHUTDOWN_DRAIN_TIMEOUT", 0.1)
+    monkeypatch.setattr(agent_app, "SHUTDOWN_DRAIN_TIMEOUT", 0.1)
     (tmp_path / "widget.stl").write_bytes(b"solid widget\nendsolid widget\n")
     port = _free_port()
     ready = asyncio.Event()
@@ -142,9 +143,9 @@ async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_
     so a log with nowhere to go leaves both reading an empty history and
     reporting every session as 0 turns and $0.00.
     """
-    from annealage_mesh import sessions
-    from annealage_mesh.session.base import TurnEnd
-    from annealage_mesh.session.fake import FakeSession
+    from annealage_mesh.agent import sessions
+    from annealage_mesh.agent.session.base import TurnEnd
+    from annealage_mesh.agent.session.fake import FakeSession
 
     sid = sessions.create_session(tmp_path)
     built = []
@@ -192,9 +193,9 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
     from microdot.microdot import Request
     from microdot.websocket import WebSocket
 
-    from annealage_mesh import protocol
-    from annealage_mesh.session.base import AgentModelChanged
-    from annealage_mesh.session.fake import FakeSession
+    from annealage_mesh.agent import protocol
+    from annealage_mesh.agent.session.base import AgentModelChanged
+    from annealage_mesh.agent.session.fake import FakeSession
 
     class _RawSock:
         def __init__(self, initial_bytes):
@@ -235,7 +236,7 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
         return opcode, frame_bytes[offset : offset + length]
 
     built = []
-    from annealage_mesh import sessions
+    from annealage_mesh.agent import sessions
 
     sid = sessions.create_session(served_dir)
 
@@ -291,7 +292,7 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
 async def test_viewer_only_mode_writes_no_event_log(tmp_path):
     """There is no session and no conversation, so there is nothing to persist
     and nothing to create a session directory for."""
-    from annealage_mesh import sessions
+    from annealage_mesh.agent import sessions
 
     app_module.create_app(tmp_path, token="tok")
 
@@ -318,7 +319,7 @@ async def test_a_session_factory_that_returns_none_builds_a_working_app(tmp_path
     app = app_module.create_app(tmp_path, token="tok", build_session=build_session)
 
     assert calls, "the factory must still be called; it is what decides"
-    assert app.mesh_session is None
+    assert app.agent_session is None
     res = await make_test_client(app).get("/manifest")
     assert res.status_code == 200
 
@@ -348,8 +349,8 @@ async def test_the_policy_names_the_import_map_by_hash_not_by_unsafe_inline(tmp_
     injection managed to place in the markup."""
     from annealage_mesh.http.routes_viewer import VIEWER_HTML
 
-    policy = app_module.content_security_policy(VIEWER_HTML)
-    hashes = app_module.inline_script_hashes(VIEWER_HTML)
+    policy = agent_app.content_security_policy(VIEWER_HTML)
+    hashes = agent_app.inline_script_hashes(VIEWER_HTML)
     assert len(hashes) == 1
     assert hashes[0] in policy
     assert "unsafe-inline" not in policy
@@ -365,7 +366,7 @@ async def test_the_hash_is_computed_from_the_file_that_is_served(tmp_path):
         '<body><script type="module" src="/static/js/main.js"></script></body></html>',
         encoding="utf-8",
     )
-    first = app_module.inline_script_hashes(html)
+    first = agent_app.inline_script_hashes(html)
     assert len(first) == 1, "the sourced script has no body and contributes no hash"
 
     html.write_text(
@@ -373,13 +374,13 @@ async def test_the_hash_is_computed_from_the_file_that_is_served(tmp_path):
         "</head><body></body></html>",
         encoding="utf-8",
     )
-    assert app_module.inline_script_hashes(html) != first
+    assert agent_app.inline_script_hashes(html) != first
 
 
 async def test_a_missing_viewer_yields_a_policy_that_allows_no_inline_script(tmp_path):
     """Failing closed: a policy that could not read the page refuses its inline
     script rather than falling back to allowing every inline script."""
-    policy = app_module.content_security_policy(tmp_path / "absent.html")
+    policy = agent_app.content_security_policy(tmp_path / "absent.html")
     assert "script-src 'self'" in policy
     assert "sha256-" not in policy
     assert "unsafe-inline" not in policy
@@ -391,7 +392,7 @@ async def test_the_policy_allows_what_the_viewer_actually_needs(tmp_path):
     suite would otherwise catch."""
     from annealage_mesh.http.routes_viewer import VIEWER_HTML
 
-    policy = app_module.content_security_policy(VIEWER_HTML)
+    policy = agent_app.content_security_policy(VIEWER_HTML)
     # The sketch overlay composites strokes over a canvas snapshot through an
     # Image whose src is a data URL.
     assert "img-src 'self' data:" in policy

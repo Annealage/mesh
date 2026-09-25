@@ -31,8 +31,8 @@ import asyncio
 
 import pytest
 
-from annealage_mesh.session.base import PermissionRequest, PermissionResolved
-from annealage_mesh.session.permissions import (
+from annealage_mesh.agent.session.base import PermissionRequest, PermissionResolved
+from annealage_mesh.agent.session.permissions import (
     DEFAULT_DENY_MESSAGE,
     NEVER_REMEMBERED,
     Decision,

@@ -81,7 +81,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import PermissionRuleValue, ToolPermissionContext
 
-from ..tools import registry
+from .. import product
 from . import secret_paths, turn_images, workspace_trust
 from .base import (
     AGENT_CONNECTING,
@@ -99,21 +99,6 @@ from .base import (
     UnknownRequest,
 )
 from .permissions import Decision
-
-# The mesh tools that never reach the broker, and therefore never interrupt the
-# human: the read-class ones, which change nothing, and the view-class ones,
-# which change only what is on the screen the human is already watching.
-# Namespaced, because an in-process MCP tool is visible to the model as
-# ``mcp__<server>__<tool>`` and a bare name in this list silently matches
-# nothing. The write-class tools are deliberately absent: they leave something
-# on disk, and their whole point is that they reach the human.
-#
-# Re-exported from ``tools/registry.py`` rather than restated, so the list this
-# file pre-allows and the list that module refuses to build without cannot
-# disagree. A name here that no tool answers to would be a pre-allowed tool
-# that does not exist; a write-class name reaching this list would silently
-# remove the human's approval card.
-PRE_ALLOWED_MESH_TOOLS = registry.PRE_ALLOWED_MESH_TOOLS
 
 # Settings files this session reads. "Behaves like Claude Code in that folder"
 # requires it: the default is to load none at all, so a project CLAUDE.md would
@@ -164,7 +149,7 @@ _MAX_CONSECUTIVE_PARSE_FAILURES = 5
 _STDERR_KEEP_LINES = 200
 
 # The SDK warns, on every ``connect()``, that ``can_use_tool`` will not be
-# consulted for the tools in ``allowed_tools``. Pre-allowing the mesh tools that
+# consulted for the tools in ``allowed_tools``. Pre-allowing the product tools that
 # do not need a human is exactly what that list is for, so on a correct run the
 # warning is a paragraph of advice printed over the startup banner about a
 # decision this file made deliberately.
@@ -190,6 +175,16 @@ class SdkSession:
     injection point ``tests/test_sdk_session.py`` uses to drive the real client
     with canned protocol dicts and no subprocess, which is the only way to
     notice an SDK upgrade breaking the control protocol.
+
+    ``allowed_tools`` is the list of tools that never reach the broker and
+    therefore never interrupt the human, namespaced, because an in-process MCP
+    tool is visible to the model as ``mcp__<server>__<tool>`` and a bare name
+    in this list silently matches nothing. The caller passes the product tool
+    server's own ``ToolServer.pre_allowed`` (read- and view-grade tools), so
+    the list this session pre-allows and the grading the server refuses to
+    build without cannot disagree: a write-grade name reaching this list would
+    silently remove the human's approval card. Empty (the default) pre-allows
+    nothing, so every tool call reaches the broker.
     """
 
     def __init__(
@@ -205,7 +200,7 @@ class SdkSession:
         resume=None,
         sandbox=True,
         mcp_servers=None,
-        extra_allowed_tools=(),
+        allowed_tools=(),
         transport=None,
         on_sdk_session_id=None,
         trusted_config_digest=None,
@@ -221,7 +216,7 @@ class SdkSession:
         self._resume = resume
         self._sandbox_requested = bool(sandbox)
         self._mcp_servers = mcp_servers or {}
-        self._extra_allowed_tools = tuple(extra_allowed_tools)
+        self._allowed_tools = tuple(allowed_tools)
         self._transport = transport
         self._on_sdk_session_id = on_sdk_session_id
         # The digest the startup gate accepted for this directory's Claude
@@ -437,7 +432,7 @@ class SdkSession:
         return _to_claude_result(decision)
 
     def _build_options(self) -> ClaudeAgentOptions:
-        allowed = list(PRE_ALLOWED_MESH_TOOLS) + list(self._extra_allowed_tools)
+        allowed = list(self._allowed_tools)
         kwargs = {
             "cwd": self.cwd,
             "setting_sources": list(SETTING_SOURCES),
@@ -528,8 +523,8 @@ class SdkSession:
                     "accepted when this session started" % self.cwd,
                     remediation="tool calls are refused until this is resolved, because a "
                     "settings file there can grant tools without asking; "
-                    "inspect .claude/ and .mcp.json, then restart mesh to "
-                    "review and accept the current contents",
+                    "inspect .claude/ and .mcp.json, then restart %s to "
+                    "review and accept the current contents" % product.current().name,
                 )
             )
         return {
@@ -537,11 +532,12 @@ class SdkSession:
                 "hookEventName": "PreToolUse",
                 "permissionDecision": "deny",
                 "permissionDecisionReason": (
-                    "Mesh refuses this call: the Claude configuration in the served "
+                    "%s refuses this call: the Claude configuration in the served "
                     "directory changed after the human accepted it, and configuration "
                     "there can grant tool permissions without asking. Do not attempt to "
                     "modify .claude/ or .mcp.json. Tell the human what you were trying "
-                    "to do and that mesh must be restarted to review the change."
+                    "to do and that %s must be restarted to review the change."
+                    % (product.current().title, product.current().name)
                 ),
             },
         }
@@ -569,9 +565,10 @@ class SdkSession:
         except Exception as exc:
             sys.stderr.write("warning: could not check the call's paths: %r\n" % (exc,))
             reason = (
-                "Refused: mesh could not determine whether that call reaches a "
+                "Refused: %s could not determine whether that call reaches a "
                 "credential path, so it refused rather than guessing. Tell the "
-                "human; this is a bug in mesh rather than anything you did."
+                "human; this is a bug in %s rather than anything you did."
+                % (product.current().name, product.current().name)
             )
         if reason is None:
             return {}
@@ -957,7 +954,7 @@ def _remediation_for(exc: BaseException) -> str:
     if name == "CLIConnectionError":
         return (
             "the claude CLI could not be started or lost its connection; run "
-            "annealage-mesh doctor, and check that it is authenticated"
+            "%s doctor, and check that it is authenticated" % product.current().distribution
         )
     if name == "CLIJSONDecodeError":
         return (

@@ -28,6 +28,7 @@ away), with no orphan left behind.
 import asyncio
 import contextlib
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -38,15 +39,16 @@ from microdot import Microdot
 from microdot.test_client import TestClient
 
 from annealage_mesh import app as app_module
-from annealage_mesh.http.routes_mcp import register_mcp_routes
-from annealage_mesh.session.codex_mcp_stdio_bridge import authority_url, build_server
-from annealage_mesh.session.fake import FakeSession
-from annealage_mesh.session.permissions import Decision, PermissionBroker
+from annealage_mesh.agent.http.routes_mcp import register_mcp_routes
+from annealage_mesh.agent.session.codex_mcp_stdio_bridge import authority_url, build_server
+from annealage_mesh.agent.session.fake import FakeSession
+from annealage_mesh.agent.session.permissions import Decision, PermissionBroker
 from annealage_mesh.tools.registry import MeshTools
 
 pytestmark = pytest.mark.asyncio
 
 TOKEN = "mcp-bridge-test-token"
+BROWSER_TOKEN = "mcp-bridge-browser-token"
 
 
 class FakeBus:
@@ -90,7 +92,7 @@ def mesh_tools(project):
 def _mcp_app(mesh_tools, *, broker, token=TOKEN, allowed_origins=()):
     app = Microdot()
     register_mcp_routes(
-        app, mesh_tools=mesh_tools, broker=broker, token=token, allowed_origins=allowed_origins
+        app, tools=mesh_tools, broker=broker, agent_token=token, allowed_origins=allowed_origins
     )
     return app
 
@@ -331,7 +333,7 @@ async def test_proxy_list_tools_forwards_to_the_authority():
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         url = authority_url("127.0.0.1", 8765, "/mcp").copy_merge_params({"t": TOKEN})
-        server = build_server(client, url)
+        server = build_server(client, url, name="annealage-mesh", version="0")
         list_tools = server.request_handlers[types.ListToolsRequest]
         result = await list_tools(types.ListToolsRequest(method="tools/list"))
         tools = result.root.tools
@@ -372,7 +374,7 @@ async def test_proxy_call_tool_forwards_name_and_arguments_and_returns_the_resul
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(transport=transport) as client:
         url = authority_url("127.0.0.1", 8765, "/mcp").copy_merge_params({"t": TOKEN})
-        server = build_server(client, url)
+        server = build_server(client, url, name="annealage-mesh", version="0")
         call_tool = server.request_handlers[types.CallToolRequest]
         req = types.CallToolRequest(
             method="tools/call",
@@ -395,7 +397,7 @@ async def test_authority_http_failure_raises_authority_error():
     docstring), so this only needs to pin that the exception really is
     raised here.
     """
-    from annealage_mesh.session.codex_mcp_stdio_bridge import AuthorityError, _call_authority
+    from annealage_mesh.agent.session.codex_mcp_stdio_bridge import AuthorityError, _call_authority
 
     transport = httpx.MockTransport(lambda request: httpx.Response(500))
     async with httpx.AsyncClient(transport=transport) as client:
@@ -416,7 +418,7 @@ def _free_port():
         return s.getsockname()[1]
 
 
-async def _run_real_server(project, *, token, broker):
+async def _run_real_server(project, *, agent_token, broker):
     """Starts ``app_module.run`` as a background task on a real loopback
     socket, with a ``FakeSession`` standing in for the agent (no SDK, no
     subprocess) and ``broker`` wired the same way ``cli.py``'s own
@@ -425,13 +427,16 @@ async def _run_real_server(project, *, token, broker):
     comment on that channel). Returns ``(port, task)``; the caller cancels
     ``task`` and awaits it to shut down.
 
+    ``agent_token`` is the one ``/mcp`` accepts; the app's browser token is
+    ``BROWSER_TOKEN``, which ``/mcp`` must refuse.
+
     ``sessions.create_session`` scaffolds ``.mesh/sessions/<id>/`` first,
     the same way ``cli.py`` does before ever building an app: ``create_app``
     in agent mode opens ``events.jsonl`` inside that directory unconditionally
     (``session/events.py``'s ``EventLog``), which does not create its own
     parent directory.
     """
-    from annealage_mesh import sessions as sessions_module
+    from annealage_mesh.agent import sessions as sessions_module
 
     mesh_session_id = sessions_module.create_session(project)
     port = _free_port()
@@ -447,13 +452,33 @@ async def _run_real_server(project, *, token, broker):
             "127.0.0.1",
             port,
             on_ready=ready.set,
-            token=token,
+            token=BROWSER_TOKEN,
+            agent_token=agent_token,
             mesh_session_id=mesh_session_id,
             build_session=build_session,
         )
     )
     await asyncio.wait_for(ready.wait(), timeout=5.0)
     return port, task
+
+
+def _bridge_argv(port):
+    """The command line ``CodexSession`` registers the bridge with, minus the
+    interpreter's own path: host, port and the MCP server's name and version,
+    and no token, which travels in the environment instead."""
+    return [
+        sys.executable,
+        "-m",
+        "annealage_mesh.agent.session.codex_mcp_stdio_bridge",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "--server-name",
+        "annealage-mesh",
+        "--server-version",
+        "0",
+    ]
 
 
 async def _stop_real_server(task):
@@ -467,11 +492,11 @@ async def test_fake_app_server_lists_and_calls_a_read_tool_through_the_real_http
 
     token = "e2e-read-token"
     broker = PermissionBroker(lambda e: None, timeout=2.0)
-    port, task = await _run_real_server(project, token=token, broker=broker)
+    port, task = await _run_real_server(project, agent_token=token, broker=broker)
     try:
         url = authority_url("127.0.0.1", port, "/mcp").copy_merge_params({"t": token})
         async with httpx.AsyncClient() as client:
-            proxy_server = build_server(client, url)
+            proxy_server = build_server(client, url, name="annealage-mesh", version="0")
             async with create_connected_server_and_client_session(proxy_server) as session:
                 tools = await session.list_tools()
                 names = {t.name for t in tools.tools}
@@ -494,17 +519,17 @@ async def test_fake_app_server_write_call_reaches_the_broker_exactly_once_end_to
     from mcp.shared.memory import create_connected_server_and_client_session
 
     from annealage_mesh import paths
-    from annealage_mesh.session.base import PermissionRequest
+    from annealage_mesh.agent.session.base import PermissionRequest
 
     token = "e2e-write-token"
     events = []
     broker = PermissionBroker(events.append, timeout=5.0, no_viewer_grace=0.05)
     broker.viewer_connected()
-    port, task = await _run_real_server(project, token=token, broker=broker)
+    port, task = await _run_real_server(project, agent_token=token, broker=broker)
     try:
         url = authority_url("127.0.0.1", port, "/mcp").copy_merge_params({"t": token})
         async with httpx.AsyncClient(timeout=10.0) as client:
-            proxy_server = build_server(client, url)
+            proxy_server = build_server(client, url, name="annealage-mesh", version="0")
             async with create_connected_server_and_client_session(proxy_server) as session:
 
                 async def approve():
@@ -549,24 +574,15 @@ async def test_proxy_subprocess_exits_cleanly_when_its_stdin_closes(project):
     """
     token = "subproc-exit-token"
     broker = PermissionBroker(lambda e: None, timeout=2.0)
-    port, task = await _run_real_server(project, token=token, broker=broker)
+    port, task = await _run_real_server(project, agent_token=token, broker=broker)
     proc = None
     try:
         proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "annealage_mesh.session.codex_mcp_stdio_bridge",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--token",
-                token,
-            ],
+            _bridge_argv(port),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=dict(os.environ, ANNEALAGE_AGENT_TOKEN=token),
         )
         # A short wait so this does not race the subprocess's own startup
         # (stdio_server's async context manager spawning its reader/writer
@@ -587,3 +603,165 @@ async def test_proxy_subprocess_exits_cleanly_when_its_stdin_closes(project):
             proc.kill()
             proc.wait(timeout=5)
         await _stop_real_server(task)
+
+
+async def test_proxy_subprocess_authenticates_from_its_environment_not_its_argv(project):
+    """The real bridge process, launched the way Codex launches it (the
+    command line from ``CodexSession``, the token in the environment Codex
+    passes through ``env_vars``), reaches ``/mcp`` and lists the tools. Its
+    command line, which every user on the machine can read through ``ps``,
+    carries neither the agent token nor the browser token."""
+    from mcp import StdioServerParameters
+    from mcp.client.session import ClientSession
+    from mcp.client.stdio import stdio_client
+
+    token = "subproc-env-token"
+    broker = PermissionBroker(lambda e: None, timeout=2.0)
+    port, task = await _run_real_server(project, agent_token=token, broker=broker)
+    argv = _bridge_argv(port)
+    try:
+        params = StdioServerParameters(
+            command=argv[0],
+            args=argv[1:],
+            env=dict(os.environ, ANNEALAGE_AGENT_TOKEN=token),
+        )
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await asyncio.wait_for(session.initialize(), timeout=10.0)
+                tools = await asyncio.wait_for(session.list_tools(), timeout=10.0)
+        assert "list_models" in {t.name for t in tools.tools}
+        assert not any(token in arg or BROWSER_TOKEN in arg for arg in argv)
+    finally:
+        await _stop_real_server(task)
+
+
+async def test_proxy_subprocess_refuses_to_start_without_a_token_in_its_environment():
+    """No token, no MCP: the bridge exits before speaking the protocol, so
+    Codex reports the server as failed to start rather than as a server with
+    no tools. Its argv has nowhere to take a token from any more."""
+    env = {key: value for key, value in os.environ.items() if key != "ANNEALAGE_AGENT_TOKEN"}
+    proc = await asyncio.to_thread(
+        subprocess.run, _bridge_argv(9), input=b"", capture_output=True, env=env, timeout=30
+    )
+    assert proc.returncode == 2
+    assert b"ANNEALAGE_AGENT_TOKEN" in proc.stderr
+    assert proc.stdout == b""
+
+
+# ---------------------------------------------------------------------------
+# the two tokens are not interchangeable (D5)
+# ---------------------------------------------------------------------------
+
+
+def _agent_app(project, *, token=BROWSER_TOKEN, agent_token=TOKEN):
+    """An agent-mode app with both tokens set, a real ``MeshTools`` and a
+    ``FakeSession``, so ``/mcp`` is mounted exactly as a real run mounts it."""
+    from annealage_mesh.agent import sessions as sessions_module
+
+    return app_module.create_app(
+        project,
+        token=token,
+        agent_token=agent_token,
+        mesh_session_id=sessions_module.create_session(project),
+        build_session=lambda on_event, *, bus: FakeSession(on_event),
+    )
+
+
+async def test_mcp_refuses_the_browser_token_and_accepts_the_agent_token(project):
+    client = _client(_agent_app(project))
+    refused = await _post(client, {"method": "tools/list"}, token=BROWSER_TOKEN)
+    assert refused.status_code == 403
+    accepted = await _post(client, {"method": "tools/list"}, token=TOKEN)
+    assert accepted.status_code == 200
+    assert "list_models" in {t["name"] for t in accepted.json["result"]["tools"]}
+
+
+async def test_browser_routes_refuse_the_agent_token(project):
+    """Every route that takes the browser token refuses the agent token: the
+    socket that carries permission decisions, the settings window, uploads,
+    transcript export and the comment submission. Each is also shown to accept
+    the browser token, so a refusal here is the token check and not the route
+    being unreachable."""
+    client = _client(_agent_app(project))
+    ws_headers = {
+        "Upgrade": "websocket",
+        "Connection": "Upgrade",
+        "Sec-WebSocket-Version": "13",
+        "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
+    }
+    for token, expected in ((TOKEN, 403), (BROWSER_TOKEN, None)):
+        res = await client.get("/ws?t=%s" % token, headers=ws_headers)
+        assert res.status_code == expected, token
+    for token, expected in ((TOKEN, 403), (BROWSER_TOKEN, 200)):
+        res = await client.get("/settings?t=%s" % token)
+        assert res.status_code == expected, token
+    for path in ("/upload", "/submit", "/session/nope/export"):
+        res = await client.post(
+            "%s?t=%s" % (path, TOKEN),
+            headers={"Content-Type": "application/json"},
+            body=b"{}",
+        )
+        assert res.status_code == 403, path
+        res = await client.post(
+            "%s?t=%s" % (path, BROWSER_TOKEN),
+            headers={"Content-Type": "application/json"},
+            body=b"{}",
+        )
+        assert res.status_code != 403, path
+
+
+async def test_an_app_whose_two_tokens_are_equal_is_refused(project):
+    with pytest.raises(ValueError, match="must differ"):
+        _agent_app(project, token="same", agent_token="same")
+
+
+async def test_what_the_model_reads_with_no_viewer_attached_never_carries_the_browser_token(
+    project,
+):
+    """With no viewer attached, a viewer tool fails and a write-class call is
+    refused by the broker, and both tell the model where the viewer is. That
+    text reaches the model and the session's event log in the served
+    directory, so it names the address alone: with the browser token in it the
+    agent could approve its own permission cards. The session is built by
+    ``agent/launch.py``, as a real run builds it, so the broker's address is the
+    one a real run gives it."""
+    from annealage_mesh.agent import launch, sessions
+    from annealage_mesh.agent import settings as settings_module
+
+    session_id = sessions.create_session(project)
+
+    def build_session(on_event, *, bus):
+        return launch.build_session(
+            "claude",
+            on_event,
+            bus=bus,
+            serve_dir=project,
+            session_id=session_id,
+            resumed=False,
+            settings=settings_module.resolve(project),
+            mcp_host="127.0.0.1",
+            mcp_port=8765,
+            agent_token=TOKEN,
+        )
+
+    client = _client(
+        app_module.create_app(
+            project,
+            token=BROWSER_TOKEN,
+            agent_token=TOKEN,
+            mesh_session_id=session_id,
+            build_session=build_session,
+        )
+    )
+    for name, arguments in (
+        ("get_view", {}),
+        ("add_callout", {"point": [1, 2, 3], "comment": "x"}),
+    ):
+        res = await _post(
+            client, {"method": "tools/call", "params": {"name": name, "arguments": arguments}}
+        )
+        result = res.json["result"]
+        assert result["isError"] is True, name
+        text = result["content"][0]["text"]
+        assert "http://127.0.0.1:8765/" in text, name
+        assert BROWSER_TOKEN not in text, name

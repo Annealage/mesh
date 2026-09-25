@@ -6,8 +6,9 @@ asked, and nobody at the terminal means an error rather than a guess.
 
 import pytest
 
-from annealage_mesh import backends, cli, settings
-from annealage_mesh.backends import detect as real_detect
+from annealage_mesh import cli
+from annealage_mesh.agent import backends, settings
+from annealage_mesh.agent.backends import detect as real_detect
 
 
 def _answers(*replies):
@@ -74,7 +75,7 @@ def test_a_config_file_still_saying_local_is_refused(tmp_path):
 @pytest.fixture
 def served(monkeypatch, tmp_path):
     """Agent mode up to ``app.run``, which records the settings it was given."""
-    from annealage_mesh.session import sdk
+    from annealage_mesh.agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
     runs = []

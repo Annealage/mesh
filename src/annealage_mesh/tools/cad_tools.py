@@ -18,13 +18,14 @@ import json
 from claude_agent_sdk import tool
 
 from .. import paths, stl
-from . import fail, ok
+from ..agent import files
+from ..agent.tools import fail, ok
 
 # ── Dimensions helpers (pure stdlib) ─────────────────────────────
 
 
 def _dims_path(serve_dir):
-    return paths.resolve_serve_dir(serve_dir) / "dimensions.json"
+    return files.resolve_serve_dir(serve_dir) / "dimensions.json"
 
 
 def _read_dims(serve_dir):
@@ -39,7 +40,7 @@ def _read_dims(serve_dir):
 
 def _write_dims(serve_dir, dims):
     p = _dims_path(serve_dir)
-    paths.atomic_replace(p, (json.dumps(dims, indent=2) + "\n").encode("utf-8"))
+    files.atomic_replace(p, (json.dumps(dims, indent=2) + "\n").encode("utf-8"))
     return str(p)
 
 

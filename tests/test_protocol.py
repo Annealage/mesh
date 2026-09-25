@@ -15,7 +15,7 @@ import struct
 import pytest
 from microdot.websocket import WebSocket
 
-from annealage_mesh.protocol import (
+from annealage_mesh.agent.protocol import (
     CLOSE_OVERFLOW,
     CLOSE_VERSION_MISMATCH,
     PROTOCOL_VERSION,

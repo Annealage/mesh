@@ -82,7 +82,11 @@ const CONN_TITLE = {
 };
 
 /**
- * Reads and consumes the per-run token from location.hash ("#t=<token>").
+ * Reads and consumes the per-run token from location.hash: "#t=<token>"
+ * directly, or "#n=<nonce>", a single-use login nonce traded once through
+ * POST /login for the token. The nonce form is what the server puts in the
+ * URL it launches a browser with, because that URL sits on a command line
+ * any local process can read; the printed "#t=" link is the reusable one.
  * A fragment is never sent to a server, which is why the token travels
  * here rather than in the path or a query parameter for the initial page
  * load; it is promoted to a query parameter only for the one request that
@@ -91,24 +95,41 @@ const CONN_TITLE = {
  * subprotocol field.
  *
  * The fragment is stripped from the visible URL unconditionally, whether
- * or not a token was found in it: a token left visible in the address bar
- * survives a reload, a bookmark and a screen share, all of which are wider
- * exposure than the "never sent to a server" property the fragment was
- * chosen for in the first place.
+ * or not a token was found in it, and before the nonce is traded: a token
+ * left visible in the address bar survives a reload, a bookmark and a
+ * screen share, all of which are wider exposure than the "never sent to a
+ * server" property the fragment was chosen for in the first place. A nonce
+ * the server refuses (spent or expired) leaves no token, which ends in the
+ * same "refused" state as a stale link.
  */
-function extractToken() {
+async function extractToken() {
   const hash = location.hash;
-  let token = "";
-  if (hash.startsWith("#")) {
-    token = new URLSearchParams(hash.slice(1)).get("t") || "";
-  }
+  const params = hash.startsWith("#") ? new URLSearchParams(hash.slice(1)) : null;
   if (hash) {
     history.replaceState(null, "", location.pathname + location.search);
   }
-  return token;
+  if (!params) return "";
+  const token = params.get("t");
+  if (token) return token;
+  const nonce = params.get("n");
+  if (!nonce) return "";
+  try {
+    const res = await fetch("/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nonce }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json();
+    return typeof data.token === "string" ? data.token : "";
+  } catch (err) {
+    return "";
+  }
 }
 
-const TOKEN = extractToken();
+// Top-level await: every module that imports this one (and so authToken)
+// evaluates only once the token is known, whichever form it arrived in.
+const TOKEN = await extractToken();
 
 /**
  * The per-run token, for the one other module allowed to authenticate with

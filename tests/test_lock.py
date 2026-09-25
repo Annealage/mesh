@@ -18,7 +18,8 @@ import threading
 
 import pytest
 
-from annealage_mesh import cli, lock, net
+from annealage_mesh import cli
+from annealage_mesh.agent import lock, net
 
 
 # ``cli.main`` is only exercised for the lock's externally observable
@@ -34,6 +35,8 @@ def _make_stub_run(calls):
         port,
         on_ready=None,
         token=None,
+        agent_token=None,
+        login=None,
         extra_origins=(),
         build_session=None,
         mesh_session_id=None,
@@ -71,22 +74,25 @@ def sandbox_requirement_satisfied(monkeypatch):
     one test that drives a real agent-mode start would be refused before it ever
     reached the lock, on any machine lacking them, a stock CI runner included.
     """
-    from annealage_mesh.session import sdk
+    from annealage_mesh.agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
 
-def test_exclusive_creation_writes_pid_port_token(tmp_path):
+def test_exclusive_creation_writes_pid_and_port_and_no_token(tmp_path):
     """A fresh ``acquire`` creates the file exactly once, with the caller's
-    pid, port and token, mode 0600, and ``release`` removes it again."""
+    pid and port and nothing else, mode 0600, and ``release`` removes it
+    again. No token: the file sits in the served directory, which the agent's
+    own shell can read, and a browser token there would let it approve its
+    own permission cards."""
     mesh_dir = tmp_path / ".mesh"
-    held = lock.acquire(mesh_dir, 4242, "tok-abc")
+    held = lock.acquire(mesh_dir, 4242)
 
     path = lock.lock_path(mesh_dir)
     assert path.exists()
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     record = json.loads(path.read_bytes())
-    assert record == {"pid": os.getpid(), "port": 4242, "token": "tok-abc"}
+    assert record == {"pid": os.getpid(), "port": 4242}
 
     held.release()
     assert not path.exists()
@@ -97,7 +103,9 @@ def test_exclusive_creation_writes_pid_port_token(tmp_path):
 
 def test_live_pid_refused_raises_lock_held_with_holder_details(tmp_path):
     """A lock file naming a pid this process can see raises ``LockHeld``
-    carrying the holder's own pid/port/token, never silently reclaimed."""
+    carrying the holder's own pid and port, never silently reclaimed. The
+    record here is one an older version wrote, still carrying a token: it is
+    read without it rather than reported corrupt, and the token goes nowhere."""
     mesh_dir = tmp_path / ".mesh"
     mesh_dir.mkdir()
     # This test process's own pid is guaranteed live for the test's duration,
@@ -107,12 +115,12 @@ def test_live_pid_refused_raises_lock_held_with_holder_details(tmp_path):
     )
 
     with pytest.raises(lock.LockHeld) as exc:
-        lock.acquire(mesh_dir, 4242, "new-tok")
+        lock.acquire(mesh_dir, 4242)
     assert exc.value.pid == os.getpid()
     assert exc.value.port == 9001
-    assert exc.value.token == "held-tok"
+    assert "held-tok" not in str(exc.value)
     # Refused, not reclaimed: the file on disk is still the live holder's.
-    assert json.loads(lock.lock_path(mesh_dir).read_bytes())["token"] == "held-tok"
+    assert json.loads(lock.lock_path(mesh_dir).read_bytes())["port"] == 9001
 
 
 def test_stale_pid_is_reclaimed(tmp_path, monkeypatch, capsys):
@@ -141,17 +149,17 @@ def test_stale_pid_is_reclaimed(tmp_path, monkeypatch, capsys):
     path = lock.lock_path(mesh_dir)
     path.write_bytes(json.dumps({"pid": dead_pid, "port": 1, "token": "stale"}).encode())
 
-    held = lock.acquire(mesh_dir, 4242, "fresh-tok")
+    held = lock.acquire(mesh_dir, 4242)
     try:
         record = json.loads(path.read_bytes())
-        assert record == {"pid": os.getpid(), "port": 4242, "token": "fresh-tok"}
+        assert record == {"pid": os.getpid(), "port": 4242}
         assert "reclaiming stale lock" in capsys.readouterr().err
     finally:
         held.release()
 
 
 def test_garbage_lock_file_raises_lock_corrupt_and_is_left_in_place(tmp_path):
-    """A lock file that exists but does not parse as a pid/port/token record
+    """A lock file that exists but does not parse as a pid/port record
     is reported, never guessed at: reclaiming an unreadable file on the
     assumption it must be stale is the exact silent-corruption failure the
     lock exists to prevent."""
@@ -161,7 +169,7 @@ def test_garbage_lock_file_raises_lock_corrupt_and_is_left_in_place(tmp_path):
     path.write_bytes(b"not json at all")
 
     with pytest.raises(lock.LockCorrupt):
-        lock.acquire(mesh_dir, 4242, "tok")
+        lock.acquire(mesh_dir, 4242)
     # Left exactly as it was: no reclaim on a guess.
     assert path.read_bytes() == b"not json at all"
 
@@ -175,7 +183,7 @@ def test_garbage_lock_file_missing_keys_also_raises_lock_corrupt(tmp_path):
     lock.lock_path(mesh_dir).write_bytes(json.dumps({"pid": 1}).encode())
 
     with pytest.raises(lock.LockCorrupt):
-        lock.acquire(mesh_dir, 4242, "tok")
+        lock.acquire(mesh_dir, 4242)
 
 
 def test_unwritable_mesh_dir_raises_instead_of_silently_succeeding(tmp_path):
@@ -187,7 +195,7 @@ def test_unwritable_mesh_dir_raises_instead_of_silently_succeeding(tmp_path):
     mesh_dir.chmod(0o500)
     try:
         with pytest.raises(OSError):
-            lock.acquire(mesh_dir, 4242, "tok")
+            lock.acquire(mesh_dir, 4242)
         assert not lock.lock_path(mesh_dir).exists()
     finally:
         # Restored so pytest's own tmp_path cleanup (which needs to remove
@@ -224,20 +232,20 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
         barrier = threading.Barrier(2)
         results = [None, None]
 
-        def attempt(i, port, token, barrier=barrier, results=results):
+        def attempt(i, port, barrier=barrier, results=results):
             # barrier and results are bound as defaults rather than captured:
             # both are rebound on the next iteration of the enclosing loop, and
             # a closure that read them late would sample the following round's.
             barrier.wait()
             try:
-                results[i] = ("ok", lock.acquire(mesh_dir, port, token))
+                results[i] = ("ok", lock.acquire(mesh_dir, port))
             except lock.LockHeld as exc:
                 results[i] = ("held", exc)
             except lock.LockCorrupt as exc:
                 results[i] = ("corrupt", exc)
 
-        t1 = threading.Thread(target=attempt, args=(0, 1111, "tok-1"))
-        t2 = threading.Thread(target=attempt, args=(1, 2222, "tok-2"))
+        t1 = threading.Thread(target=attempt, args=(0, 1111))
+        t2 = threading.Thread(target=attempt, args=(1, 2222))
         t1.start()
         t2.start()
         t1.join(timeout=5)
@@ -263,7 +271,6 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
         assert sorted(p.name for p in mesh_dir.iterdir()) == ["lock"]
         winner.release()
     assert loser_exc.port == winner_record["port"]
-    assert loser_exc.token == winner_record["token"]
     winner.release()
 
 
@@ -272,28 +279,49 @@ def test_two_threads_racing_one_create_exactly_one_wins(tmp_path):
 # --------------------------------------------------------------------------
 
 
-def test_second_instance_is_refused_with_exit_3_and_running_url(tmp_path, capsys):
+def test_second_instance_is_refused_with_exit_3_and_running_address(tmp_path, capsys):
     """A live lock in this project makes ``cli.main`` exit 3 and print the
-    URL of the instance that is already running, without starting a second
-    server. Pre-seeding the lock with this test process's own pid stands in
-    for a genuinely separate running instance: the pid is real and live for
+    address of the instance that is already running, without starting a
+    second server. The address carries no token, since the lock holds none,
+    and the message says where the link that does is: the running instance's
+    own banner. Pre-seeding the lock with this test process's own pid stands
+    in for a genuinely separate running instance: the pid is real and live for
     exactly the same reason ``os.kill(pid, 0)`` would report it live if it
     belonged to a second process."""
     mesh_dir = tmp_path / ".mesh"
     mesh_dir.mkdir()
-    lock.lock_path(mesh_dir).write_bytes(
-        json.dumps({"pid": os.getpid(), "port": 9001, "token": "running-tok"}).encode()
-    )
+    lock.lock_path(mesh_dir).write_bytes(json.dumps({"pid": os.getpid(), "port": 9001}).encode())
 
     rc = cli.main(_lock_argv(tmp_path))
 
     assert rc == 3
     err = capsys.readouterr().err
     assert "already running" in err
-    expected_url = net.viewer_url(net.resolve_bind(None), 9001, "running-tok")
-    assert expected_url in err
+    assert "it is serving: %s\n" % net.server_url(net.resolve_bind(None), 9001) in err
+    assert "#t=" not in err
+    assert "startup banner" in err
     # The refused start must not have clobbered the running instance's record.
-    assert json.loads(lock.lock_path(mesh_dir).read_bytes())["token"] == "running-tok"
+    assert json.loads(lock.lock_path(mesh_dir).read_bytes()) == {"pid": os.getpid(), "port": 9001}
+
+
+def test_an_agent_mode_run_writes_neither_token_to_its_lock(tmp_path, monkeypatch):
+    """What the running instance leaves in the served directory, read while it
+    runs: pid and port only. The browser token (given here by flag so the test
+    knows it) and the agent token are both absent, because the agent's shell
+    can read this file."""
+    seen = {}
+
+    async def _stub_run(serve_dir, host, port, on_ready=None, **kwargs):
+        seen["record"] = lock.lock_path(tmp_path / ".mesh").read_text(encoding="utf-8")
+        seen["agent_token"] = kwargs["agent_token"]
+
+    monkeypatch.setattr(cli.app_module, "run", _stub_run)
+    rc = cli.main(_lock_argv(tmp_path) + ["--no-git", "--token", "browser-secret"])
+
+    assert rc == 0
+    assert json.loads(seen["record"]) == {"pid": os.getpid(), "port": 0}
+    assert "browser-secret" not in seen["record"]
+    assert seen["agent_token"] not in seen["record"]
 
 
 def test_viewer_only_mode_never_locks_and_a_second_one_also_starts(tmp_path, monkeypatch):
@@ -336,15 +364,11 @@ def test_the_record_is_complete_before_the_lock_name_exists(tmp_path, monkeypatc
 
     monkeypatch.setattr(lock.os, "link", spy)
 
-    held = lock.acquire(mesh_dir, 4242, "tok-atomic")
+    held = lock.acquire(mesh_dir, 4242)
     try:
         assert observed, "the lock name was published without os.link"
         assert observed["name_existed_first"] is False
-        assert json.loads(observed["published_bytes"]) == {
-            "pid": os.getpid(),
-            "port": 4242,
-            "token": "tok-atomic",
-        }
+        assert json.loads(observed["published_bytes"]) == {"pid": os.getpid(), "port": 4242}
     finally:
         held.release()
 
@@ -358,6 +382,6 @@ def test_claiming_never_interprets_an_existing_record(tmp_path):
     path = lock.lock_path(mesh_dir)
     path.write_bytes(b"")  # the exact state the old create-then-write left behind
 
-    assert lock._claim(path, b'{"pid": 1, "port": 2, "token": "t"}') is None
+    assert lock._claim(path, b'{"pid": 1, "port": 2}') is None
     assert path.read_bytes() == b"", "a lost claim must not touch the holder's file"
     assert sorted(p.name for p in mesh_dir.iterdir()) == ["lock"]

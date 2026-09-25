@@ -36,9 +36,10 @@ pytest.importorskip("playwright.sync_api")
 from playwright.sync_api import sync_playwright
 
 from annealage_mesh import app as mesh_app
-from annealage_mesh import sessions as mesh_sessions
-from annealage_mesh.session import base as session_base
-from annealage_mesh.session.fake import FakeSession
+from annealage_mesh.agent import sessions as mesh_sessions
+from annealage_mesh.agent.http.routes_login import LoginNonces
+from annealage_mesh.agent.session import base as session_base
+from annealage_mesh.agent.session.fake import FakeSession
 
 
 def _find_chrome():
@@ -108,6 +109,9 @@ class _ServerThread:
         self.token = token
         self.mesh_session_id = mesh_session_id
         self.build_session = build_session
+        # The run's login nonces, so a test can issue one the way the CLI
+        # does for the browser it opens.
+        self.login = LoginNonces()
         self._loop = None
         self._task = None
         self._thread = None
@@ -127,7 +131,7 @@ class _ServerThread:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             self._loop = loop
-            run_kwargs = {"on_ready": self._ready.set}
+            run_kwargs = {"on_ready": self._ready.set, "login": self.login}
             if self.token is not None:
                 run_kwargs["token"] = self.token
             if self.build_session is not None:
@@ -919,6 +923,41 @@ def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh
 
 
 # 12. A dropped socket resumes the poll, and a reconnect stops it again ----
+
+
+def test_a_login_nonce_logs_the_page_in_once_and_the_fragment_is_scrubbed(
+    browser, token_mesh_server
+):
+    """The auto-opened browser's URL carries ``#n=<nonce>`` rather than the
+    token (its command line is readable through ``ps``). The page trades the
+    nonce for the token once and goes live, and the address bar keeps no
+    fragment, for ``#n=`` as for ``#t=``. The same nonce opened again, as a
+    process that read it off the command line would, ends refused."""
+    server = token_mesh_server
+    nonce = server.login.issue()
+    page = browser.new_page()
+    try:
+        page.goto(server.base_url + "/#n=" + nonce)
+        _wait_connection_state(page, "live")
+        assert "#" not in page.url
+    finally:
+        page.close()
+
+    page = browser.new_page()
+    try:
+        page.goto(server.base_url + "/#n=" + nonce)
+        _wait_connection_state(page, "refused")
+        assert "#" not in page.url
+    finally:
+        page.close()
+
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        assert "#" not in page.url
+    finally:
+        page.close()
 
 
 def test_socket_drop_resumes_poll_and_reconnect_stops_it_again(browser, token_mesh_server):
@@ -1863,7 +1902,7 @@ def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
 
 # 22. Chat pane: image attachments --------------------------------------------
 
-# A real, decodable 1x1 PNG, not just bytes matching paths.sniff_image's
+# A real, decodable 1x1 PNG, not just bytes matching files.sniff_image's
 # magic-number check: the sent-turn thumbnail test loads this through a real
 # `<img>` and reads it back over `/asset/<name>`, so a file that decoded to
 # nothing would leave that assertion unable to tell a broken image apart
@@ -2424,7 +2463,7 @@ def settings_server(tmp_path_factory, monkeypatch):
     inside the request rather than at import, so a file written here is what the
     route reads even though the server runs on its own thread.
     """
-    from annealage_mesh import sessions as mesh_sessions
+    from annealage_mesh.agent import sessions as mesh_sessions
 
     d = tmp_path_factory.mktemp("mesh_e2e_settings")
     (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
@@ -2514,7 +2553,7 @@ def test_saving_a_restart_required_setting_reports_it_as_saved_not_applied(
 def test_a_saved_viewer_preference_is_applied_when_the_page_loads(settings_server, browser):
     """up_axis takes effect at load rather than on restart, so a saved value
     must reach the running scene without anyone touching the topbar."""
-    from annealage_mesh import settings as mesh_settings
+    from annealage_mesh.agent import settings as mesh_settings
 
     server, _served = settings_server
     path = mesh_settings.user_settings_path()

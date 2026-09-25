@@ -91,7 +91,7 @@ from microdot.microdot import Request
 from microdot.test_client import TestClient
 from microdot.websocket import WebSocket
 
-from annealage_mesh import protocol
+from annealage_mesh.agent import protocol
 
 pytestmark = pytest.mark.asyncio
 

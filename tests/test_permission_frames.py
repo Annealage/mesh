@@ -17,9 +17,9 @@ import json
 
 import pytest
 
-from annealage_mesh.http import ws as ws_module
-from annealage_mesh.session.base import UnknownRequest
-from annealage_mesh.session.fake import FakeSession
+from annealage_mesh.agent.http import ws as ws_module
+from annealage_mesh.agent.session.base import UnknownRequest
+from annealage_mesh.agent.session.fake import FakeSession
 
 pytestmark = pytest.mark.asyncio
 
@@ -119,7 +119,7 @@ async def test_viewer_only_mode_answers_a_permission_frame_rather_than_dropping_
 async def test_unknown_request_is_importable_without_the_agent_sdk():
     """``ws.py`` has to catch this exception and must keep working with no SDK
     installed, so the exception cannot live in the broker's module."""
-    import annealage_mesh.session.base as base
+    import annealage_mesh.agent.session.base as base
 
     assert base.UnknownRequest is UnknownRequest
     source = base.__file__ or ""

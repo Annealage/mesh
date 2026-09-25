@@ -25,6 +25,8 @@ import socket
 import subprocess
 from typing import Sequence
 
+from . import product
+
 # Tailscale hands out addresses from the RFC 6598 carrier-grade NAT range.
 # An address found while looking for a tailnet interface that falls outside
 # this range is a false positive (a container bridge, another VPN) and is
@@ -375,6 +377,20 @@ def _origin_host(address):
     return "[%s]" % address if ":" in address else address
 
 
+def server_url(bind, port):
+    """The bind's address as a URL, with no token: what can be said about a
+    running instance by someone who does not hold its token (a refused second
+    start, say)."""
+    return "http://%s:%d/" % (_origin_host(bind.address), port)
+
+
+def login_url(bind, port, nonce):
+    """The URL a browser is launched with: the bind's address plus a
+    single-use login nonce as a fragment, which the page trades for the token
+    (``http/routes_login.py`` says why the token itself is not used)."""
+    return "%s#n=%s" % (server_url(bind, port), nonce)
+
+
 def viewer_url(bind, port, token):
     """The URL to open: the bind's address plus the token as a fragment.
 
@@ -382,7 +398,7 @@ def viewer_url(bind, port, token):
     logs, out of ``Referer`` headers and out of any proxy's log, while still
     travelling in a link the human can open or bookmark.
     """
-    return "http://%s:%d/#t=%s" % (_origin_host(bind.address), port, token)
+    return "%s#t=%s" % (server_url(bind, port), token)
 
 
 def format_banner(bind, port, token):
@@ -396,7 +412,8 @@ def format_banner(bind, port, token):
     """
     lines = []
     lines.append(
-        "Annealage Mesh is serving %s on %s:%d" % (_describe_mode(bind), bind.address, port)
+        "%s is serving %s on %s:%d"
+        % (product.current().display_name, _describe_mode(bind), bind.address, port)
     )
     lines.append("  open: %s" % viewer_url(bind, port, token))
 

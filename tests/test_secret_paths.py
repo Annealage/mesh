@@ -29,7 +29,7 @@ from pathlib import Path
 
 import pytest
 
-from annealage_mesh.session import secret_paths
+from annealage_mesh.agent.session import secret_paths
 
 
 @pytest.fixture

@@ -25,6 +25,8 @@ import sys
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
+from .. import product
+
 # Every path, relative to the served directory, whose content the CLI may
 # execute or obey. Files and directories both: `.claude/hooks` holds scripts a
 # trusted settings file may invoke by name, so a change to one of those scripts
@@ -401,7 +403,7 @@ def config_home() -> Path:
 
 
 def trust_store_path() -> Path:
-    return config_home() / "annealage-mesh" / _TRUST_FILE
+    return config_home() / product.current().config_dirname / _TRUST_FILE
 
 
 class TrustStore:
@@ -447,7 +449,8 @@ class TrustStore:
         records = self._records()
         records[str(Path(root).resolve())] = digest
         lines = [
-            "# Directories whose Claude configuration you have accepted (annealage-mesh).",
+            "# Directories whose Claude configuration you have accepted (%s)."
+            % product.current().distribution,
             "# One record per line: <digest> <absolute path>. Deleting a line asks again.",
         ]
         lines.extend("%s %s" % (records[target], target) for target in sorted(records))
@@ -502,8 +505,15 @@ def refusal_message(root, entries: Iterable[Path]) -> str:
         "%s\n"
         "%s"
         "  Review them, then:\n"
-        "    accept them for this directory : annealage-mesh --trust-project-config\n"
-        "    or run the viewer with no agent : annealage-mesh view\n"
+        "    accept them for this directory : %s --trust-project-config\n"
+        "    or run the viewer with no agent : %s\n"
         "  Acceptance is recorded per directory against the exact content reviewed, so\n"
-        "  any later change to these files asks again.\n" % (root, listed, why)
+        "  any later change to these files asks again.\n"
+        % (
+            root,
+            listed,
+            why,
+            product.current().distribution,
+            product.current().viewer_only_command,
+        )
     )

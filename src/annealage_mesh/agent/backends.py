@@ -12,6 +12,7 @@ uses that backend, and the client is what agent mode needs to reach it.
 import importlib.util
 import shutil
 
+from . import product
 from .settings import BACKENDS
 
 # Per backend: the CLI on PATH, and the Python package mesh talks to it with.
@@ -58,7 +59,7 @@ def choose(available, *, interactive, ask=None, write=None):
             "no agent backend found. Agent mode needs one of these on PATH, "
             "signed in: claude (Claude Code), codex (OpenAI Codex CLI, plus "
             "the openai-codex package), or omp (Oh My Pi, plus the omp-rpc "
-            "package). Or run the viewer alone: annealage-mesh view"
+            "package). Or run the viewer alone: %s" % product.current().viewer_only_command
         )
     if len(available) == 1:
         return available[0], False

@@ -31,7 +31,8 @@ import sys
 import pytest
 from conftest import TEST_HOST, make_test_client
 
-from annealage_mesh import cli, diagnostics, lock, settings
+from annealage_mesh import cli
+from annealage_mesh.agent import diagnostics, lock, settings
 from annealage_mesh.app import DEFAULT_PORT, create_app
 
 
@@ -700,7 +701,7 @@ def test_sandbox_info_reports_dependencies_and_missing_from_session_sdk(monkeypa
     """The dependency list and the missing subset both come from
     ``session.sdk``'s own view of the sandbox's requirements, not a second
     count kept here, so the two can never disagree with it."""
-    from annealage_mesh.session import sdk
+    from annealage_mesh.agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ("socat",))
 
@@ -721,13 +722,15 @@ def test_diagnostics_module_import_never_touches_claude_agent_sdk(monkeypatch):
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name.split(".")[0] == "claude_agent_sdk":
-            raise AssertionError("importing annealage_mesh.diagnostics pulled in claude_agent_sdk")
+            raise AssertionError(
+                "importing annealage_mesh.agent.diagnostics pulled in claude_agent_sdk"
+            )
         return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr(builtins, "__import__", guarded_import)
-    monkeypatch.delitem(sys.modules, "annealage_mesh.diagnostics", raising=False)
+    monkeypatch.delitem(sys.modules, "annealage_mesh.agent.diagnostics", raising=False)
 
-    import annealage_mesh.diagnostics as fresh
+    import annealage_mesh.agent.diagnostics as fresh
 
     assert hasattr(fresh, "collect")
 

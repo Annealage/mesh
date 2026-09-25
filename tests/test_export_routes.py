@@ -18,10 +18,10 @@ import json
 import pytest
 from conftest import TEST_HOST, make_test_client
 
-from annealage_mesh import paths, sessions
+from annealage_mesh.agent import files, sessions
+from annealage_mesh.agent.session import events
+from annealage_mesh.agent.session.base import TextDelta, ToolResult, ToolUse, TurnEnd
 from annealage_mesh.app import DEFAULT_PORT, create_app
-from annealage_mesh.session import events
-from annealage_mesh.session.base import TextDelta, ToolResult, ToolUse, TurnEnd
 from annealage_mesh.tools import registry
 
 pytestmark = pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_export_refused_without_the_token(project):
     )
     res = await _export(client, sid, token="not-the-token")
     assert res.status_code == 403
-    assert not (served_dir / paths.REVIEW_DIRNAME).exists()
+    assert not (served_dir / files.REVIEW_DIRNAME).exists()
 
 
 async def test_export_refused_from_a_disallowed_origin(client, project):
@@ -100,7 +100,7 @@ async def test_export_refused_from_a_disallowed_origin(client, project):
         "/session/%s/export?t=%s" % (sid, TOKEN), headers={"Origin": "http://evil.example"}
     )
     assert res.status_code == 403
-    assert not (served_dir / paths.REVIEW_DIRNAME).exists()
+    assert not (served_dir / files.REVIEW_DIRNAME).exists()
 
 
 async def test_export_with_no_body_writes_a_markdown_transcript(client, project):
@@ -113,7 +113,7 @@ async def test_export_with_no_body_writes_a_markdown_transcript(client, project)
     assert payload["ok"] is True
     assert payload["format"] == "markdown"
     assert payload["include"] == "text"
-    assert payload["path"].startswith("%s/transcript-" % paths.REVIEW_DIRNAME)
+    assert payload["path"].startswith("%s/transcript-" % files.REVIEW_DIRNAME)
     assert payload["path"].endswith(".md")
 
     written = served_dir / payload["path"]
@@ -168,7 +168,7 @@ async def test_export_of_an_unknown_session_is_a_404(client, project):
     res = await _export(client, "20260101-000000-abcdef")
     assert res.status_code == 404
     assert "no session" in body_of(res)["error"]
-    assert not (served_dir / paths.REVIEW_DIRNAME).exists()
+    assert not (served_dir / files.REVIEW_DIRNAME).exists()
 
 
 @pytest.mark.parametrize(
@@ -186,7 +186,7 @@ async def test_export_refuses_bad_options_and_names_the_allowed_values(
     res = await _export(client, sid, body=body)
     assert res.status_code == 400
     assert fragment in body_of(res)["error"]
-    assert not (served_dir / paths.REVIEW_DIRNAME).exists()
+    assert not (served_dir / files.REVIEW_DIRNAME).exists()
 
 
 async def test_two_exports_in_the_same_second_do_not_collide(client, project):
@@ -206,7 +206,7 @@ async def test_export_refuses_a_symlinked_review_directory(client, project, tmp_
     served_dir, sid = project
     outside = tmp_path / "elsewhere"
     outside.mkdir()
-    (served_dir / paths.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (served_dir / files.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
     res = await _export(client, sid)
     assert res.status_code == 500
     assert "could not write the transcript" in body_of(res)["error"]
@@ -235,7 +235,7 @@ async def test_tool_writes_a_transcript_and_reports_a_project_relative_path(proj
     result = await _tool(served_dir, sid)({})
     assert not result.get("is_error")
     payload = json.loads(text_of(result))
-    assert payload["path"].startswith("%s/transcript-" % paths.REVIEW_DIRNAME)
+    assert payload["path"].startswith("%s/transcript-" % files.REVIEW_DIRNAME)
     assert (served_dir / payload["path"]).is_file()
     assert payload["format"] == "markdown"
 
@@ -247,7 +247,7 @@ async def test_tool_refuses_when_there_is_no_session_to_export(served_dir):
     result = await _tool(served_dir, None)({})
     assert result["is_error"] is True
     assert "no session to export" in text_of(result)
-    assert not (served_dir / paths.REVIEW_DIRNAME).exists()
+    assert not (served_dir / files.REVIEW_DIRNAME).exists()
 
 
 @pytest.mark.parametrize(
@@ -270,7 +270,7 @@ async def test_tool_reports_a_containment_refusal_without_retry_advice(project, 
     served_dir, sid = project
     outside = tmp_path / "elsewhere"
     outside.mkdir()
-    (served_dir / paths.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (served_dir / files.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
     result = await _tool(served_dir, sid)({})
     assert result["is_error"] is True
     assert "rather than retrying" in text_of(result)

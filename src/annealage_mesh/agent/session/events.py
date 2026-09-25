@@ -26,9 +26,9 @@ turn one session's ``events.jsonl`` back into a document a person can read
 or archive. They live here rather than in a separate module because a
 transcript is a projection of exactly the file ``EventLog`` writes, and
 reading it back is the direct counterpart to appending to it.
-``export_transcript`` writes through ``paths.create_review_file``, which
+``export_transcript`` writes through ``files.create_review_file``, which
 gives a generated destination in a served project directory the same
-containment ``paths.create_image_file`` gives a model-supplied one: the
+containment ``files.create_image_file`` gives a model-supplied one: the
 directory is created by this process on first use, but the served project
 directory around it is not otherwise trusted, so a ``review/`` replaced by
 a symlink is refused rather than followed.
@@ -53,7 +53,7 @@ import time
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
 
-from .. import paths, sessions
+from .. import files, product, sessions
 
 # Bounded history kept in memory for a reconnect to replay without a disk
 # read. 500 events comfortably outlasts a normal reconnect gap (dropped
@@ -292,7 +292,7 @@ def _render_jsonl(kept: list) -> str:
 
 
 def _render_markdown(kept: list, include: str, session_id, project_dir, exported_at) -> str:
-    lines = ["# Mesh transcript"]
+    lines = ["# %s transcript" % product.current().title]
     meta = []
     if session_id is not None:
         meta.append("- session: %s" % session_id)
@@ -435,7 +435,7 @@ def export_transcript(
     A second export landing on the same stamp and the same ``fmt`` gets a
     ``-2``, ``-3``, ... suffix rather than overwriting the first.
 
-    Writes through ``paths.create_review_file``, so ``review/`` is created on
+    Writes through ``files.create_review_file``, so ``review/`` is created on
     first use and a symlinked or non-directory ``review/`` is refused. That
     refusal reaches the caller as ``OSError`` rather than a return value:
     this function has nothing sensible to do but write the file it was
@@ -443,7 +443,7 @@ def export_transcript(
     """
     if fmt not in _TRANSCRIPT_EXTENSION:
         raise ValueError("fmt must be one of %s, not %r" % (TRANSCRIPT_FORMATS, fmt))
-    serve_dir = paths.resolve_serve_dir(project_dir)
+    serve_dir = files.resolve_serve_dir(project_dir)
     records = list(read_records(sessions.events_path(serve_dir, session_id)))
     when = time.time() if now is None else now
     text = render_transcript(
@@ -465,7 +465,7 @@ def export_transcript(
             "%s.%s" % (base, extension) if attempt == 1 else "%s-%d.%s" % (base, attempt, extension)
         )
         try:
-            created = paths.create_review_file(serve_dir, name)
+            created = files.create_review_file(serve_dir, name)
         except FileExistsError:
             continue
         if created is None:
