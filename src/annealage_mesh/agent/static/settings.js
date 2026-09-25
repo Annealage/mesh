@@ -2,11 +2,13 @@
  * The settings window, and the boot-time read that precedes it.
  *
  * Two jobs, and the first happens whether or not anyone opens the window.
- * `loadSettings` runs at page load and applies the settings whose effect is
- * "load" to this page: which axis is up, and whether tool cards start closed.
- * Those two go through `store.js`'s setters rather than being applied to the
- * DOM here, because other modules read them and a value with two writers is
- * the defect `store.js` exists to prevent.
+ * `load` (on what `initSettings` returns) runs at page load and applies the
+ * settings whose effect is "load" to this page: whether tool cards start
+ * closed, here, and whatever the product's own load-effect keys mean, through
+ * the `onLoad` hook the product passes (Mesh: which axis is up). Those go
+ * through store setters rather than being applied to the DOM here, because
+ * other modules read them and a value with two writers is the defect
+ * `store.js` exists to prevent.
  *
  * The second job is the window itself. Every field shows where its value came
  * from, because a three-layer scheme is otherwise mystifying: "port 9000, from
@@ -23,42 +25,49 @@
  * Every control here edits the *saved* value, and the note beside it carries
  * what the running server is still using, so pressing Save with no edits can
  * never revert a change made earlier.
+ *
+ * Nothing here names a setting beyond the one generic load-effect key. The
+ * payload says which keys the window shows and under which heading
+ * (`sections`, from each key's own declaration on the server), which of them
+ * are a closed set of choices (`choices`, `nullable`), and which product it is
+ * describing (`product`), so a product's key appears and is editable here
+ * because the product declared it, not because this file knows its name.
  */
 
 import { store } from "./store.js";
 import { authToken } from "./ws.js";
 import { toast } from "./ui.js";
 
-const SECTIONS = [
-  { title: "Server", keys: ["host", "port", "open_browser"] },
-  { title: "Agent", keys: ["model", "effort", "permission_mode", "backend"] },
-  { title: "Viewer", keys: ["up_axis", "tool_cards_collapsed"] },
-];
-
 // Which layer a value came from, in words a person can act on. The keys are
-// the layer names `settings.py` reports.
-const ORIGIN_TEXT = {
-  flag: "from a command-line flag, this run only",
-  project: "from this project's .mesh/config.toml",
-  user: "from your user settings",
-  default: "built-in default",
-};
+// the layer names `settings.py` reports; the project file lives in the
+// product's own state directory, which the payload names.
+function originText(from, product) {
+  switch (from) {
+    case "flag":
+      return "from a command-line flag, this run only";
+    case "project":
+      return `from this project's ${product.state_dirname}/config.toml`;
+    case "user":
+      return "from your user settings";
+    case "default":
+      return "built-in default";
+    default:
+      return from;
+  }
+}
 
-// Choices for the keys that have them, so the window offers a select rather
-// than a free-text box that can only be got wrong. An empty value means "not
-// set", which is a legal state for every agent key.
-const CHOICES = {
-  effort: ["", "low", "medium", "high", "xhigh", "max"],
-  permission_mode: ["", "default", "acceptEdits", "plan"],
-  up_axis: ["z", "y"],
-  backend: ["", "claude", "codex", "omp"],
-};
-
-let current = null;
+// The options a key with a closed set of values is offered as, so the window
+// shows a select rather than a free-text box that can only be got wrong. An
+// empty value means "not set", offered first for a key where that is legal.
+function choicesOf(entry) {
+  const choices = entry.choices || [];
+  if (!choices.length) return null;
+  return entry.nullable ? ["", ...choices] : choices;
+}
 
 /**
  * Fetches `/settings` and returns the payload, or null if it could not be
- * read. A failure is not fatal to the page: the viewer works without ever
+ * read. A failure is not fatal to the page: the page works without ever
  * knowing what the saved preferences are, so this reports and carries on.
  */
 async function fetchSettings() {
@@ -74,39 +83,30 @@ async function fetchSettings() {
 }
 
 /**
- * Applies the two load-effect settings to this page, through the store.
+ * Applies the load-effect settings to this page, through the store: the
+ * product's first, through its `onLoad(settings)` hook, then the chat pane's
+ * own tool-card preference.
  *
- * Called once at boot. Anything else in the payload describes the run rather
- * than the page, and is only shown when the window is opened.
+ * Called at boot and after every save. Anything else in the payload describes
+ * the run rather than the page, and is only shown when the window is opened.
+ * Only a value that differs is written, here and (by the same rule) in the
+ * product's hook: this read arrives well after the first frame, and
+ * announcing a value the page already has can undo something done since,
+ * a whole HTTP round trip later.
  */
-function applyToPage(payload) {
+function applyToPage(payload, onLoad) {
   const settings = payload && payload.settings;
   if (!settings) return;
-  const state = store.getState();
-  // Only a value that differs is written. This read arrives well after the
-  // first frame, and by then the agent may already have moved the camera:
-  // `three-scene.js` reorients the view whenever `upAxis` is announced, so
-  // announcing the axis it is already on would throw away a view a tool had
-  // just set, and would do it a whole HTTP round trip later.
-  const axis = settings.up_axis && settings.up_axis.value;
-  if ((axis === "z" || axis === "y") && axis !== state.upAxis) {
-    store.setUpAxis(axis);
-  }
+  onLoad(settings);
   if (settings.tool_cards_collapsed) {
     const collapsed = settings.tool_cards_collapsed.value !== false;
-    if (collapsed !== state.toolCardsCollapsed) {
+    if (collapsed !== store.getState().toolCardsCollapsed) {
       store.setToolCardsCollapsed(collapsed);
     }
   }
 }
 
-export async function loadSettings() {
-  current = await fetchSettings();
-  applyToPage(current);
-  return current;
-}
-
-function fieldRow(name, entry, pending) {
+function fieldRow(name, entry, pending, product) {
   const row = document.createElement("div");
   row.className = "setrow";
   row.dataset.key = name;
@@ -124,9 +124,10 @@ function fieldRow(name, entry, pending) {
   const editing = pending ? pending.value : entry.value;
 
   let input;
-  if (CHOICES[name]) {
+  const choices = choicesOf(entry);
+  if (choices) {
     input = document.createElement("select");
-    for (const choice of CHOICES[name]) {
+    for (const choice of choices) {
       const option = document.createElement("option");
       option.value = choice;
       option.textContent = choice === "" ? "(not set)" : choice;
@@ -151,7 +152,7 @@ function fieldRow(name, entry, pending) {
 
   const note = document.createElement("div");
   note.className = "setnote";
-  const origin = ORIGIN_TEXT[entry.from] || entry.from;
+  const origin = originText(entry.from, product);
   const parts = [origin];
   if (entry.effect === "restart") parts.push("takes effect next run");
   if (pending) {
@@ -170,10 +171,10 @@ function fieldRow(name, entry, pending) {
   return row;
 }
 
-function diagnosticsBlock(facts) {
+function diagnosticsBlock(facts, product) {
   const lines = [];
   const cli = facts.claude_cli || {};
-  lines.push(["Mesh version", facts.mesh_version]);
+  lines.push([product.title + " version", product.version]);
   lines.push(["Python", (facts.python || {}).version]);
   lines.push(["claude CLI", cli.source === "missing"
     ? "not found: agent mode cannot run"
@@ -272,15 +273,36 @@ async function saveChanges(changes) {
 }
 
 /**
- * Wires the topbar gear to a modal built fresh each time it opens.
+ * Wires the topbar gear to a modal built fresh each time it opens, and
+ * returns `{open, close, settings, load}`.
  *
  * Rebuilt per open rather than kept and updated, because it is opened rarely
  * and every field in it is a rendering of a payload that may have changed
  * since last time; a cached panel would be one more thing that can disagree
  * with the server.
+ *
+ * `openButton` and `container` default to the page's `#settingsBtn` and
+ * `#settingsModal`; a page with neither still gets `load`. `onLoad(settings)`
+ * is the product's hook for its own load-effect keys, given the payload's
+ * `settings` map at boot and after every save. `load()` does the boot-time
+ * read; the page calls it once, when it no longer minds the round trip.
  */
-export function initSettings({ openButton, container }) {
-  if (!openButton || !container) return { open: () => {} };
+export function initSettings({
+  openButton = document.getElementById("settingsBtn"),
+  container = document.getElementById("settingsModal"),
+  onLoad = () => {},
+} = {}) {
+  let current = null;
+
+  async function load() {
+    current = await fetchSettings();
+    applyToPage(current, onLoad);
+    return current;
+  }
+
+  if (!openButton || !container) {
+    return { open: () => {}, close: () => {}, settings: () => current, load };
+  }
 
   let onKeydown = null;
 
@@ -329,7 +351,8 @@ export function initSettings({ openButton, container }) {
 
     const body = document.createElement("div");
     body.className = "setbody";
-    for (const section of SECTIONS) {
+    const product = payload.product || {};
+    for (const section of payload.sections || []) {
       const block = document.createElement("section");
       const heading = document.createElement("h3");
       heading.textContent = section.title;
@@ -337,7 +360,8 @@ export function initSettings({ openButton, container }) {
       for (const name of section.keys) {
         const entry = payload.settings[name];
         if (!entry) continue;
-        block.appendChild(fieldRow(name, entry, payload.pending && payload.pending[name]));
+        block.appendChild(
+          fieldRow(name, entry, payload.pending && payload.pending[name], product));
       }
       body.appendChild(block);
     }
@@ -346,7 +370,7 @@ export function initSettings({ openButton, container }) {
     const diagHeading = document.createElement("h3");
     diagHeading.textContent = "Diagnostics";
     diagSection.appendChild(diagHeading);
-    diagSection.appendChild(diagnosticsBlock(payload.diagnostics || {}));
+    diagSection.appendChild(diagnosticsBlock(payload.diagnostics || {}, product));
     body.appendChild(diagSection);
     panel.appendChild(body);
 
@@ -374,7 +398,7 @@ export function initSettings({ openButton, container }) {
       try {
         const saved = await saveChanges(changes);
         current = saved;
-        applyToPage(saved);
+        applyToPage(saved, onLoad);
         close();
         const names = Object.keys(changes);
         const restart = names.filter(
@@ -406,5 +430,5 @@ export function initSettings({ openButton, container }) {
     if (event.target === container) close();
   });
 
-  return { open, close, settings: () => current };
+  return { open, close, settings: () => current, load };
 }

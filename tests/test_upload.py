@@ -110,7 +110,7 @@ async def test_upload_kind_whitelist_refuses_traversal_and_dotfile_and_junk(
     res = await client.post(_upload_url(kind=kind), body=_png_bytes())
     assert res.status_code == 400
     assert res.json["ok"] is False
-    assert "kind must be one of: %s" % ", ".join(routes_chat.UPLOAD_KINDS) == res.json["error"]
+    assert "kind must be one of: %s" % ", ".join(routes_chat.upload_kinds()) == res.json["error"]
     assert not (served_dir / "images").exists()
 
 

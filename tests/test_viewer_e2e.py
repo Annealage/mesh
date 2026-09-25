@@ -789,7 +789,7 @@ def test_hand_edited_callouts_file_arrives_by_push_not_poll(browser, token_mesh_
         _wait_connection_state(page, "live")
         assert page.evaluate("window.mesh.store.getState().callouts.length") == 0
 
-        # handleHello's own refetchCallouts (js/ws.js) fires in the same
+        # The refetchCallouts js/main.js's onLive hook runs fires in the same
         # tick "live" is set, but the fetch it starts is itself async;
         # waiting for that one request to actually land, rather than a
         # fixed margin, is what makes the baseline below trustworthy
@@ -1510,6 +1510,47 @@ def test_interrupt_button_ends_a_turn(browser, chat_server):
         page.close()
 
 
+def test_the_chat_pane_mounts_under_a_root_with_the_ids_a_page_chooses(browser, mesh_server):
+    """chat.js finds its elements by the ids the page hands it, not by its
+    defaults: a copy of the pane with every id renamed, mounted under its own
+    root, renders the store's chat state into its own elements, and a root
+    missing a required element is refused at mount, naming the id, rather
+    than failing later on the first event."""
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        result = page.evaluate(
+            """async () => {
+              const { initChat, DEFAULT_IDS } = await import('agent/chat.js');
+              const root = document.getElementById('chat').cloneNode(true);
+              root.querySelectorAll('[id]').forEach((el) => { el.id = 'alt-' + el.id; });
+              root.id = 'alt-chat';
+              document.body.appendChild(root);
+              const ids = Object.fromEntries(
+                Object.entries(DEFAULT_IDS).map(([role, id]) => [role, 'alt-' + id]));
+              initChat({ send: () => true, root, ids });
+              window.mesh.store.setChatBanner('info', 'mounted elsewhere');
+              let refused = null;
+              try {
+                initChat({ send: () => true, root: document.createElement('div'), ids });
+              } catch (err) {
+                refused = err.message;
+              }
+              return {
+                text: root.querySelector('#alt-chatBannerText').textContent,
+                hidden: root.querySelector('#alt-chatBanner').hidden,
+                refused,
+              };
+            }"""
+        )
+        assert result["text"] == "mounted elsewhere"
+        assert result["hidden"] is False
+        assert "#alt-chat " in result["refused"]
+    finally:
+        page.close()
+
+
 # 18. Chat pane: model text is escaped, never executed -----------------------
 
 
@@ -2033,7 +2074,7 @@ def test_an_oversized_or_wrong_typed_drop_is_refused_without_a_request(browser, 
     upload_requests = []
     # Matched on the path with any query string stripped, and anchored to the
     # end, so this does not also catch the unrelated static asset
-    # `/static/js/uploads.js`, whose URL contains the same substring.
+    # `/agent/static/uploads.js`, whose URL contains the same substring.
     page.on(
         "request",
         lambda r: upload_requests.append(r) if r.url.split("?", 1)[0].endswith("/upload") else None,
@@ -2519,6 +2560,39 @@ def test_settings_window_shows_each_value_with_where_it_came_from(settings_serve
         diagnostics = page.text_content(".diagblock")
         assert "bundled with the SDK" in diagnostics or "found on PATH" in diagnostics
         assert server.session_id in diagnostics
+    finally:
+        page.close()
+
+
+def test_settings_window_lays_out_the_keys_the_server_declares(settings_server, browser):
+    """The window's sections, headings and choices come from the server, not
+    from a list in settings.js: Mesh's up_axis is shown in the Viewer section
+    it declares, as its two choices, ahead of the chat pane's own preference,
+    and the diagnostics block names the product it is describing."""
+    server, _served = settings_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_one_mesh_loaded(page)
+        _open_settings(page)
+
+        sections = page.evaluate(
+            """() => [...document.querySelectorAll('.setbody section')].map((s) => [
+                 s.querySelector('h3').textContent,
+                 [...s.querySelectorAll('.setrow')].map((r) => r.dataset.key),
+               ])"""
+        )
+        assert sections == [
+            ["Server", ["host", "port", "open_browser"]],
+            ["Agent", ["model", "effort", "permission_mode", "backend"]],
+            ["Viewer", ["up_axis", "tool_cards_collapsed"]],
+            ["Diagnostics", []],
+        ]
+        up_axis = page.eval_on_selector_all("#set-up_axis option", "os => os.map(o => o.value)")
+        assert up_axis == ["z", "y"]
+        effort = page.eval_on_selector_all("#set-effort option", "os => os.map(o => o.textContent)")
+        assert effort == ["(not set)", "low", "medium", "high", "xhigh", "max"]
+        assert "Mesh version" in page.text_content(".diagblock")
     finally:
         page.close()
 

@@ -16,6 +16,11 @@ file the agent layer itself writes into a project:
     images/*.png          created by ``create_image_file`` for a captured view
                           or an upload
     review/*.md,*.jsonl   created by ``create_review_file`` for a transcript
+
+It also indexes a packaged static tree (``scan_static``, ``StaticIndex``): the
+agent layer's own front end under ``agent/static/`` and a product's page and
+modules, each through its own index, so a file is only ever served because a
+scan found it rather than because a request path happened to join onto it.
 """
 
 import os
@@ -594,3 +599,194 @@ def safe_join(base, rel):
     if st.st_nlink != 1:
         return None
     return resolved, (st.st_dev, st.st_ino)
+
+
+# Extensions a packaged static tree may serve, plus the one extensionless
+# name carved out below. This is an allowlist, not a denylist: a file with
+# any other extension sitting in a static tree (an editor's ".bak", a source
+# map's ".map", a stray ".py") is simply invisible to the scan and therefore
+# unreachable over HTTP, regardless of what it contains, so dropping a file
+# into that directory can never make it servable by accident.
+STATIC_EXTENSIONS = {".html", ".css", ".js", ".json"}
+
+# A vendored dependency's licence ships as a bare "LICENSE" with no extension
+# (Mesh's vendored renderer licence, inside its static/js/vendor/). It is
+# carved out by name and by directory rather than added to STATIC_EXTENSIONS
+# itself, so the allowlist above stays a pure extension test everywhere else
+# in the tree and this one exception cannot be widened by accident to any
+# extensionless file anywhere under a static tree.
+STATIC_LICENSE_DIRNAME = "vendor"
+STATIC_LICENSE_FILENAME = "LICENSE"
+
+# Cap on the number of files one static asset index will hold. A static tree
+# is fixed, shipped inside a package, not a directory a served project can
+# grow, so 500 is ample headroom over the real file count with no expectation
+# of ever being reached; unlike a product's own scan of a served directory,
+# hitting it would mean something is wrong with the install, not with
+# someone's project, so it is worth a warning rather than a silent truncation.
+MAX_STATIC_FILES = 500
+
+# The content type each allowed extension is served with. A static tree is
+# this package's own, installed alongside the code that reads it, not
+# user-supplied input the way a served project's images/ subtree is, so these
+# are the ordinary types rather than the narrowed ASSET_CONTENT_TYPES. The one
+# file with no extension to look up, a vendored LICENSE, is plain text.
+STATIC_CONTENT_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".json": "application/json",
+}
+
+
+def _static_name_allowed(name, rel_parts):
+    """Whether ``name`` (a filename directly under the path ``rel_parts``
+    names) belongs in a static asset index; see STATIC_EXTENSIONS and
+    STATIC_LICENSE_DIRNAME for what this allows and why."""
+    if Path(name).suffix.lower() in STATIC_EXTENSIONS:
+        return True
+    return name == STATIC_LICENSE_FILENAME and STATIC_LICENSE_DIRNAME in rel_parts
+
+
+def scan_static(static_dir):
+    """Scan a packaged ``static_dir`` for servable assets.
+
+    Returns ``(entries, truncated)``: each entry is ``{"rel", "path", "_dev",
+    "_ino"}``, sorted by ``rel``. The walk is an explicit stack over
+    ``os.scandir`` with dotfile and symlinked-directory exclusion and sorted
+    traversal for reproducible results, the same care a product's scan of a
+    served directory takes (Mesh's ``paths.scan_models``), because those rules
+    are about walking a tree safely and deterministically, not about who
+    controls its contents.
+
+    What differs from a served-directory scan is which files qualify, and why.
+    A served directory is one an outside party can write into at any time; a
+    static tree is fixed at install time and only as trustworthy as the Python
+    environment running this code already is, so:
+
+    * The extension allowlist (``_static_name_allowed``) is the qualifying
+      test, since the risk here is not a hardlink smuggling in bytes from
+      elsewhere but an unrelated file (an editor backup, a source map) sitting
+      in the tree and becoming servable just by matching a route pattern.
+    * Symlinks are still refused and directories are still not descended
+      through one: a broken or redirected symlink in an installed package is
+      a packaging bug, not a trust boundary, but refusing it costs nothing
+      and a directory of static assets has no legitimate need for one.
+    * There is no depth or directory-count cap: those defend against a served
+      directory an attacker can pad with arbitrarily many real directories,
+      and a static tree is shipped by a package and no request can grow it.
+    * Hard link count is deliberately not checked; see the comment at that
+      point in the loop below.
+    """
+    static_dir = resolve_serve_dir(static_dir)
+    entries = []
+    truncated = False
+    stack = [(static_dir, ())]
+    while stack:
+        dirpath, rel_parts = stack.pop()
+        try:
+            children = sorted(os.scandir(dirpath), key=lambda e: e.name)
+        except OSError:
+            continue
+
+        subdirs = []
+        cap_hit = False
+        for entry in children:
+            if entry.name.startswith("."):
+                continue
+            try:
+                st = entry.stat(follow_symlinks=False)
+            except OSError:
+                continue
+            if stat.S_ISDIR(st.st_mode):
+                subdirs.append(entry.name)
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                continue
+            if not _static_name_allowed(entry.name, rel_parts):
+                continue
+            # Unlike a served-directory scan, a second hard link is not
+            # refused here, and that asymmetry is deliberate. uv and pip both
+            # install a package's files by hardlinking them out of a local
+            # wheel cache rather than copying, so a legitimately installed
+            # module routinely has more than one link, and refusing it would
+            # make a normal install unservable. A served project directory is
+            # untrusted input a reviewer did not write; a package's own
+            # static tree is not, because anything with write access to
+            # site-packages already controls this process outright, hard
+            # links or not. The symlink refusal and the dotfile exclusion
+            # above still apply to this tree exactly as they do to a served
+            # project's.
+            if len(entries) >= MAX_STATIC_FILES:
+                truncated = True
+                cap_hit = True
+                break
+            fpath = dirpath / entry.name
+            entries.append(
+                {
+                    "rel": "/".join(rel_parts + (entry.name,)),
+                    "path": fpath,
+                    "_dev": st.st_dev,
+                    "_ino": st.st_ino,
+                }
+            )
+        if cap_hit:
+            sys.stderr.write(
+                "warning: static asset index stopped at the %d file cap "
+                "(MAX_STATIC_FILES); an installed static tree should never "
+                "be this large\n" % MAX_STATIC_FILES
+            )
+            break
+        for name in sorted(subdirs, reverse=True):
+            stack.append((dirpath / name, rel_parts + (name,)))
+
+    entries.sort(key=lambda e: e["rel"])
+    return entries, truncated
+
+
+class StaticIndex:
+    """Lookup table over one packaged static tree: every route that serves a
+    packaged asset resolves through this rather than joining a request path
+    onto disk, so a file present in the tree but not matching
+    ``scan_static``'s rules (wrong extension, a symlink, sitting under a
+    dotdir) simply is not a key here and is therefore unreachable.
+    """
+
+    def __init__(self, static_dir, entries, truncated):
+        self.static_dir = static_dir
+        self.truncated = truncated
+        self._by_rel = {e["rel"]: Path(e["path"]) for e in entries}
+        self._identity = {e["rel"]: (e["_dev"], e["_ino"]) for e in entries}
+
+    def by_rel(self, rel):
+        """Resolve a POSIX-style relative path to an absolute Path, or None."""
+        return self._by_rel.get(rel)
+
+    def identity_of(self, rel):
+        """Return the ``(st_dev, st_ino)`` the scan validated for ``rel``, so
+        the later open can require the same inode: a scan result and the open
+        can disagree even without anything hostile involved (an editor's
+        write-new-file-then-rename-over-old edit is indistinguishable, at the
+        moment of the open, from a name relinked to something else)."""
+        return self._identity.get(rel)
+
+    @staticmethod
+    def content_type_of(rel):
+        """Content type to serve ``rel`` with; see ``STATIC_CONTENT_TYPES``.
+
+        A static method rather than one reading ``self``: the answer depends
+        only on ``rel`` itself, not on any particular scan, so a route can
+        call it before or without ever fetching an index instance, and two
+        different ``StaticIndex`` instances always agree on it for the same
+        ``rel``.
+        """
+        return STATIC_CONTENT_TYPES.get(Path(rel).suffix.lower(), "text/plain; charset=utf-8")
+
+
+def build_static_index(static_dir):
+    """Scan ``static_dir`` and return a fresh ``StaticIndex`` of its current
+    contents. Synchronous filesystem work: a caller on an event loop runs it
+    off that loop."""
+    static_dir = resolve_serve_dir(static_dir)
+    entries, truncated = scan_static(static_dir)
+    return StaticIndex(static_dir, entries, truncated)

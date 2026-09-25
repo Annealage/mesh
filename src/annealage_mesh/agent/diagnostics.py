@@ -125,7 +125,8 @@ def collect(
             "executable": sys.executable,
         },
         # Keyed by the product's name ("mesh_version") because that is the
-        # key the product's own settings window reads.
+        # key the product's own doctor output reads (Mesh's cli.py). The
+        # settings window reads the version from GET /settings's "product".
         product.current().version_fact: product.current().version,
         "claude_cli": _claude_cli_info(run=run, which=which),
         "backends_installed": list(backends.detect(which=which)),

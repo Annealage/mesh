@@ -1,8 +1,15 @@
 /**
  * The chat pane: composer, streamed transcript, tool cards, permission
- * cards and interrupt. The store stays the single writer (M3's
- * contract); this module only reads `store.getState().chat` and calls the
- * `chat*` mutators store.js exports, and only builds DOM.
+ * cards and interrupt. The store stays the single writer; this module only
+ * reads `store.getState().chat` and calls the `chat*` mutators store.js
+ * exports, and only builds DOM.
+ *
+ * It mounts into whatever page hands it a root: every element it drives is
+ * found by id under `root` (default: the whole document), through an id map
+ * whose defaults (`DEFAULT_IDS` below) are the ids a page gets by copying
+ * the pane's markup unchanged, so a product renames only what it has to.
+ * `agentTitles` lets the product say what keeps working without an agent,
+ * which only it knows.
  *
  * Model text is never inserted as HTML. Every value that came from the
  * agent or from a tool, a tool name, a tool's JSON input, a tool's result
@@ -18,7 +25,7 @@
  * or re-matches text a previous one inserted, so there is no path back
  * from "escaped text" to "text a later step interprets as markup".
  *
- * Reconciliation follows pins.js's pattern: a Map keyed by a stable id
+ * Reconciliation uses a Map keyed by a stable id
  * (turn number, tool_use_id, permission request_id) so a re-render updates
  * an existing element in place rather than replacing it, which is what
  * keeps a `<details>` tool card's open/closed state and the composer's
@@ -42,9 +49,9 @@ import { uploadImage } from "./uploads.js";
 import { toast } from "./ui.js";
 import { authToken } from "./ws.js";
 
-// The three image types the upload route accepts (paths.py's
+// The three image types the upload route accepts (files.py's
 // `_IMAGE_NAME_RE`/`sniff_image`) and the same byte cap it enforces
-// (`paths.MAX_IMAGE_BYTES`). Checking both here means a wrong-typed file or
+// (`files.MAX_IMAGE_BYTES`). Checking both here means a wrong-typed file or
 // an oversized drop is refused before a single byte leaves the page, rather
 // than after the whole body has streamed to the server only to be refused
 // there. A file this accepts may still be too large to send to the model
@@ -76,13 +83,13 @@ const DECISION_SENT = Object.freeze({
 // this, exactly like one somebody answered.
 const OUTCOME_TEXT = Object.freeze({
   allow: "was allowed",
-  // Not "for this session": `_remember` writes the grant to
-  // .mesh/permissions.toml and `_load_grants` reads it back when the broker is
-  // constructed, so it holds for every later run in this directory too. The
-  // grant is also per-tool rather than per-argument, so a card showing one
-  // file's contents grants that tool for any path. This string is the only
-  // description the human necessarily reads at the moment they decide, so it
-  // says what the grant actually does.
+  // Not "for this session": `_remember` writes the grant to the project's
+  // permissions.toml (in the product's state directory) and `_load_grants`
+  // reads it back when the broker is constructed, so it holds for every later
+  // run in this directory too. The grant is also per-tool rather than
+  // per-argument, so a card showing one file's contents grants that tool for
+  // any path. This string is the only description the human necessarily
+  // reads at the moment they decide, so it says what the grant actually does.
   allow_always: "will be allowed from now on, for that tool, in this project",
   deny: "was denied",
   timeout: "expired before it was answered",
@@ -227,29 +234,76 @@ function renderUserAttachments(container, blocks) {
 }
 
 const AGENT_LABEL = { connecting: "Connecting…", ready: "Ready", unavailable: "Unavailable" };
+// The generic tooltips; `initChat`'s `agentTitles` replaces any of them.
 const AGENT_TITLE = {
   connecting: "The agent process is starting.",
   ready: "The agent is ready to receive a message.",
   unavailable:
-    "The agent is not available right now. The viewer, pins and Submit keep working regardless.",
+    "The agent is not available right now. The rest of the page keeps working regardless.",
 };
 
-export function initChat({ send }) {
-  const chatLogEl = document.getElementById("chatLog");
-  const chatPendingEl = document.getElementById("chatPending");
-  const agentStatusEl = document.getElementById("agentStatus");
-  const bannerEl = document.getElementById("chatBanner");
-  const bannerTextEl = document.getElementById("chatBannerText");
-  const bannerCloseBtn = document.getElementById("chatBannerClose");
-  const chatInputEl = document.getElementById("chatInput");
-  const chatSendBtn = document.getElementById("chatSend");
-  const chatModelInputEl = document.getElementById("chatModelInput");
-  const chatInterruptBtn = document.getElementById("chatInterrupt");
-  const chatAttachBtn = document.getElementById("chatAttachBtn");
-  const chatFileInput = document.getElementById("chatFileInput");
-  const chatAttachStripEl = document.getElementById("chatAttachStrip");
-  const chatPaneEl = document.getElementById("chat");
-  const chatExportBtn = document.getElementById("chatExport");
+// The ids the pane's elements have in the markup a page copies, by role.
+// `pane` is the whole pane (the file drop target); `exportButton` is the one
+// optional element, for a page that offers no transcript export.
+export const DEFAULT_IDS = Object.freeze({
+  pane: "chat",
+  log: "chatLog",
+  pending: "chatPending",
+  agentStatus: "agentStatus",
+  banner: "chatBanner",
+  bannerText: "chatBannerText",
+  bannerClose: "chatBannerClose",
+  input: "chatInput",
+  send: "chatSend",
+  modelInput: "chatModelInput",
+  interrupt: "chatInterrupt",
+  attachButton: "chatAttachBtn",
+  fileInput: "chatFileInput",
+  attachStrip: "chatAttachStrip",
+  exportButton: "chatExport",
+});
+
+const OPTIONAL_ELEMENTS = new Set(["exportButton"]);
+
+// The element with id `id` under `root`, `root` itself included: a page may
+// hand over the pane element as the root and keep its default id on it.
+function findById(root, id) {
+  if (root.nodeType === Node.ELEMENT_NODE && root.id === id) return root;
+  return root.querySelector("#" + CSS.escape(id));
+}
+
+/**
+ * Mounts the pane. `send` is ws.js's frame sender; `root` is where the pane's
+ * elements are looked up (default: the document); `ids` overrides any of
+ * `DEFAULT_IDS`; `agentTitles` overrides any of the agent status tooltips.
+ * A required element that is missing is an error here, at mount, naming the
+ * id, rather than a null dereference on the first event.
+ */
+export function initChat({ send, root = document, ids = {}, agentTitles = {} }) {
+  const idMap = { ...DEFAULT_IDS, ...ids };
+  const els = {};
+  for (const [role, id] of Object.entries(idMap)) {
+    els[role] = findById(root, id);
+    if (!els[role] && !OPTIONAL_ELEMENTS.has(role)) {
+      throw new Error("chat pane: no element #" + id + " (" + role + ") under the given root");
+    }
+  }
+  const titles = { ...AGENT_TITLE, ...agentTitles };
+  const chatLogEl = els.log;
+  const chatPendingEl = els.pending;
+  const agentStatusEl = els.agentStatus;
+  const bannerEl = els.banner;
+  const bannerTextEl = els.bannerText;
+  const bannerCloseBtn = els.bannerClose;
+  const chatInputEl = els.input;
+  const chatSendBtn = els.send;
+  const chatModelInputEl = els.modelInput;
+  const chatInterruptBtn = els.interrupt;
+  const chatAttachBtn = els.attachButton;
+  const chatFileInput = els.fileInput;
+  const chatAttachStripEl = els.attachStrip;
+  const chatPaneEl = els.pane;
+  const chatExportBtn = els.exportButton;
 
   // The session this pane belongs to, learned from the hello frame. Null until
   // then, and null for a viewer-only run, which has no conversation to write.
@@ -615,7 +669,7 @@ export function initChat({ send }) {
 
   function renderAgentStatus(chat) {
     agentStatusEl.textContent = AGENT_LABEL[chat.agentStatus] || chat.agentStatus;
-    agentStatusEl.title = AGENT_TITLE[chat.agentStatus] || "";
+    agentStatusEl.title = titles[chat.agentStatus] || "";
     agentStatusEl.dataset.state = chat.agentStatus;
   }
 
@@ -645,11 +699,9 @@ export function initChat({ send }) {
   // on focus, which is what lets a human type a full model id without a
   // frame going out on every keystroke.
   //
-  // Not to be confused with `models_changed` (`js/models.js`/`ws.js`), which
-  // is about the served directory's 3D files and never reaches this pane at
-  // all (`ws.js`'s own event switch intercepts it before `handleEvent`
-  // below ever sees it) -- this field tracks `agent_model_changed`, the
-  // LLM backend's active model.
+  // This field tracks `agent_model_changed`, the LLM backend's active model;
+  // a product's own event about its files (Mesh's `models_changed`) is taken
+  // by the product's handler in ws.js and never reaches this pane.
   function applyModelInput() {
     // Any fresh edit supersedes a revert queued by an earlier refusal: the
     // human has already moved past that rejected value, so there is
@@ -723,7 +775,7 @@ export function initChat({ send }) {
     chatSendBtn.disabled = unavailable || uploading;
     chatSendBtn.title = uploading
       ? "Waiting for an attachment to finish uploading"
-      : (unavailable ? AGENT_TITLE.unavailable : "");
+      : (unavailable ? titles.unavailable : "");
   }
 
   function renderBanner(chat) {
@@ -806,8 +858,7 @@ export function initChat({ send }) {
     renderExportButton();
     try {
       const res = await fetch(
-        "/session/" + encodeURIComponent(sessionId) + "/export?t=" +
-        encodeURIComponent(authToken()),
+        `/session/${encodeURIComponent(sessionId)}/export?t=${encodeURIComponent(authToken())}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -896,8 +947,7 @@ export function initChat({ send }) {
         store.setChatAgentStatus(event.status);
         break;
       case "agent_model_changed":
-        // Not `models_changed` (served 3D files, ws.js/js/models.js): this
-        // is the LLM backend's active model, confirmed to have taken effect
+        // The LLM backend's active model, confirmed to have taken effect
         // by whichever driver's `set_model` emitted it. Clears
         // pendingSetModel only when this is the change this pane itself
         // asked for -- a different tab's switch, or a value nobody here

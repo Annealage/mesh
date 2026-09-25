@@ -1,10 +1,13 @@
-"""Route handlers for what the chat pane sends the server: an image, or a
-request to write the conversation out.
+"""Route handlers for what the chat pane sends the server, an image or a
+request to write the conversation out, and for reading those images back.
 
 Registers, against one served directory:
 
     POST /upload                  accepts one raw image (PNG, JPEG or WEBP)
                                    into images/, named by this process alone
+    GET  /asset/<path:rel>        image bytes, restricted to an images/ subtree
+                                   (uploads, captured views, and anything a
+                                   project already keeps there)
     POST /session/<sid>/export    renders that session's event log into review/
 
 The export route deliberately does not go through the permission broker, while
@@ -33,20 +36,30 @@ exists and including a caller that simply disappears: every exit past the
 open goes through ``_abandon``.
 
 The body is raw bytes, not multipart: microdot ships no multipart parser, and
-the one thing a client chooses about an upload, its kind (``upload`` or
-``sketch``), fits in a query parameter. The written file's name, including
-its extension, never comes from the client; see
-``files.create_unique_image_file`` and ``files.sniff_image``.
+the one thing a client chooses about an upload, its kind (``upload``, or one
+the installed product adds through ``Product.upload_kinds``, e.g. Mesh's
+``sketch``), fits in a query parameter. The written file's name, including its
+extension, never comes from the client; see ``files.create_unique_image_file``
+and ``files.sniff_image``.
+
+``/asset`` asks for no token, as it never has: an image under images/ is the
+project's own, git-tracked file, fetched by the page's ``<img>`` tags, which
+cannot carry one. What it does enforce is containment, entirely in
+``files.resolve_asset``, and a content type from the narrow
+``files.ASSET_CONTENT_TYPES`` so nothing under images/ is ever labelled as
+active content on this origin.
 """
 
 import asyncio
 import functools
 import os
+import re
 import sys
+from urllib.parse import unquote
 
-from .. import files, sessions
+from .. import files, product, sessions
 from ..session import events
-from . import CHUNK_SIZE, read_json_body
+from . import CHUNK_SIZE, file_response, read_json_body
 from .ws import _origin_is_allowed, _token_is_allowed, refusal
 
 
@@ -63,11 +76,45 @@ class _Refused(Exception):
         self.message = message
 
 
-# The only values the "kind" query parameter may take. Absent means the
-# first entry. Held here, not in paths.py, because it is this route's own
-# query parameter that is being validated, not a property of a file under
-# images/.
-UPLOAD_KINDS = ("upload", "sketch")
+# The kind every product accepts: an image the human attached in the
+# composer. It is also what an absent "kind" means.
+GENERIC_UPLOAD_KIND = "upload"
+
+# What a product's own upload kind may look like. The kind becomes the first
+# component of the written file's name (``files.create_unique_image_file``),
+# so it is held to a short lowercase slug that keeps every generated name
+# inside ``files._IMAGE_NAME_RE``; checked once, when the product is
+# installed, rather than trusted because a product wrote it. Applied with
+# ``fullmatch``: ``$`` would let a trailing newline through.
+_PRODUCT_KIND_RE = re.compile(r"[a-z][a-z0-9-]{0,31}")
+
+
+def check_product_upload_kinds(kinds):
+    """Raise ``ValueError`` if ``kinds`` cannot be a product's upload kinds: a
+    bare string rather than a tuple of them (``("sketch")`` without its comma
+    would otherwise register one kind per letter), the generic kind again, a
+    kind given twice, or one that is not wholly a short lowercase slug.
+    Changes nothing; called by ``product.install``."""
+    if isinstance(kinds, str):
+        raise ValueError("product upload kinds must be a tuple of kinds, not the string %r" % kinds)
+    seen = set()
+    for kind in kinds:
+        if not isinstance(kind, str) or not _PRODUCT_KIND_RE.fullmatch(kind):
+            raise ValueError("product upload kind %r is not a short lowercase slug" % (kind,))
+        if kind == GENERIC_UPLOAD_KIND or kind in seen:
+            raise ValueError("product upload kind %r collides with another kind" % kind)
+        seen.add(kind)
+
+
+def upload_kinds():
+    """The values the "kind" query parameter may take, the generic one first.
+
+    Held here, not in a product's own files, because it is this route's own
+    query parameter being validated, not a property of a file under images/;
+    the product only names the extra kinds its page sends (Mesh: ``sketch``).
+    """
+    return (GENERIC_UPLOAD_KIND,) + tuple(product.current().upload_kinds)
+
 
 _ALLOWED_QUERY_KEYS = frozenset(("t", "kind"))
 
@@ -89,7 +136,7 @@ def _upload_kind(req):
     """Return ``(kind, None)`` or ``(None, error)`` for this request's query string.
 
     Only ``t`` and ``kind`` may appear, ``kind`` at most once and only from
-    ``UPLOAD_KINDS``; anything else is refused without reading any of the
+    ``upload_kinds()``; anything else is refused without reading any of the
     body. Called only once the token has already passed, so this whitelist
     is never a way to probe the route unauthenticated.
     """
@@ -100,9 +147,10 @@ def _upload_kind(req):
     kind_values = _query_values(req, "kind")
     if len(kind_values) > 1:
         return None, "kind must not be given more than once"
-    kind = kind_values[0] if kind_values else UPLOAD_KINDS[0]
-    if kind not in UPLOAD_KINDS:
-        return None, "kind must be one of: %s" % ", ".join(UPLOAD_KINDS)
+    allowed = upload_kinds()
+    kind = kind_values[0] if kind_values else GENERIC_UPLOAD_KIND
+    if kind not in allowed:
+        return None, "kind must be one of: %s" % ", ".join(allowed)
     return kind, None
 
 
@@ -197,8 +245,28 @@ def _export_options(data):
     return fmt, include, None
 
 
+async def _file_or_same_404(target, ctype, method, request_key, expect_identity=None):
+    """Stream ``target``, or fall back to the caller's own miss message.
+
+    The caller has already confirmed ``target`` exists as a file; the only
+    way ``file_response`` still 404s from here is an open failure (a
+    permission error, or the file vanishing in the race between that check
+    and this call). That failure must read exactly like the caller's own
+    "the path never resolved to anything" 404 for ``request_key`` - not
+    file_response's own generic body - so a client cannot use a difference
+    in wording to tell "does not exist" apart from "exists but is
+    unreadable" for a path it does not have permission to see the real
+    answer to.
+    """
+    res = await file_response(target, ctype, method, expect_identity)
+    if res.status_code == 404:
+        return "not found: %s" % request_key, 404
+    return res
+
+
 def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
-    """Register ``POST /upload`` and ``POST /session/<sid>/export`` on ``app``."""
+    """Register ``POST /upload``, ``GET /asset/<rel>`` and
+    ``POST /session/<sid>/export`` on ``app``."""
     serve_dir = files.resolve_serve_dir(serve_dir)
 
     @app.post("/upload")
@@ -301,6 +369,15 @@ def register_chat_routes(app, serve_dir, *, token, allowed_origins=()):
             "bytes": total,
             "media_type": media_type,
         }, 200
+
+    @app.get("/asset/<path:rel>")
+    async def asset(req, rel):
+        found = files.resolve_asset(serve_dir, unquote(rel))
+        if found is None:
+            return "not found: %s" % rel, 404
+        target, identity = found
+        ctype = files.ASSET_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        return await _file_or_same_404(target, ctype, req.method, rel, identity)
 
     @app.post("/session/<sid>/export")
     async def export_session(req, sid):

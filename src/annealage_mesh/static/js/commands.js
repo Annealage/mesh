@@ -1,6 +1,6 @@
 /**
  * The browser side of viewer control: the method table the server's `call`
- * frames are dispatched against, and the topbar pause control.
+ * frames are dispatched against.
  *
  * Every entry here is the other half of one tool in `tools/viewer_tools.py`,
  * and the two files are a contract: the method names, the parameter names and
@@ -20,13 +20,9 @@
  * naming that code. Codes are for the model to act on: `unknown_model` means
  * "list the models again", `no_models_loaded` means "wait or generate one".
  *
- * The pause control lives here rather than in the chat pane because pausing is
- * about this viewer, not about the conversation, and because the thing it
- * gates is exactly the table above. It is a pure reader of `store.paused`:
- * clicking it sends a frame and nothing else, and the label only changes when
- * the server says the flag moved. A control that latched locally would show
- * "paused" while the tools it claims to gate were still running, which is the
- * defect the previous version of this control actually had.
+ * The topbar pause control that gates these methods is the agent layer's
+ * (`agent/pause.js`): pausing is a property of the tool grades on the server,
+ * not of anything this table does.
  */
 
 import { store } from "./store.js";
@@ -137,11 +133,8 @@ function resolveReference(ref, state) {
 
 /**
  * @param scene3d  the object three-scene.js's initScene returned
- * @param send     ws.js's frame sender, for the outbound pause frame
  */
-export function initCommands({ scene3d, send }) {
-  const pauseBtn = document.getElementById("pauseBtn");
-
+export function initCommands({ scene3d }) {
   function partsList() {
     const state = store.getState();
     return state.models.map((m) => ({
@@ -278,29 +271,5 @@ export function initCommands({ scene3d, send }) {
     return handler(params || {});
   }
 
-  function renderPause(state) {
-    pauseBtn.classList.toggle("on", state.paused);
-    pauseBtn.textContent = state.paused ? "❙❙ Paused" : "❙❙ Pause";
-    pauseBtn.setAttribute("aria-pressed", state.paused ? "true" : "false");
-    // Disabled when there is no agent, which is both viewer-only mode and a
-    // session that failed to start. In viewer-only mode the server refuses a
-    // pause frame outright, since there are no tools to pause, and an enabled
-    // control whose every click produces a refusal toast is worse than one that
-    // plainly cannot be pressed. Keyed on the same status the composer's Send
-    // button reads, so the pane and the topbar agree about what is available.
-    pauseBtn.disabled = state.chat.agentStatus === "unavailable";
-  }
-  renderPause(store.getState());
-  store.subscribe("paused", renderPause);
-  store.subscribe("chat", renderPause);
-
-  pauseBtn.addEventListener("click", () => {
-    // The current state is inverted and sent; the button's own appearance
-    // does not change until the server broadcasts that the flag moved. That
-    // is deliberate: the flag lives in the server because the tools it gates
-    // run there, so a local latch would be a claim this page cannot make.
-    send({ v: 1, type: "pause", paused: !store.getState().paused });
-  });
-
-  return { dispatch, setPausedFromServer: (paused) => store.setPaused(paused) };
+  return { dispatch };
 }

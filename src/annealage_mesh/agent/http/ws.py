@@ -57,7 +57,7 @@ MAX_WS_MESSAGE = 4 * 1024 * 1024
 # How often every connected viewer is pinged.
 #
 # This is what makes the browser's own liveness watchdog meaningful, and the
-# two numbers are a pair: static/js/ws.js closes a socket that has delivered
+# two numbers are a pair: agent/static/ws.js closes a socket that has delivered
 # nothing for LIVENESS_TIMEOUT_MS, so without a ping this interval, an idle but
 # perfectly healthy connection looks dead and gets closed and reopened on a
 # loop. The watchdog there must stay at least twice this value, and says so.

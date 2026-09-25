@@ -21,7 +21,9 @@ from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
 from annealage_mesh import paths
+from annealage_mesh.agent import files
 from annealage_mesh.agent.app import MAX_REQUEST_BODY
+from annealage_mesh.agent.http import static as agent_static
 from annealage_mesh.app import DEFAULT_PORT, create_app
 from annealage_mesh.http import routes_viewer
 
@@ -32,9 +34,10 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_index_serves_viewer_html(client):
-    # The shell promises three things and nothing about how the app itself
+    # The shell promises these things and nothing about how the app itself
     # fetches its data: the importmap resolving the bare "three" specifier to
-    # the vendored module, the stylesheet link, and the module script that
+    # the vendored module and the "agent/" prefix to the agent layer's own
+    # front end, the two stylesheet links, and the module script that
     # bootstraps the split front end. Which endpoints main.js and its imports
     # go on to call is js/models.js's business, not the shell's.
     for path in ("/", "/index.html"):
@@ -43,6 +46,8 @@ async def test_index_serves_viewer_html(client):
         assert "text/html" in res.headers.get("Content-Type", "")
         assert 'id="topbar"' in res.text
         assert '"three": "/static/js/vendor/three.module.js"' in res.text
+        assert '"agent/": "/agent/static/"' in res.text
+        assert '<link rel="stylesheet" href="/agent/static/agent.css">' in res.text
         assert '<link rel="stylesheet" href="/static/css/app.css">' in res.text
         assert '<script type="module" src="/static/js/main.js"></script>' in res.text
 
@@ -312,14 +317,14 @@ async def test_static_serves_every_file_the_real_tree_contains_with_the_right_co
     # Enumerates the package's actual static/ tree rather than a hardcoded
     # file list, so this test keeps covering whatever the tree contains as
     # files are added or renamed, instead of silently stopping short.
-    entries, _ = paths.scan_static(routes_viewer.STATIC_DIR)
+    entries, _ = files.scan_static(routes_viewer.STATIC_DIR)
     assert entries
     for entry in entries:
         rel = entry["rel"]
         res = await client.get("/static/" + rel)
         assert res.status_code == 200, rel
         assert res.body == Path(entry["path"]).read_bytes(), rel
-        assert res.headers.get("Content-Type") == paths.StaticIndex.content_type_of(rel), rel
+        assert res.headers.get("Content-Type") == files.StaticIndex.content_type_of(rel), rel
 
 
 async def test_static_serves_the_extensionless_vendored_license_as_text_plain(client):
@@ -1082,7 +1087,7 @@ async def test_concurrent_requests_during_a_cold_window_share_one_scan(
 
 
 async def test_manifest_rescans_after_the_cache_window_expires(client, served_dir, monkeypatch):
-    monkeypatch.setattr(routes_viewer, "INDEX_CACHE_TTL", 0.0)
+    monkeypatch.setattr(agent_static, "INDEX_CACHE_TTL", 0.0)
 
     res1 = await client.get("/manifest")
     assert {m["rel"] for m in res1.json["models"]} == {"widget.stl"}

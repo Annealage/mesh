@@ -1,13 +1,14 @@
-"""Mesh's layout of a served directory: the exchange files, the model scan and
-index, and the index of the packaged static tree.
+"""Mesh's layout of a served directory: the exchange files, and the model scan
+and index.
 
 This module has no HTTP awareness: it knows about a served directory and the
 files under it, not requests or responses. ``app.py`` and
 ``http/routes_viewer.py`` turn what this module produces into HTTP
 responses. The path-safety primitives underneath (``safe_join``, the guarded
 fixed-file reads and appends, atomic replacement, image and transcript
-creation) are not Mesh's own and live in ``agent/files.py``, so the agent
-layer and every product share one implementation of them.
+creation) and the index of a packaged static tree are not Mesh's own and live
+in ``agent/files.py``, so the agent layer and every product share one
+implementation of them.
 
 Files Mesh exchanges with an agent, by fixed name in the served directory:
     mesh-callouts.json   agent-authored callouts, read whole by
@@ -29,10 +30,11 @@ COMMENTS_LOG_NAME = "mesh-comments.log"
 CALLOUTS_JSON_NAME = "mesh-callouts.json"
 
 # Minimal extension -> content-type map (stdlib mimetypes misses .stl/.3mf).
-# Used for the packaged viewer, model bytes and callouts.json, none of
-# which are files an outside party can place into the served directory
-# under a name of their choosing; a served directory's images/ subtree is,
-# so /asset uses agent/files.py's ASSET_CONTENT_TYPES instead of this map.
+# Used for model bytes and callouts.json, neither of which is a file an
+# outside party can place into the served directory under a name of their
+# choosing; a served directory's images/ subtree is, so /asset uses
+# agent/files.py's ASSET_CONTENT_TYPES instead of this map, and the packaged
+# static trees use its STATIC_CONTENT_TYPES.
 CONTENT_TYPES = {
     ".stl": "application/vnd.ms-pki.stl",
     ".3mf": "model/3mf",
@@ -83,31 +85,6 @@ MAX_SCAN_DEPTH = 12
 # truncated is set so the listing is understood to be partial rather than
 # complete.
 MAX_SCAN_DIRS = 2000
-
-# Extensions the packaged static/ tree may serve, plus the one extensionless
-# name carved out below. This is an allowlist, not a denylist: a file with
-# any other extension sitting in static/ (an editor's ".bak", a source
-# map's ".map", a stray ".py") is simply invisible to the scan and therefore
-# unreachable under /static, regardless of what it contains, so dropping a
-# file into that directory can never make it servable by accident.
-STATIC_EXTENSIONS = {".html", ".css", ".js", ".json"}
-
-# The vendored three.js licence file ships as a bare "LICENSE" with no
-# extension, inside static/js/vendor/. It is carved out by name and by
-# directory rather than added to STATIC_EXTENSIONS itself, so the allowlist
-# above stays a pure extension test everywhere else in the tree and this one
-# exception cannot be widened by accident to any extensionless file anywhere
-# under static/.
-STATIC_LICENSE_DIRNAME = "vendor"
-STATIC_LICENSE_FILENAME = "LICENSE"
-
-# Cap on the number of files the static asset index will hold. static/ is a
-# fixed tree shipped inside this package, not a directory a served project
-# can grow, so 500 is ample headroom over the real file count with no
-# expectation of ever being reached; unlike MAX_INDEXED_FILES, hitting it
-# would mean something is wrong with the install, not with someone's
-# project, so it is worth a warning rather than a silent truncation.
-MAX_STATIC_FILES = 500
 
 
 def comments_path(serve_dir):
@@ -450,179 +427,3 @@ def build_model_index(serve_dir):
     serve_dir = resolve_serve_dir(serve_dir)
     models, truncated = scan_models(serve_dir)
     return ModelIndex(serve_dir, models, truncated)
-
-
-def _static_name_allowed(name, rel_parts):
-    """Whether ``name`` (a filename directly under the path ``rel_parts``
-    names) belongs in the static asset index; see STATIC_EXTENSIONS and
-    STATIC_LICENSE_DIRNAME for what this allows and why."""
-    if Path(name).suffix.lower() in STATIC_EXTENSIONS:
-        return True
-    return name == STATIC_LICENSE_FILENAME and STATIC_LICENSE_DIRNAME in rel_parts
-
-
-def _static_content_type(rel):
-    """Content type for a rel already confirmed present in a StaticIndex.
-
-    Reuses CONTENT_TYPES, the same table the packaged viewer's own HTML and
-    every model's bytes are served with: static/ is this package's own tree,
-    installed alongside the code that reads it, not user-supplied input the
-    way a served project's images/ subtree is, so there is no reason to
-    narrow its content types the way ASSET_CONTENT_TYPES narrows /asset's.
-    The one file with no extension to look up, the vendored LICENSE, is
-    plain text.
-    """
-    suffix = Path(rel).suffix.lower()
-    if suffix in CONTENT_TYPES:
-        return CONTENT_TYPES[suffix]
-    return "text/plain; charset=utf-8"
-
-
-def scan_static(static_dir):
-    """Scan the package's own ``static_dir`` for servable assets.
-
-    Returns ``(entries, truncated)`` the same shape ``scan_models`` returns,
-    minus the model-specific fields: each entry is ``{"rel", "path", "_dev",
-    "_ino"}``. The walk shares scan_models's shape (an explicit stack over
-    ``os.scandir``, dotfile and symlinked-directory exclusion, sorted
-    traversal for reproducible results) because those rules are about
-    walking a tree safely and deterministically, not about who controls its
-    contents, and both scans need exactly the same care there.
-
-    What differs is which files qualify, and why. ``scan_models`` defends a
-    directory an outside party can write into at any time; static/ is fixed
-    at install time and only as trustworthy as the Python environment
-    running this code already is, so:
-
-    * The extension allowlist (``_static_name_allowed``) is the qualifying
-      test in place of ``scan_models``'s hardlink-and-extension check, since
-      the risk here is not a hardlink smuggling in bytes from elsewhere but
-      an unrelated file (an editor backup, a source map) sitting in the
-      tree and becoming servable just by matching a route pattern.
-    * Symlinks are still refused and directories are still not descended
-      through one: a broken or redirected symlink in an installed package is
-      a packaging bug, not a trust boundary, but refusing it costs nothing
-      and a directory of static assets has no legitimate need for one.
-    * There is no depth or directory-count cap to match MAX_SCAN_DEPTH or
-      MAX_SCAN_DIRS: those defend against a served directory an attacker
-      can pad with arbitrarily many real directories, and static/ is a
-      fixed tree shipped by this package that no request can grow.
-    * Hard link count is deliberately not checked; see the comment at that
-      point in the loop below.
-    """
-    static_dir = resolve_serve_dir(static_dir)
-    entries = []
-    truncated = False
-    stack = [(static_dir, ())]
-    while stack:
-        dirpath, rel_parts = stack.pop()
-        try:
-            children = sorted(os.scandir(dirpath), key=lambda e: e.name)
-        except OSError:
-            continue
-
-        subdirs = []
-        cap_hit = False
-        for entry in children:
-            if entry.name.startswith("."):
-                continue
-            try:
-                st = entry.stat(follow_symlinks=False)
-            except OSError:
-                continue
-            if stat.S_ISDIR(st.st_mode):
-                subdirs.append(entry.name)
-                continue
-            if not stat.S_ISREG(st.st_mode):
-                continue
-            if not _static_name_allowed(entry.name, rel_parts):
-                continue
-            # Unlike scan_models, a second hard link is not refused here,
-            # and that asymmetry is deliberate. uv and pip both install a
-            # package's files by hardlinking them out of a local wheel
-            # cache rather than copying, so a legitimately installed
-            # three.module.js routinely has more than one link, and
-            # refusing it would make a normal install unservable. The
-            # served project directory the model scan defends is untrusted
-            # input a reviewer did not write; this package's own static/
-            # tree is not, because anything with write access to
-            # site-packages already controls this process outright, hard
-            # links or not. The symlink refusal and the dotfile exclusion
-            # above still apply to this tree exactly as they do to a served
-            # project's.
-            if len(entries) >= MAX_STATIC_FILES:
-                truncated = True
-                cap_hit = True
-                break
-            fpath = dirpath / entry.name
-            entries.append(
-                {
-                    "rel": "/".join(rel_parts + (entry.name,)),
-                    "path": fpath,
-                    "_dev": st.st_dev,
-                    "_ino": st.st_ino,
-                }
-            )
-        if cap_hit:
-            sys.stderr.write(
-                "warning: static asset index stopped at the %d file cap "
-                "(MAX_STATIC_FILES); an installed static/ tree should never "
-                "be this large\n" % MAX_STATIC_FILES
-            )
-            break
-        for name in sorted(subdirs, reverse=True):
-            stack.append((dirpath / name, rel_parts + (name,)))
-
-    entries.sort(key=lambda e: e["rel"])
-    return entries, truncated
-
-
-class StaticIndex:
-    """Lookup table over the package's own ``static/`` directory, built the
-    same way ``ModelIndex`` is built over a served project directory: every
-    route that serves a packaged asset resolves through this rather than
-    joining a request path onto disk, so a file present in the tree but not
-    matching ``scan_static``'s rules (wrong extension, a symlink, sitting
-    under a dotdir) simply is not a key here and is therefore unreachable,
-    the same guarantee ``ModelIndex`` gives for models.
-    """
-
-    def __init__(self, static_dir, entries, truncated):
-        self.static_dir = static_dir
-        self.truncated = truncated
-        self._by_rel = {e["rel"]: Path(e["path"]) for e in entries}
-        self._identity = {e["rel"]: (e["_dev"], e["_ino"]) for e in entries}
-
-    def by_rel(self, rel):
-        """Resolve a POSIX-style relative path to an absolute Path, or None."""
-        return self._by_rel.get(rel)
-
-    def identity_of(self, rel):
-        """Return the ``(st_dev, st_ino)`` the scan validated for ``rel``,
-        for the same reopen-time check ``ModelIndex.identity_of`` supports;
-        see that method for why a scan result and the later open can
-        disagree even without anything hostile involved (an editor's
-        write-new-file-then-rename-over-old edit is indistinguishable, at
-        the moment of the open, from a name relinked to something else)."""
-        return self._identity.get(rel)
-
-    @staticmethod
-    def content_type_of(rel):
-        """Content type to serve ``rel`` with; see ``_static_content_type``.
-
-        A static method rather than one reading ``self``: the answer depends
-        only on ``rel`` itself, not on any particular scan, so a route can
-        call it before or without ever fetching an index instance, and two
-        different ``StaticIndex`` instances always agree on it for the same
-        ``rel``.
-        """
-        return _static_content_type(rel)
-
-
-def build_static_index(static_dir):
-    """Scan ``static_dir`` and return a fresh ``StaticIndex`` of its current
-    contents. Synchronous filesystem work, same executor-offload contract as
-    ``build_model_index``."""
-    static_dir = resolve_serve_dir(static_dir)
-    entries, truncated = scan_static(static_dir)
-    return StaticIndex(static_dir, entries, truncated)

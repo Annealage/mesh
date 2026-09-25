@@ -7,8 +7,10 @@ Registers, against one served directory:
                                   under this package's static/ directory
     GET  /static/<path:rel>       any file in the package's static/ tree,
                                   resolved through the static asset index
+                                  (the agent layer's own front end is served
+                                  separately, under /agent/static/)
     GET  /manifest                model listing, rescanned at most once per
-                                  INDEX_CACHE_TTL seconds
+                                  INDEX_CACHE_TTL (agent/http/static.py) seconds
     GET  /model/<path:rel>        model bytes, resolved through the manifest
                                   index; the key the recursive scan makes
                                   unique, so this is the only route every
@@ -20,7 +22,6 @@ Registers, against one served directory:
                                   models share, since a recursive scan can
                                   index two models of the same bare filename
                                   in different directories
-    GET  /asset/<path:rel>        image bytes, restricted to an images/ subtree
     GET  /callouts, /callouts.json   agent-authored callouts (read-only here)
     POST /submit                  human pin-comment submissions
 
@@ -32,25 +33,25 @@ Files this module reads but never writes:
     mesh-callouts.json   written by an agent directly; served verbatim
 
 Deliberately absent: any route that serves a file under the served
-directory that the manifest scan did not list and that is not under
-images/. The viewer's own assets come only from this package's static/
-directory, resolved through the static asset index, never from the served
-directory.
+directory that the manifest scan did not list. The one route that does serve
+unindexed files, ``/asset`` for the images/ subtree, is the agent layer's
+(``agent/http/routes_chat.py``), because uploads and captures write there.
+The viewer's own assets come only from this package's static/ directory,
+resolved through the static asset index, never from the served directory.
 """
 
 import asyncio
 import datetime
 import json
 import os
-import stat
 import sys
-import time
 from pathlib import Path
 from urllib.parse import unquote
 
 from .. import paths
 from ..agent import files
-from ..agent.http import CHUNK_SIZE, Response, file_response, not_modified
+from ..agent.http import CHUNK_SIZE, Response
+from ..agent.http.static import make_index_cache, serve_indexed, static_tree
 from ..agent.http.ws import _origin_is_allowed, _token_is_allowed, refusal
 
 # Mode for a submission file this process creates. An existing file's own
@@ -65,167 +66,6 @@ STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 # containment, identity-pinning and content-type rules as the modules it
 # loads.
 VIEWER_HTML = STATIC_DIR / "viewer.html"
-
-# How long a scanned index (the model index for the served directory, or the
-# static index for this package's own static/ tree) is reused before the
-# next request triggers a fresh scan. One page load fetches the manifest and
-# then one model per visible part, plus the shell, the stylesheet and every
-# script the shell imports; without this, that single page load would pay
-# for one full walk per file instead of one walk shared across all of them.
-# The trade this makes: a model added, removed or changed on disk, or a
-# static file edited during development, can take up to this long to be
-# reflected, rather than appearing on the very next request.
-INDEX_CACHE_TTL = 1.0
-
-
-def _make_index_cache(build, target):
-    """Return a ``(get, invalidate)`` pair caching one ``build(target)`` scan.
-
-    ``build`` is ``paths.build_model_index`` or ``paths.build_static_index``,
-    called with ``target`` (a served directory or the package's static
-    directory) off the event loop, its result reused for up to
-    ``INDEX_CACHE_TTL`` seconds. This is the one caching implementation both
-    ``/model``, the ``.stl`` alias, ``/static`` and the packaged shell route
-    through, each with its own call to this factory rather than a second copy
-    of the logic, since the shape (scan off-loop, cache with a TTL, share one
-    in-flight scan, allow an explicit invalidate) is identical for a served
-    project's models and this package's own static files; only what gets
-    scanned differs.
-
-    Only one scan is ever in flight at a time. A cache miss stores the
-    scan's ``Task`` before awaiting it, so every request that arrives while
-    that scan is still running awaits the same task instead of launching its
-    own; without this, a page load's simultaneous manifest-plus-per-part (or
-    shell-plus-every-script) requests would each pay for a full scan during
-    every cold window, and a burst of concurrent requests during one cold
-    window would each launch a separate walk, all competing for the same
-    default executor that file reads and ``/submit`` writes also depend on.
-    """
-    cache = {"index": None, "at": 0.0, "pending": None}
-
-    async def _scan_and_cache():
-        loop = asyncio.get_running_loop()
-        idx = await loop.run_in_executor(None, build, target)
-        cache["index"] = idx
-        cache["at"] = time.monotonic()
-        return idx
-
-    async def get():
-        now = time.monotonic()
-        cached = cache["index"]
-        if cached is not None and now - cache["at"] < INDEX_CACHE_TTL:
-            return cached
-        pending = cache["pending"]
-        if pending is not None:
-            return await pending
-        loop = asyncio.get_running_loop()
-        task = loop.create_task(_scan_and_cache())
-        cache["pending"] = task
-        try:
-            return await task
-        finally:
-            cache["pending"] = None
-
-    def invalidate():
-        """Drop the cached scan so the next request rescans.
-
-        Called when a file's bytes turn out not to be the ones the scan
-        validated, which is what a regenerated file looks like: a build step
-        or a CAD script writing a new file and renaming it over the old one
-        leaves a different inode behind. Rescanning immediately keeps the
-        documented workflow of regenerating a model, or editing a script
-        during development, and reloading the page, rather than making the
-        page wait out the cache window on a stale identity.
-        """
-        cache["index"] = None
-        cache["at"] = 0.0
-
-    return get, invalidate
-
-
-def _lstat_or_none(path):
-    """``os.lstat`` returning None instead of raising, for a file that may have
-    gone between an index scan and now."""
-    try:
-        return os.lstat(path)
-    except OSError:
-        return None
-
-
-async def _maybe_not_modified(req, target):
-    """Return a 304 if the client's ``If-None-Match`` matches ``target``, else None.
-
-    The tag is computed from a fresh ``lstat`` of the indexed path rather than
-    from whatever the cached scan recorded, so a file edited within the index
-    cache window is never affirmed as unchanged. That costs one stat per
-    conditional request, which is what a megabyte of vendored JavaScript is
-    worth avoiding on a phone over a tailnet.
-
-    ``lstat`` rather than ``stat``: a symlink appearing at an indexed name is
-    refused here for the same reason the open path refuses it, so this cannot
-    become a way to have a link's target validated. A tag mismatch simply
-    falls through to the ordinary serve path, which applies the full open-time
-    identity check, so a wrong or stale client tag costs a transfer and never
-    a wrong answer.
-    """
-    header = req.headers.get("If-None-Match")
-    if not header:
-        return None
-    loop = asyncio.get_running_loop()
-    st = await loop.run_in_executor(None, _lstat_or_none, target)
-    if st is None or not stat.S_ISREG(st.st_mode):
-        return None
-    tags = [t.strip() for t in header.split(",")]
-    # "*" asks for a 304 if any representation exists at all, which one
-    # confirmed here does.
-    if "*" in tags or files.file_validator(st) in tags:
-        return not_modified(st)
-    return None
-
-
-async def _serve_indexed(
-    get_idx, invalidate, req, request_key, lookup, content_type_for, revalidatable=False
-):
-    """Serve one file through a cached index, rescanning once on a mismatch.
-
-    ``get_idx`` and ``invalidate`` come from ``_make_index_cache``, so this
-    function has no idea whether it is serving a model or a packaged static
-    asset; ``lookup(idx)`` returns the ``(target, identity)`` pair for
-    whichever index it was given, and everything below is the retry policy
-    the two cases share.
-
-    The scan pins each file's inode and the open refuses anything else,
-    which is what stops a name being relinked to a file outside the served
-    directory between the two. A regenerated file is indistinguishable from
-    that at the moment of the open, so one retry after a fresh scan
-    separates them: a real regeneration resolves to the new file, while a
-    relinked outside file fails the scan's own containment and link checks
-    and stays unreachable.
-
-    ``revalidatable`` is set by the routes serving this package's own assets,
-    which are large, change only when the package does, and are fetched again
-    on every page load. It is not set for model bytes; see ``file_response``.
-    """
-    for attempt in (0, 1):
-        idx = await get_idx()
-        target, identity = lookup(idx)
-        if target is None:
-            if attempt == 0:
-                invalidate()
-                continue
-            return "not found: %s" % request_key, 404
-        if revalidatable:
-            unchanged = await _maybe_not_modified(req, target)
-            if unchanged is not None:
-                return unchanged
-        res = await file_response(
-            target, content_type_for(target), req.method, identity, revalidatable
-        )
-        if res.status_code != 404:
-            return res
-        if attempt == 0:
-            invalidate()
-    return "not found: %s" % request_key, 404
 
 
 def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_token=False):
@@ -295,7 +135,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
                 )
             return log_state["fd"]
 
-    get_index, invalidate_index = _make_index_cache(paths.build_model_index, serve_dir)
+    get_index, invalidate_index = make_index_cache(paths.build_model_index, serve_dir)
     # Published so the models watcher can drop the cached scan at the moment it
     # decides the directory changed. Without that, the watcher's push races the
     # cache: the browser refetches ``/manifest`` immediately, is served the scan
@@ -303,9 +143,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     # nothing left to prompt another fetch. A part added during a session would
     # then stay invisible until something else happened to change.
     app.mesh_invalidate_model_index = invalidate_index
-    get_static_index, invalidate_static_index = _make_index_cache(
-        paths.build_static_index, STATIC_DIR
-    )
+    serve_static = static_tree(STATIC_DIR)
 
     @app.get("/")
     @app.get("/index.html")
@@ -315,28 +153,11 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
         # pinning (a rebuild during development that replaces viewer.html
         # with a new inode is served after one rescan, not 404ed) and the
         # same content-type lookup as everything under /static.
-        return await _serve_indexed(
-            get_static_index,
-            invalidate_static_index,
-            req,
-            "viewer.html",
-            lambda idx: (idx.by_rel("viewer.html"), idx.identity_of("viewer.html")),
-            lambda target: paths.CONTENT_TYPES[".html"],
-            revalidatable=True,
-        )
+        return await serve_static(req, "viewer.html")
 
     @app.get("/static/<path:rel>")
     async def static_asset(req, rel):
-        key = unquote(rel)
-        return await _serve_indexed(
-            get_static_index,
-            invalidate_static_index,
-            req,
-            rel,
-            lambda idx: (idx.by_rel(key), idx.identity_of(key)),
-            lambda target: paths.StaticIndex.content_type_of(key),
-            revalidatable=True,
-        )
+        return await serve_static(req, unquote(rel), rel)
 
     @app.get("/manifest")
     async def manifest(req):
@@ -355,7 +176,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     @app.get("/model/<path:rel>")
     async def model(req, rel):
         key = unquote(rel)
-        return await _serve_indexed(
+        return await serve_indexed(
             get_index,
             invalidate_index,
             req,
@@ -379,7 +200,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     @app.get(r"/<re:[^\x2f]+\.[sS][tT][lL]:name>")
     async def model_alias(req, name):
         key = unquote(name)
-        return await _serve_indexed(
+        return await serve_indexed(
             get_index,
             invalidate_index,
             req,
@@ -387,15 +208,6 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
             lambda idx: (idx.by_file(key), idx.identity_of_file(key)),
             lambda target: paths.CONTENT_TYPES[".stl"],
         )
-
-    @app.get("/asset/<path:rel>")
-    async def asset(req, rel):
-        found = files.resolve_asset(serve_dir, unquote(rel))
-        if found is None:
-            return "not found: %s" % rel, 404
-        target, identity = found
-        ctype = files.ASSET_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
-        return await _file_or_same_404(target, ctype, req.method, rel, identity)
 
     @app.get("/callouts")
     @app.get("/callouts.json")
@@ -505,25 +317,6 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
             sys.stderr.write("warning: could not print submit summary: %s\n" % exc)
 
         return {"ok": True, "count": len(data), "path": str(comments_json)}
-
-
-async def _file_or_same_404(target, ctype, method, request_key, expect_identity=None):
-    """Stream ``target``, or fall back to the caller's own miss message.
-
-    The caller has already confirmed ``target`` exists as a file; the only
-    way ``file_response`` still 404s from here is an open failure (a
-    permission error, or the file vanishing in the race between that check
-    and this call). That failure must read exactly like the caller's own
-    "the path never resolved to anything" 404 for ``request_key`` - not
-    file_response's own generic body - so a client cannot use a difference
-    in wording to tell "does not exist" apart from "exists but is
-    unreadable" for a path it does not have permission to see the real
-    answer to.
-    """
-    res = await file_response(target, ctype, method, expect_identity)
-    if res.status_code == 404:
-        return "not found: %s" % request_key, 404
-    return res
 
 
 def _write_comments(record, comments_json, log_fd):

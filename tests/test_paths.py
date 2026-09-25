@@ -1,8 +1,8 @@
-"""Unit tests for the model and static scans in ``paths.py``, independent of
-any HTTP route.
+"""Unit tests for the model scan in ``paths.py`` and the static scan and file
+creation in ``agent/files.py``, independent of any HTTP route.
 
 These exercise ``scan_models``, ``_compute_labels``, ``ModelIndex``,
-``scan_static`` and ``StaticIndex`` directly against a real filesystem tree
+``files.scan_static`` and ``files.StaticIndex`` directly against a real filesystem tree
 (or, for the label algorithm, against a synthetic list of ``rel`` values with
 no filesystem involved at all), so a defect in the scan itself is pinned at
 the layer it lives in rather than only visible through a route's response.
@@ -290,7 +290,7 @@ def test_scan_static_indexes_only_allowed_extensions(tmp_path):
     (tmp_path / "notes.bak").write_text("not servable")
     (tmp_path / "source.map").write_text("not servable either")
 
-    entries, truncated = paths.scan_static(tmp_path)
+    entries, truncated = files.scan_static(tmp_path)
     rels = {e["rel"] for e in entries}
     assert rels == {"app.css", "main.js", "data.json", "index.html"}
     assert truncated is False
@@ -302,7 +302,7 @@ def test_scan_static_license_requires_a_vendor_ancestor_directory(tmp_path):
     vendor.mkdir()
     (vendor / "LICENSE").write_text("vendored license")
 
-    entries, _ = paths.scan_static(tmp_path)
+    entries, _ = files.scan_static(tmp_path)
     rels = {e["rel"] for e in entries}
     assert rels == {"vendor/LICENSE"}
 
@@ -312,7 +312,7 @@ def test_scan_static_excludes_a_dotdir(tmp_path):
     hidden.mkdir()
     (hidden / "file.js").write_text("console.log(1);")
 
-    entries, _ = paths.scan_static(tmp_path)
+    entries, _ = files.scan_static(tmp_path)
     assert entries == []
 
 
@@ -321,7 +321,7 @@ def test_scan_static_refuses_a_symlink(tmp_path):
     real.write_text("console.log('real');")
     (tmp_path / "evil.js").symlink_to(real)
 
-    entries, _ = paths.scan_static(tmp_path)
+    entries, _ = files.scan_static(tmp_path)
     rels = {e["rel"] for e in entries}
     assert rels == {"real.js"}
 
@@ -338,18 +338,18 @@ def test_scan_static_does_not_refuse_a_hardlink(tmp_path):
     except OSError as exc:
         pytest.skip("cannot hardlink within this directory: %s" % exc)
 
-    entries, truncated = paths.scan_static(tmp_path)
+    entries, truncated = files.scan_static(tmp_path)
     rels = {e["rel"] for e in entries}
     assert rels == {"one.js", "two.js"}
     assert truncated is False
 
 
 def test_scan_static_cap_truncates_and_warns(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr(paths, "MAX_STATIC_FILES", 2)
+    monkeypatch.setattr(files, "MAX_STATIC_FILES", 2)
     for i in range(5):
         (tmp_path / ("f%d.js" % i)).write_text("console.log(%d);" % i)
 
-    entries, truncated = paths.scan_static(tmp_path)
+    entries, truncated = files.scan_static(tmp_path)
     assert truncated is True
     assert len(entries) == 2
     assert "MAX_STATIC_FILES" in capsys.readouterr().err
@@ -359,14 +359,14 @@ def test_scan_static_cap_truncates_and_warns(tmp_path, monkeypatch, capsys):
 
 
 def test_static_index_content_type_of_known_and_extensionless_files():
-    assert paths.StaticIndex.content_type_of("app.css") == paths.CONTENT_TYPES[".css"]
-    assert paths.StaticIndex.content_type_of("main.js") == paths.CONTENT_TYPES[".js"]
-    assert paths.StaticIndex.content_type_of("data.json") == paths.CONTENT_TYPES[".json"]
-    assert paths.StaticIndex.content_type_of("vendor/LICENSE") == "text/plain; charset=utf-8"
+    assert files.StaticIndex.content_type_of("app.css") == "text/css; charset=utf-8"
+    assert files.StaticIndex.content_type_of("main.js") == "text/javascript; charset=utf-8"
+    assert files.StaticIndex.content_type_of("data.json") == "application/json"
+    assert files.StaticIndex.content_type_of("vendor/LICENSE") == "text/plain; charset=utf-8"
 
 
 def test_static_index_by_rel_and_identity_of_absent_key(tmp_path):
-    idx = paths.build_static_index(tmp_path)
+    idx = files.build_static_index(tmp_path)
     assert idx.by_rel("does-not-exist.js") is None
     assert idx.identity_of("does-not-exist.js") is None
 
@@ -374,7 +374,7 @@ def test_static_index_by_rel_and_identity_of_absent_key(tmp_path):
 def test_build_static_index_resolves_present_files(tmp_path):
     (tmp_path / "main.js").write_text("console.log(1);")
 
-    idx = paths.build_static_index(tmp_path)
+    idx = files.build_static_index(tmp_path)
     assert idx.by_rel("main.js") == tmp_path / "main.js"
     assert idx.identity_of("main.js") is not None
 

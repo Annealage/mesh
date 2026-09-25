@@ -167,15 +167,19 @@ include = [
 # static/ subdirectory whose name matches a gitignore pattern (this repo's
 # .gitignore has "lib/", "build/", "parts/" and "var/") would silently drop
 # out of both the sdist and the wheel. "artifacts" bypasses that VCS-ignore
-# filtering, so everything under static/ ships regardless of directory
-# naming. Both the sdist and the wheel targets need this entry: the release
-# workflow (.github/workflows/publish.yml) runs plain `uv build`, which
-# builds the wheel from the sdist it just produced rather than from the
-# working tree, so a wheel-only override here would ship a wheel with the
-# assets during local `--wheel` testing while the published wheel, built
-# from an sdist missing them, would silently drop them again.
+# filtering, so everything under both static trees (Mesh's static/ and the
+# agent layer's agent/static/) ships regardless of directory naming. Both the
+# sdist and the wheel targets need this entry: the release workflow
+# (.github/workflows/publish.yml) runs plain `uv build`, which builds the
+# wheel from the sdist it just produced rather than from the working tree,
+# so a wheel-only override here would ship a wheel with the assets during
+# local `--wheel` testing while the published wheel, built from an sdist
+# missing them, would silently drop them again.
 [tool.hatch.build]
-artifacts = ["src/annealage_mesh/static/**"]
+artifacts = [
+    "src/annealage_mesh/static/**",
+    "src/annealage_mesh/agent/static/**",
+]
 
 # Ruff is the linter and the formatter for this project. Its F rules are
 # pyflakes, which is the check this codebase is written against; every other

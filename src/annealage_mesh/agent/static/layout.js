@@ -1,26 +1,23 @@
 /**
  * Panel toggle at wide viewports, tab bar at narrow ones.
  *
- * At 901px and up there is no tab bar: the Panel button shows or hides
- * #side and #app always fills the rest of #main. At 900px and below the
- * Panel button is hidden by CSS and a tab bar governs which one of #app and
- * #side is displayed; arbitrating a drawer transform and a tab bar over the
- * same element would be the complexity the narrow layout exists to avoid,
- * so at that width exactly one of them is ever shown.
+ * At 901px and up there is no tab bar: the Panel button toggles the body's
+ * `panel-open` class, which the page's own stylesheet uses to show or hide
+ * its side panel, and every other pane stays as the page lays it out. At
+ * 900px and below the Panel button is hidden by CSS and a tab bar governs
+ * which one of the panes is displayed; arbitrating a drawer transform and a
+ * tab bar over the same element would be the complexity the narrow layout
+ * exists to avoid, so at that width exactly one of them is ever shown.
+ *
+ * The page names its panes: `initLayout`'s `tabs` is the one list both the
+ * tab bar and the show/hide logic below read, so a pane (the chat pane
+ * included) needs only an entry there and a target element to exist, not a
+ * change to the logic that renders or switches tabs.
  */
 
 import { store } from "./store.js";
 
 const NARROW_QUERY = "(max-width: 900px)";
-
-// The tab bar and the pane show/hide logic below both read this list, so a
-// third tab (M5 adds a chat pane) needs only a new entry here and a target
-// element to exist, not a change to the logic that renders or switches tabs.
-const TABS = [
-  { id: "model", label: "Model", target: "#app" },
-  { id: "review", label: "Review", target: "#side" },
-  { id: "chat", label: "Chat", target: "#chat" },
-];
 
 /** Whether the tab bar is the one governing pane visibility right now. */
 export function isNarrow() {
@@ -40,13 +37,21 @@ export function activateTab(id) {
   store.setActiveTab(id);
 }
 
-export function initLayout() {
+/**
+ * `tabs` is `[{id, label, target}]`, `target` a selector for the pane the
+ * tab shows, in tab-bar order; the first is the tab a narrow viewport starts
+ * on. `tabbar` and `panelButton` default to the page's `#tabbar` and
+ * `#panelBtn`.
+ */
+export function initLayout({
+  tabs,
+  tabbar = document.getElementById("tabbar"),
+  panelButton = document.getElementById("panelBtn"),
+}) {
   const mq = matchMedia(NARROW_QUERY);
-  const tabbar = document.getElementById("tabbar");
-  const panelBtn = document.getElementById("panelBtn");
 
   tabbar.innerHTML = "";
-  TABS.forEach((t) => {
+  tabs.forEach((t) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.dataset.tab = t.id;
@@ -64,17 +69,17 @@ export function initLayout() {
   function applyPanes() {
     const state = store.getState();
     document.body.classList.toggle("panel-open", state.panelOpen);
-    panelBtn.classList.toggle("on", state.panelOpen);
+    panelButton.classList.toggle("on", state.panelOpen);
     if (mq.matches) {
-      TABS.forEach((t) => {
+      tabs.forEach((t) => {
         const el = document.querySelector(t.target);
         if (el) el.style.display = t.id === state.activeTab ? "" : "none";
       });
     } else {
       // Wide layout: clear any inline override the narrow branch left
       // behind so the panel-open CSS rule (keyed off the class just above)
-      // governs #side, and #app is always shown.
-      TABS.forEach((t) => {
+      // governs the side panel, and every other pane is shown.
+      tabs.forEach((t) => {
         const el = document.querySelector(t.target);
         if (el) el.style.display = "";
       });
@@ -91,15 +96,15 @@ export function initLayout() {
   // currently applies; re-running applyPanes is what makes that visible.
   mq.addEventListener("change", applyPanes);
 
-  panelBtn.addEventListener("click", () => store.setPanelOpen(!store.getState().panelOpen));
+  panelButton.addEventListener("click", () => store.setPanelOpen(!store.getState().panelOpen));
 
   // Wide viewports start with the panel open; narrow viewports start on the
-  // Model tab. These are independent initial choices: the Panel button is
+  // first tab. These are independent initial choices: the Panel button is
   // hidden by CSS at narrow widths, so panelOpen has no visible effect
   // there, and the tab bar is hidden at wide widths, so activeTab has no
   // visible effect there either.
   store.setPanelOpen(!mq.matches);
-  store.setActiveTab("model");
+  store.setActiveTab(tabs[0].id);
   applyTabButtons(store.getState());
   applyPanes();
 }

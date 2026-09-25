@@ -20,8 +20,8 @@
 
 import * as THREE from "three";
 import { STLLoader } from "./vendor/STLLoader.js";
+import { showError, toast } from "agent/ui.js";
 import { store } from "./store.js";
-import { showError, toast } from "./ui.js";
 
 // Distinct colors auto-assigned to models in manifest order (cycled if
 // there are more models than colors).
@@ -255,8 +255,8 @@ export function initModels({ scene, fitView, meshes }) {
   }, 4000);
 
   // Handed to ws.js by main.js, the same way pins.js hands over
-  // refetchCallouts: ws.js calls this on a `models_changed` push, and once on
-  // every hello, since a reconnect may have missed the push that happened while
-  // the socket was down.
+  // refetchCallouts: as the `models_changed` handler in `onEvent`, and in
+  // `onLive`, once on every hello, since a reconnect may have missed the push
+  // that happened while the socket was down.
   return { refetchModels: () => loadManifest() };
 }
