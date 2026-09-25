@@ -1,13 +1,15 @@
-"""The on-disk shape of ``.mesh/sessions/`` and ``.mesh/state.json``, and the
-lookups ``-c``/``-r`` (plan section 3.4) resolve a session id through.
+"""The on-disk shape of ``<state dir>/sessions/`` and ``<state dir>/state.json``,
+and the lookups ``-c``/``-r`` (plan section 3.4) resolve a session id through.
 
-One Mesh session is one directory, ``.mesh/sessions/<sid>/``, holding
+``<state dir>`` is the installed product's ``state_dirname`` under the
+project directory (Mesh: ``.mesh/``). One session is one directory,
+``<state dir>/sessions/<sid>/``, holding
 ``events.jsonl`` (opened and written by ``session/events.py``'s
 ``EventLog``; this module only reads it back) and ``meta.json`` (owned by
 this module: the handful of facts ``events.jsonl`` cannot answer on its
-own). ``<sid>`` is Mesh's own identifier, generated once by
+own). ``<sid>`` is the product's own identifier, generated once by
 ``new_session_id`` and used as the directory name, the id ``-r`` lists and
-accepts, and the key ``.mesh/state.json`` remembers for ``-c``. It is
+accepts, and the key ``<state dir>/state.json`` remembers for ``-c``. It is
 never the same value as ``sdk_session_id``, which is the underlying
 ``claude`` CLI's own conversation id: the two are recorded side by side in
 ``meta.json`` because a session exists (and has a directory, an event
@@ -17,7 +19,7 @@ scoped to the CLI's notion of cwd (plan section 3.4) while a resume needs
 an id that stays meaningful regardless of where this process happens to
 be run from.
 
-``meta.json``'s ``project_key`` is a defence against a ``.mesh/`` directory
+``meta.json``'s ``project_key`` is a defence against a state directory
 copied or moved out of the project tree it was created for: it is computed
 once, from the resolved project directory, at session creation, and every
 lookup in this module recomputes the caller's own current project key and
@@ -47,7 +49,8 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-MESH_DIRNAME = ".mesh"
+from . import product
+
 SESSIONS_DIRNAME = "sessions"
 STATE_FILENAME = "state.json"
 META_FILENAME = "meta.json"
@@ -59,12 +62,14 @@ EVENTS_FILENAME = "events.jsonl"
 FIRST_USER_TEXT_LIMIT = 200
 
 
-def mesh_dir(project_dir) -> Path:
-    return Path(project_dir) / MESH_DIRNAME
+def state_dir(project_dir) -> Path:
+    """The product's per-project state directory: sessions, ``state.json``,
+    the lock, ``permissions.toml`` and the project settings file."""
+    return Path(project_dir) / product.current().state_dirname
 
 
 def sessions_dir(project_dir) -> Path:
-    return mesh_dir(project_dir) / SESSIONS_DIRNAME
+    return state_dir(project_dir) / SESSIONS_DIRNAME
 
 
 def session_dir(project_dir, sid: str) -> Path:
@@ -80,7 +85,7 @@ def meta_path(project_dir, sid: str) -> Path:
 
 
 def state_path(project_dir) -> Path:
-    return mesh_dir(project_dir) / STATE_FILENAME
+    return state_dir(project_dir) / STATE_FILENAME
 
 
 def project_key_for_directory(directory) -> str:
@@ -114,7 +119,7 @@ class SessionInfo:
     """Everything ``-r``'s listing, and a resolved ``-r SID``, need about
     one session. ``sdk_session_id`` is ``None`` for a session whose SDK
     client never connected (a crash before the first turn, or a viewer-only
-    run that never had one); such a session is still resumable as a Mesh
+    run that never had one); such a session is still resumable as a product
     session id, just not as a conversation the SDK can pick back up, and
     the caller resolving it is the one that decides what to do about that.
     """
@@ -181,7 +186,7 @@ def _turn_stats(path: Path) -> tuple:
 
 
 def create_session(project_dir, sid: Optional[str] = None) -> str:
-    """Create ``.mesh/sessions/<sid>/`` and its initial ``meta.json``.
+    """Create ``<state dir>/sessions/<sid>/`` and its initial ``meta.json``.
 
     ``sid`` is generated if not given. ``events.jsonl`` is not created
     here: ``session/events.py``'s ``EventLog`` opens it with ``O_CREAT``

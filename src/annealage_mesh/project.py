@@ -48,12 +48,13 @@ import subprocess
 from pathlib import Path
 
 from . import paths
+from .agent import files
 
 # The two directories a served project needs. "images" is spelled from
-# paths.IMAGES_DIRNAME rather than repeated as a literal, so the name the
+# files.IMAGES_DIRNAME rather than repeated as a literal, so the name the
 # asset route serves from and the name this module creates can never drift
 # apart from each other.
-SCAFFOLD_DIRS = ("models", paths.IMAGES_DIRNAME)
+SCAFFOLD_DIRS = ("models", files.IMAGES_DIRNAME)
 
 # The CAD scaffold: a helper-scripts directory, a dimension file, and a
 # model template.  These are created by ``ensure_project`` alongside the
@@ -116,8 +117,8 @@ def gitignore_body():
     """The generated ``.gitignore``'s exact contents.
 
     ``.mesh/`` is ignored as a whole except its own ``config.toml``, which a
-    project is meant to commit and share: it holds no secret, since the
-    per-run token lives in ``.mesh/lock`` and is regenerated every start,
+    project is meant to commit and share: it holds no secret (the per-run
+    tokens are never written to disk; ``.mesh/lock`` holds a pid and a port),
     while ``.mesh/state.json``, ``.mesh/permissions.toml`` and
     ``.mesh/sessions/`` hold session and machine-local state nobody else's
     checkout needs.
@@ -174,7 +175,7 @@ def claude_md_body(project_dir):
         "viewer picks up a changed file with no restart." % models_dir,
         "- `%s/` holds uploads, sketch composites, cross-section PNGs and "
         "captured views, meant to be committed as evidence of what a part "
-        "looked like at some point in review." % paths.IMAGES_DIRNAME,
+        "looked like at some point in review." % files.IMAGES_DIRNAME,
         "- `%s` is the single source of truth for all measured values; "
         "the model script reads it, never hardcodes a dimension." % DIMENSIONS_NAME,
         "- `model.py` is the CadQuery build script; run with "
@@ -206,7 +207,7 @@ def _scaffold_file(project_dir, name, body, force, created, kept, regenerated):
     byte, so a human's own edits to a generated file never get read back at
     all, let alone rewritten.
 
-    Writes through ``paths.atomic_replace`` rather than a plain open: that
+    Writes through ``files.atomic_replace`` rather than a plain open: that
     function moves a temporary file into place with ``os.replace``, which
     replaces the directory entry named ``name`` outright rather than
     following it, so a symlink planted at that name (a hazard the project
@@ -219,7 +220,7 @@ def _scaffold_file(project_dir, name, body, force, created, kept, regenerated):
     if existed and not force:
         kept.append(name)
         return
-    paths.atomic_replace(target, body.encode("utf-8"))
+    files.atomic_replace(target, body.encode("utf-8"))
     (regenerated if existed else created).append(name)
 
 
@@ -346,7 +347,7 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
     from .cad import HELPER_SCRIPTS, script_source
     from .cad.scaffold import dimensions_json_body, model_py_body
 
-    project_dir = paths.resolve_serve_dir(project_dir)
+    project_dir = files.resolve_serve_dir(project_dir)
     project_dir.mkdir(parents=True, exist_ok=True)
 
     created = []
@@ -391,7 +392,7 @@ def ensure_project(project_dir, *, git=True, force=False, run=subprocess.run, wh
         if script_target.exists():
             kept.append(rel)
         else:
-            paths.atomic_replace(script_target, script_source(script_name).encode("utf-8"))
+            files.atomic_replace(script_target, script_source(script_name).encode("utf-8"))
             created.append(rel)
 
     git_result = _ensure_git(project_dir, run=run, which=which) if git else None

@@ -48,7 +48,7 @@ The startup output is worth reading once, because it tells you four things you w
 
 The URL carries a per-run token in its fragment, which the browser keeps out of server logs and out of the `Referer` header. The **exposure line** says what the server is reachable on, and prints every run whether or not you passed `--host`, because a default is exactly the case where nobody typed a flag to remind them. The **agent posture** line says which containment is actually in effect rather than the one that was requested; if a dependency is missing it says so and names it.
 
-Your browser opens automatically. `--no-open` stops that.
+Your browser opens automatically, on a one-time link that logs that tab in and then stops working, so the token itself never appears on the browser's command line. The `open:` link above is the reusable one, for another tab or device. `--no-open` stops the automatic open.
 
 ## Choosing an agent backend
 
@@ -397,7 +397,7 @@ Git configuration is part of this too, but only when it can act. A repository's 
 | `*.stl` | Your parts. Added, regenerated or deleted, the viewer follows within a fraction of a second. |
 | `.mesh/sessions/` | One directory per session, holding its event log. |
 | `.mesh/permissions.toml` | Tools you chose "Always allow" for. Plain TOML, safe to edit or delete. |
-| `.mesh/lock` | Held while a server is running here. Stale locks are reclaimed automatically. |
+| `.mesh/lock` | Held while a server is running here; holds its pid and port, no token. Stale locks are reclaimed automatically. |
 
 Only `.stl` files are served, and only ones that are regular files inside the served tree: symlinks are refused rather than followed, so a link cannot expose a file from outside the directory you chose to share.
 
@@ -409,7 +409,7 @@ Only `.stl` files are served, and only ones that are regular files inside the se
 | `--port PORT` | TCP port. Default 8765. |
 | `--host HOST` | Bind address: an IP, a resolvable name, `0.0.0.0`, or `tailscale`. Default `127.0.0.1`. |
 | `--origin ORIGIN` | An additional allowed browser `Origin`. Repeatable. For reverse proxies. |
-| `--token TOKEN` | Use this token instead of a generated one. |
+| `--token TOKEN` | Use this token instead of a generated one. The token is then on the process's command line for the whole run, where any process on the machine (the agent's shell included) can read it with `ps`. |
 | `--no-open` | Do not open a browser. |
 | `--backend NAME` | `claude`, `codex` or `omp`. Unset, the installed one is used, or you're asked when there are several. |
 | `--save-default` | Keep this run's backend as your default for every project, in your `settings.toml`. |
@@ -451,7 +451,7 @@ A subcommand is only recognised as the first argument, so a directory of models 
 
 **The port is in use.** Another server, possibly another Mesh, has it. Pass `--port`.
 
-**"It is serving:" and a URL.** A Mesh is already running for this directory. Open the URL it printed, or stop the other one.
+**"It is serving:" and an address.** A Mesh is already running for this directory. The address carries no access token, so it will not log you in on its own: open the link that instance printed in its own startup banner (the `open:` line), or stop the other one.
 
 **A model does not appear.** It must be a regular `.stl` file inside the served tree. Symlinks are refused, and files under dot-directories are skipped. A part the agent has just generated should show up within about a second; if it does not, check the connection pill in the top bar, since the update is pushed over the WebSocket and a page showing "Reopen URL" is not receiving pushes at all.
 

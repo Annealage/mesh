@@ -49,8 +49,9 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .. import paths
-from . import CHUNK_SIZE, Response, file_response, not_modified
-from .ws import _origin_is_allowed, _token_is_allowed, refusal
+from ..agent import files
+from ..agent.http import CHUNK_SIZE, Response, file_response, not_modified
+from ..agent.http.ws import _origin_is_allowed, _token_is_allowed, refusal
 
 # Mode for a submission file this process creates. An existing file's own
 # mode is preserved instead; see _write_comments.
@@ -177,7 +178,7 @@ async def _maybe_not_modified(req, target):
     tags = [t.strip() for t in header.split(",")]
     # "*" asks for a 304 if any representation exists at all, which one
     # confirmed here does.
-    if "*" in tags or paths.file_validator(st) in tags:
+    if "*" in tags or files.file_validator(st) in tags:
         return not_modified(st)
     return None
 
@@ -257,7 +258,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     breaking that is not worth what the token adds on top of the ``Origin``
     check for a run with no agent attached to it.
     """
-    serve_dir = paths.resolve_serve_dir(serve_dir)
+    serve_dir = files.resolve_serve_dir(serve_dir)
     comments_json = paths.comments_path(serve_dir)
 
     # Opened on the first submission and then held, so the log's name is
@@ -287,7 +288,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
                 loop = asyncio.get_running_loop()
                 log_state["fd"] = await loop.run_in_executor(
                     None,
-                    paths.open_fixed_file_for_append,
+                    files.open_fixed_file_for_append,
                     serve_dir,
                     paths.COMMENTS_LOG_NAME,
                     _RECORD_FILE_MODE,
@@ -389,11 +390,11 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
 
     @app.get("/asset/<path:rel>")
     async def asset(req, rel):
-        found = paths.resolve_asset(serve_dir, unquote(rel))
+        found = files.resolve_asset(serve_dir, unquote(rel))
         if found is None:
             return "not found: %s" % rel, 404
         target, identity = found
-        ctype = paths.ASSET_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        ctype = files.ASSET_CONTENT_TYPES.get(target.suffix.lower(), "application/octet-stream")
         return await _file_or_same_404(target, ctype, req.method, rel, identity)
 
     @app.get("/callouts")
@@ -408,7 +409,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
         # target served.
         loop = asyncio.get_running_loop()
         raw = await loop.run_in_executor(
-            None, paths.read_fixed_file, serve_dir, paths.CALLOUTS_JSON_NAME
+            None, files.read_fixed_file, serve_dir, paths.CALLOUTS_JSON_NAME
         )
         if raw is None:
             return {"annotations": []}
@@ -474,7 +475,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
         # non-regular entry needs refusing. The log is a descriptor opened and
         # validated once, because resolving that name per write is a race an
         # attacker with write access to this directory wins.
-        safe_json = paths.safe_fixed_file(serve_dir, paths.COMMENTS_JSON_NAME)
+        safe_json = files.safe_fixed_file(serve_dir, paths.COMMENTS_JSON_NAME)
         if safe_json is None:
             return {
                 "ok": False,
@@ -532,20 +533,20 @@ def _write_comments(record, comments_json, log_fd):
     submit does not stall the event loop's other connections for the
     duration of the write.
 
-    The JSON record goes through ``paths.atomic_replace``, so two submissions
+    The JSON record goes through ``files.atomic_replace``, so two submissions
     arriving together leave one complete record rather than one record's bytes
     overlaid on another's, and a reader never observes a half-written file.
 
     ``log_fd`` is a descriptor the caller opened and validated once, and
     holds for the process's lifetime; see
-    ``paths.open_fixed_file_for_append`` for why the name is not resolved per
+    ``files.open_fixed_file_for_append`` for why the name is not resolved per
     write. The record needs no such treatment: it goes to a fresh temporary
     file and is moved into place with ``os.replace``, which acts on the
     directory entry and writes through neither a symlink nor a hardlink
     sitting at the destination.
     """
     payload = json.dumps(record, indent=2) + "\n"
-    paths.atomic_replace(comments_json, payload.encode("utf-8"), _RECORD_FILE_MODE)
+    files.atomic_replace(comments_json, payload.encode("utf-8"), _RECORD_FILE_MODE)
 
     # One O_APPEND write per line. O_APPEND makes the seek and the write one
     # operation, so concurrent submissions interleave between lines and never

@@ -22,10 +22,10 @@ import json
 import pytest
 from claude_agent_sdk import Transport
 
-from annealage_mesh import paths
-from annealage_mesh.session import turn_images
-from annealage_mesh.session.base import AGENT_READY, AgentError
-from annealage_mesh.session.sdk import SdkSession
+from annealage_mesh.agent import files
+from annealage_mesh.agent.session import turn_images
+from annealage_mesh.agent.session.base import AGENT_READY, AgentError
+from annealage_mesh.agent.session.sdk import SdkSession
 
 pytestmark = pytest.mark.asyncio
 
@@ -300,7 +300,7 @@ async def test_a_path_outside_images_is_refused_as_a_note_with_no_image_block(tm
 async def test_a_traversal_attempt_is_refused(tmp_path):
     """A second path component after ``images/`` (what
     ``images/../../etc/passwd`` becomes once the prefix is stripped) is
-    refused as malformed before ``paths.resolve_asset`` is even called."""
+    refused as malformed before ``files.resolve_asset`` is even called."""
     session, transport, _recorder = await _started_session(tmp_path)
     try:
         await session.submit_turn(
@@ -352,8 +352,8 @@ async def test_default_caps_match_their_documented_values():
     silently reintroduce a turn the API refuses.
     """
     assert turn_images.MAX_TURN_IMAGES == 4
-    assert turn_images.MAX_TURN_IMAGE_BYTES == 2 * paths.MAX_INLINE_IMAGE_BYTES
-    assert paths.MAX_INLINE_IMAGE_BYTES < paths.MAX_IMAGE_BYTES
+    assert turn_images.MAX_TURN_IMAGE_BYTES == 2 * files.MAX_INLINE_IMAGE_BYTES
+    assert files.MAX_INLINE_IMAGE_BYTES < files.MAX_IMAGE_BYTES
 
 
 async def test_an_image_over_the_inline_cap_is_named_rather_than_inlined(tmp_path):
@@ -365,7 +365,7 @@ async def test_an_image_over_the_inline_cap_is_named_rather_than_inlined(tmp_pat
     silently would lose a file the human deliberately attached. The note names
     the path and the tool that can read it, so the model has somewhere to go.
     """
-    big = _png_bytes(b"x" * (paths.MAX_INLINE_IMAGE_BYTES + 1))
+    big = _png_bytes(b"x" * (files.MAX_INLINE_IMAGE_BYTES + 1))
     rel = _write_image(tmp_path, "huge.png", big)
     session, transport, _recorder = await _started_session(tmp_path)
     try:
@@ -387,8 +387,8 @@ async def test_an_image_over_the_inline_cap_is_named_rather_than_inlined(tmp_pat
 async def test_an_image_at_the_inline_cap_is_still_inlined(tmp_path):
     """The boundary is inclusive, so a file exactly at the cap is a picture."""
     at_cap = _png_bytes()
-    at_cap = at_cap + b"y" * (paths.MAX_INLINE_IMAGE_BYTES - len(at_cap))
-    assert len(at_cap) == paths.MAX_INLINE_IMAGE_BYTES
+    at_cap = at_cap + b"y" * (files.MAX_INLINE_IMAGE_BYTES - len(at_cap))
+    assert len(at_cap) == files.MAX_INLINE_IMAGE_BYTES
     rel = _write_image(tmp_path, "exact.png", at_cap)
     session, transport, _recorder = await _started_session(tmp_path)
     try:

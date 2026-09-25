@@ -32,7 +32,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from annealage_mesh.session.base import (
+from annealage_mesh.agent.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
@@ -44,15 +44,15 @@ from annealage_mesh.session.base import (
     ToolResult,
     ToolUse,
 )
-from annealage_mesh.session.omp import (
-    _PROVIDER_ID,
+from annealage_mesh.agent.session.omp import (
     OmpSession,
     _api_key_env_name,
     _build_custom_provider,
+    _provider_id,
     _write_agent_dir,
 )
-from annealage_mesh.session.permissions import PermissionBroker
-from annealage_mesh.tools.registry import ToolSpec
+from annealage_mesh.agent.session.permissions import PermissionBroker
+from annealage_mesh.agent.tools import ToolSpec
 
 
 class FakeRpcClient:
@@ -320,7 +320,7 @@ async def test_set_model_to_a_model_other_than_the_startup_one_is_not_rejected_b
         assert provider["discovery"] == {"type": "proxy"}
 
         await session.set_model("mixtral-8x7b")
-        assert fake.set_model_calls == [(_PROVIDER_ID, "mixtral-8x7b")]
+        assert fake.set_model_calls == [(_provider_id(), "mixtral-8x7b")]
         event = await recorder.next()
         assert isinstance(event, AgentModelChanged)
         assert event.model == "mixtral-8x7b"
@@ -412,7 +412,7 @@ async def test_set_model_without_base_url_splits_the_provider_model_reference():
 @pytest.mark.asyncio
 async def test_set_model_without_base_url_passes_a_bare_model_id_straight_through():
     """No synthesized provider exists to assume for a bare id the way
-    ``base_url``-mode's own ``_PROVIDER_ID`` can, and this method makes no
+    ``base_url``-mode's own ``_provider_id()`` can, and this method makes no
     local guess about what `omp` will accept: ``model.partition("/")``
     finding no ``"/"`` puts the whole string in ``provider`` and an empty
     string in ``model_id``, sent to the RPC exactly as split -- `omp`'s own
@@ -825,7 +825,7 @@ async def test_set_model_calls_the_rpc_set_model_with_the_provider_and_model():
     session, fake, recorder, broker = await _started_session()
     try:
         await session.set_model("llama-70b")
-        assert fake.set_model_calls == [(_PROVIDER_ID, "llama-70b")]
+        assert fake.set_model_calls == [(_provider_id(), "llama-70b")]
         event = await recorder.next()
         assert isinstance(event, AgentModelChanged)
         assert event.model == "llama-70b"

@@ -35,8 +35,8 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import PermissionRuleValue
 
-from annealage_mesh.session import sdk as sdk_module
-from annealage_mesh.session.base import (
+from annealage_mesh.agent.session import sdk as sdk_module
+from annealage_mesh.agent.session.base import (
     AGENT_READY,
     AGENT_UNAVAILABLE,
     AgentError,
@@ -47,14 +47,14 @@ from annealage_mesh.session.base import (
     ToolUse,
     TurnEnd,
 )
-from annealage_mesh.session.permissions import Decision
-from annealage_mesh.session.sdk import SandboxStatus, SdkSession
+from annealage_mesh.agent.session.permissions import Decision
+from annealage_mesh.agent.session.sdk import SandboxStatus, SdkSession
 
-# The thirteen mesh tools that never prompt, in the namespaced form fact 1
-# requires (``mcp__<server>__<tool>``). Hardcoded here rather than imported from
-# ``sdk_module.PRE_ALLOWED_MESH_TOOLS``: this test exists to notice if that
-# constant itself drifts, so it must not share its source of truth with the code
-# it is pinning.
+# The mesh tools that never prompt, in the namespaced form fact 1 requires
+# (``mcp__<server>__<tool>``). Hardcoded here rather than read off the tool
+# server: this test exists to notice if the list the session is built with
+# drifts, so it must not share its source of truth with the code it is
+# pinning.
 EXPECTED_PRE_ALLOWED_TOOLS = [
     # Read-class: changes nothing.
     "mcp__mesh__list_models",
@@ -264,9 +264,18 @@ async def test_options_wired_into_the_real_client():
         def shutdown(self):
             pass
 
+    from annealage_mesh.tools.registry import MeshTools
+
+    class _StubBus:
+        paused = False
+
     stub_broker = _StubBroker()
+    # Built the way agent/launch.py builds a real session: the allow list is
+    # the product tool server's own pre-allowed set, nothing added.
     session, transport, _recorder = await _started_session(
-        broker=stub_broker, resume="prior-sdk-session-id"
+        broker=stub_broker,
+        resume="prior-sdk-session-id",
+        allowed_tools=MeshTools(_StubBus(), "/proj/root").pre_allowed,
     )
     try:
         options = session._client.options
@@ -339,6 +348,10 @@ async def test_the_mesh_tool_server_is_passed_through_under_its_own_name():
         assert servers["mesh"]["type"] == "sdk"
         assert servers["mesh"]["name"] == "mesh"
         assert len(mesh_tools.tools) == 20
+        # Given a server but no allow list, the session pre-allows nothing:
+        # the list comes from the caller, never from a default of its own, so
+        # a caller that forgot it gets a card per tool rather than no cards.
+        assert session._client.options.allowed_tools == []
     finally:
         await session.close()
 
@@ -386,7 +399,7 @@ async def test_the_tripwire_is_installed_as_a_pre_tool_use_hook_matching_every_t
 async def test_the_tripwire_says_nothing_while_the_config_is_unchanged(tmp_path):
     """Returning ``{}`` leaves the permission flow exactly as it would be with
     no hook at all, which is what keeps contained bash running unprompted."""
-    from annealage_mesh.session import workspace_trust as wt
+    from annealage_mesh.agent.session import workspace_trust as wt
 
     recorder = EventRecorder()
     session = SdkSession(
@@ -399,7 +412,7 @@ async def test_the_tripwire_says_nothing_while_the_config_is_unchanged(tmp_path)
 
 @pytest.mark.asyncio
 async def test_the_tripwire_denies_every_tool_once_the_config_changes(tmp_path):
-    from annealage_mesh.session import workspace_trust as wt
+    from annealage_mesh.agent.session import workspace_trust as wt
 
     recorder = EventRecorder()
     session = SdkSession(
@@ -425,7 +438,7 @@ async def test_the_tripwire_denies_every_tool_once_the_config_changes(tmp_path):
 async def test_the_change_is_reported_to_the_human_only_once(tmp_path):
     """The model retries a denied call, so a report per attempt would bury the
     pane in copies of one fact."""
-    from annealage_mesh.session import workspace_trust as wt
+    from annealage_mesh.agent.session import workspace_trust as wt
 
     recorder = EventRecorder()
     session = SdkSession(
@@ -442,7 +455,7 @@ async def test_the_change_is_reported_to_the_human_only_once(tmp_path):
 async def test_a_digest_that_cannot_be_computed_denies(tmp_path, monkeypatch):
     """A control that cannot tell whether the configuration changed has to
     assume it did."""
-    from annealage_mesh.session import workspace_trust as wt
+    from annealage_mesh.agent.session import workspace_trust as wt
 
     recorder = EventRecorder()
     session = SdkSession(
@@ -833,7 +846,7 @@ async def test_the_secret_path_hook_expresses_no_opinion_on_ordinary_work(tmp_pa
 async def test_the_secret_path_hook_denies_when_it_cannot_decide(monkeypatch):
     """A control that cannot tell whether a call is safe has to assume it is
     not, the same way the digest check does."""
-    from annealage_mesh.session import secret_paths
+    from annealage_mesh.agent.session import secret_paths
 
     def explode(*args, **kwargs):
         raise RuntimeError("no home directory")
@@ -918,3 +931,42 @@ def test_session_rule_builds_the_same_update_to_claude_result_uses():
     assert update.behavior == "allow"
     assert update.destination == "session"
     assert update.rules == [PermissionRuleValue(tool_name="Write", rule_content=None)]
+
+
+def test_launch_builds_the_claude_session_with_the_tool_servers_pre_allowed_list(tmp_path):
+    """The production path, not a list this test hands the session itself:
+    ``agent/launch.py`` building a Claude session from the tool server
+    ``create_app`` put on the bus. Its allow list is exactly the read- and
+    view-grade tools, namespaced, and no write-grade tool, whose absence is
+    what makes each of them reach the human as a card."""
+    from types import SimpleNamespace
+
+    from annealage_mesh.agent import launch, sessions
+    from annealage_mesh.agent import settings as settings_module
+    from annealage_mesh.tools.registry import MeshTools
+
+    class _StubBus:
+        paused = False
+
+    session_id = sessions.create_session(tmp_path)
+    bus = SimpleNamespace(
+        tools=MeshTools(_StubBus(), tmp_path, session_id),
+        broker=None,
+        url="http://127.0.0.1:8765/",
+    )
+    session = launch.build_session(
+        "claude",
+        lambda event: None,
+        bus=bus,
+        serve_dir=tmp_path,
+        session_id=session_id,
+        resumed=False,
+        settings=settings_module.resolve(tmp_path),
+        mcp_host="127.0.0.1",
+        mcp_port=8765,
+        agent_token="agent",
+    )
+    allowed = session._build_options().allowed_tools
+    assert allowed == EXPECTED_PRE_ALLOWED_TOOLS
+    for name in EXPECTED_NEVER_PRE_ALLOWED:
+        assert name not in allowed

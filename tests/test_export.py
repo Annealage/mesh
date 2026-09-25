@@ -1,5 +1,5 @@
 """Tests for transcript export: ``session/events.py``'s ``read_records``,
-``render_transcript`` and ``export_transcript``, and ``paths.create_review_file``.
+``render_transcript`` and ``export_transcript``, and ``files.create_review_file``.
 
 ``render_transcript`` is exercised directly against hand-built
 ``{"seq": ..., "event": ...}`` records, the same shape ``read_records``
@@ -16,9 +16,9 @@ import time
 
 import pytest
 
-from annealage_mesh import paths, sessions
-from annealage_mesh.session import events
-from annealage_mesh.session.base import (
+from annealage_mesh.agent import files, sessions
+from annealage_mesh.agent.session import events
+from annealage_mesh.agent.session.base import (
     AgentStatus,
     PermissionRequest,
     PermissionResolved,
@@ -180,7 +180,7 @@ def test_export_transcript_writes_markdown_by_default(tmp_path):
     sid = _session_with_events(tmp_path, TextDelta(turn=1, text="hello"))
     target = events.export_transcript(tmp_path, sid, now=1_700_000_000.0)
     assert target.suffix == ".md"
-    assert target.parent == tmp_path / paths.REVIEW_DIRNAME
+    assert target.parent == tmp_path / files.REVIEW_DIRNAME
     assert "hello" in target.read_text(encoding="utf-8")
 
 
@@ -230,7 +230,7 @@ def test_export_transcript_filename_stamp_is_deterministic_under_now(tmp_path):
 def test_export_transcript_creates_review_once_and_reuses_it(tmp_path):
     sid = _session_with_events(tmp_path, TextDelta(turn=1, text="one"))
     first = events.export_transcript(tmp_path, sid, now=1_700_000_000.0)
-    review_dir = tmp_path / paths.REVIEW_DIRNAME
+    review_dir = tmp_path / files.REVIEW_DIRNAME
     before = os.stat(review_dir, follow_symlinks=False)
 
     second = events.export_transcript(tmp_path, sid, now=1_700_000_100.0)
@@ -259,7 +259,7 @@ def test_export_transcript_two_calls_at_the_same_stamp_do_not_collide(tmp_path):
 def test_export_transcript_refuses_a_symlinked_review_directory(tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
-    (tmp_path / paths.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (tmp_path / files.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
     sid = sessions.create_session(tmp_path)
 
     with pytest.raises(OSError):
@@ -268,23 +268,23 @@ def test_export_transcript_refuses_a_symlinked_review_directory(tmp_path):
 
 
 def test_export_transcript_refuses_a_review_path_that_is_a_regular_file(tmp_path):
-    (tmp_path / paths.REVIEW_DIRNAME).write_text("not a directory")
+    (tmp_path / files.REVIEW_DIRNAME).write_text("not a directory")
     sid = sessions.create_session(tmp_path)
 
     with pytest.raises(OSError):
         events.export_transcript(tmp_path, sid, now=1_700_000_000.0)
 
 
-# --- paths.create_review_file ------------------------------------------------
+# --- files.create_review_file ------------------------------------------------
 
 
 def test_create_review_file_writes_into_review_and_makes_the_directory(tmp_path):
-    fd, target = paths.create_review_file(tmp_path, "transcript-x.md")
+    fd, target = files.create_review_file(tmp_path, "transcript-x.md")
     try:
         os.write(fd, b"# hi")
     finally:
         os.close(fd)
-    assert target == tmp_path / paths.REVIEW_DIRNAME / "transcript-x.md"
+    assert target == tmp_path / files.REVIEW_DIRNAME / "transcript-x.md"
     assert target.read_bytes() == b"# hi"
     assert oct(target.stat().st_mode)[-3:] == "644"
 
@@ -302,7 +302,7 @@ def test_create_review_file_writes_into_review_and_makes_the_directory(tmp_path)
     ],
 )
 def test_create_review_file_refuses_a_name_it_would_not_write(tmp_path, name):
-    assert paths.create_review_file(tmp_path, name) is None
+    assert files.create_review_file(tmp_path, name) is None
 
 
 def test_create_review_file_refuses_a_symlinked_review_directory(tmp_path):
@@ -310,22 +310,22 @@ def test_create_review_file_refuses_a_symlinked_review_directory(tmp_path):
     outside.mkdir()
     project = tmp_path / "project"
     project.mkdir()
-    (project / paths.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (project / files.REVIEW_DIRNAME).symlink_to(outside, target_is_directory=True)
 
-    assert paths.create_review_file(project, "transcript-x.md") is None
+    assert files.create_review_file(project, "transcript-x.md") is None
     assert list(outside.iterdir()) == []
 
 
 def test_create_review_file_refuses_a_review_path_that_is_a_regular_file(tmp_path):
-    (tmp_path / paths.REVIEW_DIRNAME).write_text("not a directory")
-    assert paths.create_review_file(tmp_path, "transcript-x.md") is None
+    (tmp_path / files.REVIEW_DIRNAME).write_text("not a directory")
+    assert files.create_review_file(tmp_path, "transcript-x.md") is None
 
 
 def test_create_review_file_raises_rather_than_overwriting(tmp_path):
-    fd, _target = paths.create_review_file(tmp_path, "transcript-x.md")
+    fd, _target = files.create_review_file(tmp_path, "transcript-x.md")
     os.close(fd)
     with pytest.raises(FileExistsError):
-        paths.create_review_file(tmp_path, "transcript-x.md")
+        files.create_review_file(tmp_path, "transcript-x.md")
 
 
 def test_create_review_file_refuses_a_review_directory_swapped_during_the_open(
@@ -341,18 +341,18 @@ def test_create_review_file_refuses_a_review_directory_swapped_during_the_open(
     outside.mkdir()
     project = tmp_path / "project"
     project.mkdir()
-    (project / paths.REVIEW_DIRNAME).mkdir()
+    (project / files.REVIEW_DIRNAME).mkdir()
 
     real_open = os.open
 
     def swap_then_open(path, flags, mode=0o777):
         if str(path).endswith("swap.md"):
-            review_dir = project / paths.REVIEW_DIRNAME
+            review_dir = project / files.REVIEW_DIRNAME
             review_dir.rmdir()
             review_dir.symlink_to(outside, target_is_directory=True)
         return real_open(path, flags, mode)
 
     monkeypatch.setattr(os, "open", swap_then_open)
 
-    assert paths.create_review_file(project, "swap.md") is None
+    assert files.create_review_file(project, "swap.md") is None
     assert list(outside.iterdir()) == []

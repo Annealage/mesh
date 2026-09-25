@@ -21,7 +21,7 @@ import json
 
 from claude_agent_sdk import tool
 
-from . import fail, ok
+from ..agent.tools import fail, ok
 
 #: One coordinate triple, in model space.
 _POINT_SCHEMA = {

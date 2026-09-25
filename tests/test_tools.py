@@ -35,8 +35,10 @@ import struct
 import pytest
 
 from annealage_mesh import paths
-from annealage_mesh.tools import namespaced, registry
-from annealage_mesh.viewers import CallError, NoViewerConnected, ViewerGone
+from annealage_mesh.agent import files
+from annealage_mesh.agent.tools import namespaced
+from annealage_mesh.agent.viewers import CallError, NoViewerConnected, ViewerGone
+from annealage_mesh.tools import registry
 
 pytestmark = pytest.mark.asyncio
 
@@ -180,9 +182,9 @@ async def test_the_three_grades_are_what_they_are_meant_to_be(project):
     assert registry.WRITE_CLASS == EXPECTED_WRITE_CLASS
     # The two derived sets, which are the ones the code actually acts on, and
     # which are different from each other on purpose.
-    assert registry.PRE_ALLOWED == EXPECTED_PRE_ALLOWED
-    assert registry.PAUSE_GATED == EXPECTED_PAUSE_GATED
-    assert set(registry.PRE_ALLOWED) != set(registry.PAUSE_GATED)
+    assert registry.GRADING.pre_allowed == EXPECTED_PRE_ALLOWED
+    assert registry.GRADING.pause_gated == EXPECTED_PAUSE_GATED
+    assert set(registry.GRADING.pre_allowed) != set(registry.GRADING.pause_gated)
 
 
 async def test_every_classified_tool_exists_and_every_built_tool_is_classified(project):
@@ -194,20 +196,21 @@ async def test_every_classified_tool_exists_and_every_built_tool_is_classified(p
 
 async def test_the_pre_allowed_names_are_exactly_what_the_session_pre_allows(project):
     """The two lists are one list, and this is the seam where a divergence
-    would show up as a pre-allowed name matching nothing (fact 1)."""
-    from annealage_mesh.session import sdk
-
-    assert sdk.PRE_ALLOWED_MESH_TOOLS == tuple(namespaced(name) for name in EXPECTED_PRE_ALLOWED)
+    would show up as a pre-allowed name matching nothing (fact 1): the tool
+    server's ``pre_allowed`` is what ``agent/launch.py`` hands the Claude
+    session as its allow list, namespaced under the server's own name."""
+    tools = registry.MeshTools(FakeBus(), project)
+    assert tools.pre_allowed == tuple(namespaced("mesh", name) for name in EXPECTED_PRE_ALLOWED)
+    assert list(tools.mcp_servers) == ["mesh"]
 
 
 async def test_no_write_class_tool_is_pre_allowed(project):
     """The one assertion that keeps the approval card. A write-class name in
     ``allowed_tools`` would silently stop the broker being consulted for it
     (fact 2), and nothing else in the suite would notice."""
-    from annealage_mesh.session import sdk
-
+    pre_allowed = registry.MeshTools(FakeBus(), project).pre_allowed
     for name in EXPECTED_WRITE_CLASS:
-        assert namespaced(name) not in sdk.PRE_ALLOWED_MESH_TOOLS
+        assert namespaced("mesh", name) not in pre_allowed
 
 
 async def test_every_view_class_tool_is_pre_allowed_and_gated(project):
@@ -217,11 +220,10 @@ async def test_every_view_class_tool_is_pre_allowed_and_gated(project):
     because either one alone would be a different design: pre-allowed and
     ungated is a camera nothing can stop, and gated and prompting is the card
     per camera move this deliberately does not do."""
-    from annealage_mesh.session import sdk
-
+    pre_allowed = registry.MeshTools(FakeBus(), project).pre_allowed
     for name in EXPECTED_VIEW_CLASS:
-        assert namespaced(name) in sdk.PRE_ALLOWED_MESH_TOOLS
-        assert name in registry.PAUSE_GATED
+        assert namespaced("mesh", name) in pre_allowed
+        assert name in registry.GRADING.pause_gated
 
 
 async def test_building_refuses_a_tool_that_was_never_classified(project, monkeypatch):
@@ -663,7 +665,7 @@ async def test_snapshot_writes_the_captured_bytes_under_images(project):
     )
     result = await tools_for(bus, project)["snapshot"]({"name": "front-left"})
     payload_json = payload_of(result)
-    written = project / paths.IMAGES_DIRNAME / "front-left.png"
+    written = project / files.IMAGES_DIRNAME / "front-left.png"
     assert written.read_bytes() == payload
     assert payload_json["path"] == str(written)
     assert payload_json["url"] == "/asset/front-left.png"
@@ -683,14 +685,14 @@ async def test_snapshot_names_the_file_for_the_format_the_browser_chose(project)
         }
     )
     await tools_for(bus, project)["snapshot"]({"name": "wide.png"})
-    assert (project / paths.IMAGES_DIRNAME / "wide.jpg").is_file()
+    assert (project / files.IMAGES_DIRNAME / "wide.jpg").is_file()
 
 
 async def test_snapshot_never_overwrites_an_existing_image(project):
     bus = FakeBus(
         replies={"viewer.capture_view": {"image": _png_data_url(b"second"), "format": "png"}}
     )
-    images = project / paths.IMAGES_DIRNAME
+    images = project / files.IMAGES_DIRNAME
     images.mkdir()
     (images / "front.png").write_bytes(b"first")
     await tools_for(bus, project)["snapshot"]({"name": "front"})
@@ -703,7 +705,7 @@ async def test_snapshot_refuses_a_symlinked_images_directory(project, tmp_path):
     which is a way to have this process create files anywhere its user can."""
     outside = tmp_path.parent / "elsewhere"
     outside.mkdir(exist_ok=True)
-    (project / paths.IMAGES_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (project / files.IMAGES_DIRNAME).symlink_to(outside, target_is_directory=True)
     bus = FakeBus(replies={"viewer.capture_view": {"image": _png_data_url(), "format": "png"}})
     result = await tools_for(bus, project)["snapshot"]({"name": "front"})
     assert result["is_error"] is True
@@ -717,8 +719,8 @@ async def test_snapshot_refuses_a_capture_it_cannot_decode(project):
     assert result["is_error"] is True
     assert "nothing was written" in text_of(result)
     assert (
-        not (project / paths.IMAGES_DIRNAME).exists()
-        or list((project / paths.IMAGES_DIRNAME).iterdir()) == []
+        not (project / files.IMAGES_DIRNAME).exists()
+        or list((project / files.IMAGES_DIRNAME).iterdir()) == []
     )
 
 
@@ -734,7 +736,7 @@ async def test_snapshot_says_to_choose_another_name_once_the_suffixes_run_out(pr
     is not something mesh will write", the other is "pick a different one"."""
     from annealage_mesh.tools import review_tools
 
-    images = project / paths.IMAGES_DIRNAME
+    images = project / files.IMAGES_DIRNAME
     images.mkdir()
     (images / "front.png").write_bytes(b"taken")
     for n in range(2, review_tools._SNAPSHOT_NAME_ATTEMPTS + 1):

@@ -37,9 +37,9 @@ import struct
 import pytest
 from microdot.websocket import WebSocket
 
-from annealage_mesh.protocol import CLOSE_OVERFLOW, build_call, build_event, build_ping
-from annealage_mesh.session.base import PermissionRequest, TextDelta, ToolUse, TurnEnd
-from annealage_mesh.viewers import (
+from annealage_mesh.agent.protocol import CLOSE_OVERFLOW, build_call, build_event, build_ping
+from annealage_mesh.agent.session.base import PermissionRequest, TextDelta, ToolUse, TurnEnd
+from annealage_mesh.agent.viewers import (
     NO_VIEWER_MESSAGE,
     CallError,
     NoViewerConnected,

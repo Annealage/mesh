@@ -9,8 +9,8 @@ which concrete event type is used.
 
 import json
 
-from annealage_mesh.session.base import TextDelta
-from annealage_mesh.session.events import RING_SIZE, EventLog
+from annealage_mesh.agent.session.base import TextDelta
+from annealage_mesh.agent.session.events import RING_SIZE, EventLog
 
 
 def _evt(text="x", turn=1):

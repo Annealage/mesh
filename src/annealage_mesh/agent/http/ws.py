@@ -124,7 +124,7 @@ def register_ws(
     without one.
 
     ``bus`` is the ``ViewerBus`` holding the human's pause switch, and is
-    ``None`` in viewer-only mode, where there are no mesh tools to pause. It is
+    ``None`` in viewer-only mode, where there are no agent tools to pause. It is
     read for the ``hello`` frame and written by an inbound ``pause`` frame; this
     module never calls through it, because a ``call`` originates with a tool,
     never with a socket.
@@ -379,12 +379,16 @@ async def _dispatch(ws, conn, registry, event_log, token, frame, session=None, b
     if kind in ("result", "error"):
         registry.resolve_call(conn, frame)
         return
-    if kind == "state":
+    if protocol.is_product_frame(kind):
+        # The product's page reporting its own state (Mesh's ``state``: camera,
+        # visibility, selection, mode). The agent layer does nothing with its
+        # content; receiving one is interaction with this tab, which re-elects
+        # it as the primary viewer.
         await registry.touch(conn)
         return
     if kind == "pause":
         if bus is None:
-            # Viewer-only: there are no mesh tools to pause, so a control that
+            # Viewer-only: there are no agent tools to pause, so a control that
             # appeared to work would be worse than one that says so.
             await ws.send(
                 json.dumps(

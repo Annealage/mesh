@@ -18,6 +18,7 @@ import random
 import pytest
 
 from annealage_mesh import paths
+from annealage_mesh.agent import files
 
 # --- scan_models: recursion, exclusions, determinism ----------------------
 
@@ -382,12 +383,12 @@ def test_build_static_index_resolves_present_files(tmp_path):
 
 
 def test_create_image_file_writes_into_images_and_makes_the_directory(tmp_path):
-    fd, target = paths.create_image_file(tmp_path, "front.png")
+    fd, target = files.create_image_file(tmp_path, "front.png")
     try:
         os.write(fd, b"bytes")
     finally:
         os.close(fd)
-    assert target == tmp_path / paths.IMAGES_DIRNAME / "front.png"
+    assert target == tmp_path / files.IMAGES_DIRNAME / "front.png"
     assert target.read_bytes() == b"bytes"
     assert oct(target.stat().st_mode)[-3:] == "644"
 
@@ -408,7 +409,7 @@ def test_create_image_file_refuses_a_name_it_would_not_serve_back(tmp_path, name
     """The whole containment check for a name that may come from the model, so
     it is a whitelist: a name accepted here is one /asset can hand back, and
     anything else is refused rather than sanitised into something adjacent."""
-    assert paths.create_image_file(tmp_path, name) is None
+    assert files.create_image_file(tmp_path, name) is None
 
 
 def test_create_image_file_refuses_a_symlinked_images_directory(tmp_path):
@@ -418,9 +419,9 @@ def test_create_image_file_refuses_a_symlinked_images_directory(tmp_path):
     outside.mkdir()
     project = tmp_path / "project"
     project.mkdir()
-    (project / paths.IMAGES_DIRNAME).symlink_to(outside, target_is_directory=True)
+    (project / files.IMAGES_DIRNAME).symlink_to(outside, target_is_directory=True)
 
-    assert paths.create_image_file(project, "front.png") is None
+    assert files.create_image_file(project, "front.png") is None
     assert list(outside.iterdir()) == []
 
 
@@ -428,10 +429,10 @@ def test_create_image_file_raises_rather_than_overwriting(tmp_path):
     """O_EXCL, so the caller has to choose another name. Every image here is
     evidence of what a part looked like at some moment, and a silent overwrite
     loses one."""
-    fd, _target = paths.create_image_file(tmp_path, "front.png")
+    fd, _target = files.create_image_file(tmp_path, "front.png")
     os.close(fd)
     with pytest.raises(FileExistsError):
-        paths.create_image_file(tmp_path, "front.png")
+        files.create_image_file(tmp_path, "front.png")
 
 
 # --- atomic_replace ---------------------------------------------------------
@@ -444,19 +445,19 @@ def test_atomic_replace_keeps_an_existing_files_mode(tmp_path):
     target.write_text("{}")
     os.chmod(target, 0o640)
 
-    paths.atomic_replace(target, b'{"annotations": []}')
+    files.atomic_replace(target, b'{"annotations": []}')
     assert oct(target.stat().st_mode)[-3:] == "640"
     assert target.read_text() == '{"annotations": []}'
 
 
 def test_atomic_replace_gives_a_new_file_the_default_mode(tmp_path):
     target = tmp_path / "fresh.json"
-    paths.atomic_replace(target, b"[]")
+    files.atomic_replace(target, b"[]")
     assert oct(target.stat().st_mode)[-3:] == "644"
 
 
 def test_atomic_replace_leaves_no_temporary_file_behind_on_failure(tmp_path):
     target = tmp_path / "record.json"
     with pytest.raises(TypeError):
-        paths.atomic_replace(target, "a str, not bytes")
+        files.atomic_replace(target, "a str, not bytes")
     assert list(tmp_path.iterdir()) == []

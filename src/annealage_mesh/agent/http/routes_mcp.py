@@ -4,7 +4,7 @@
 ``planning/20260919_codex-mcp-bridge-finding.md`` (why there are two hops,
 not one): Codex's app-server only ever launches an MCP server as a stdio
 subprocess, never registers one over HTTP directly. So this route is not
-reached by Codex itself - it is reached by mesh's own stdio-to-HTTP proxy
+reached by Codex itself - it is reached by the agent layer's own stdio-to-HTTP proxy
 (``session/codex_mcp_stdio_bridge.py``), which Codex's app-server launches
 as a subprocess per thread (``session/codex.py``'s ``config_overrides``) and
 which speaks real MCP over stdio to Codex on one side and this route on the
@@ -33,17 +33,21 @@ the method called. A malformed request is a plain ``{"ok": false, "error":
 ...}`` 400, matching every other JSON route in this package
 (``read_json_body``).
 
-Token- and Origin-gated exactly like ``/ws``/``/settings``
-(``ws.py``'s ``_token_is_allowed``/``_origin_is_allowed``, reused rather than
-reinvented): a tool-execution surface reachable from wherever the app-server
+Token- and Origin-gated like ``/ws``/``/settings`` (``ws.py``'s
+``_token_is_allowed``/``_origin_is_allowed``, reused rather than reinvented),
+but against a different token: the run's *agent* token, never the browser
+token. A tool-execution surface reachable from wherever the app-server
 subprocess runs must never be unauthenticated, even bound to loopback only,
 since the subprocess is not necessarily co-located with a human who already
-passed the browser's own token check.
+passed the browser's own token check. And it must not be the browser token,
+because the bridge that calls this route runs beside the agent's own shell,
+and the browser token is what approves a permission card over ``/ws`` (see
+``session/codex_mcp_stdio_bridge.py`` for how the agent token reaches it).
 
 **Where the write-class approval gate lives, and why here.** Every write-class
-mesh tool call must reach ``PermissionBroker`` exactly once
+product tool call must reach ``PermissionBroker`` exactly once
 (``phase3_codex-tool-mcp-bridge.md``'s own acceptance criteria). For Claude,
-that already happens entirely outside ``tools/registry.py``: the Claude Agent
+that already happens entirely outside ``tools.py``: the Claude Agent
 SDK calls ``session/sdk.py``'s own ``can_use_tool`` for every tool not in
 ``allowed_tools`` (every write-class one), before the handler ever runs.
 Codex's app-server has no equivalent hook for a generic external MCP tool
@@ -53,7 +57,7 @@ call - its own ``approval_handler`` fires only for its two native actions,
 ``_APPROVAL_METHOD_TOOL``), never for ``tools/call`` on an MCP server it has
 attached. Without a gate somewhere in this bridge, a write-class tool routed
 through it would reach the broker zero times, not two - the failure mode
-this route exists to close. ``tools/registry.py``'s own ``_wrap`` deliberately
+this route exists to close. ``tools.py``'s own ``_wrap`` deliberately
 does not call the broker (see its docstring), so this is not a second place
 the READ/VIEW/WRITE classification gets decided: it is the one place this
 particular transport connects the classification ``tool_table()`` already
@@ -63,6 +67,7 @@ exactly as ``session/sdk.py`` does for its own.
 
 import mcp.types as types
 
+from .. import product
 from ..tools import namespaced
 from . import read_json_body
 from .ws import _origin_is_allowed, _token_is_allowed, refusal
@@ -98,17 +103,23 @@ def _content_blocks(result):
     return blocks
 
 
-async def _call_tool_result(tool_table, broker, name, arguments):
+async def _call_tool_result(tool_table, broker, name, arguments, *, server_name):
     """A ``CallToolResult`` for one ``tools/call``, the broker consulted
     first and exactly once when ``name`` is write-class. See this module's
     docstring for why that gate lives here rather than in ``tool_table()``'s
-    own already-``_wrap``-gated handler.
+    own already-``_wrap``-gated handler. ``server_name`` is the tool server's
+    own name, which the broker is asked under (``mcp__<server>__<tool>``), the
+    same name Claude's own ``can_use_tool`` hook would see for this call.
     """
     spec = tool_table.get(name)
     if spec is None:
         return types.CallToolResult(
             isError=True,
-            content=[types.TextContent(type="text", text="no such mesh tool: %r" % name)],
+            content=[
+                types.TextContent(
+                    type="text", text="no such %s tool: %r" % (product.current().name, name)
+                )
+            ],
         )
     if spec.write:
         if broker is None:
@@ -125,7 +136,7 @@ async def _call_tool_result(tool_table, broker, name, arguments):
                     )
                 ],
             )
-        decision = await broker.ask(namespaced(name), arguments, None)
+        decision = await broker.ask(namespaced(server_name, name), arguments, None)
         if not decision.allow:
             return types.CallToolResult(
                 isError=True, content=[types.TextContent(type="text", text=decision.message)]
@@ -136,15 +147,25 @@ async def _call_tool_result(tool_table, broker, name, arguments):
     )
 
 
-def register_mcp_routes(app, *, mesh_tools, broker, token, allowed_origins=()):
+def register_mcp_routes(app, *, tools, broker, agent_token, allowed_origins=()):
     """Register ``POST /mcp`` on ``app``.
 
-    ``mesh_tools`` is the ``MeshTools`` instance ``create_app`` builds once
+    ``tools`` is the product's ``ToolServer`` ``create_app`` builds once
     and shares with ``build_session`` (see its own comment for why one
     instance, not two): its already-``_wrap``-gated handlers are read once,
     here, into ``tool_table()``'s transport-neutral shape, at registration
     time rather than per request, since the tool set is fixed for the life
     of one served directory's app.
+
+    ``agent_token`` is the run's agent token, and the only credential this
+    route accepts. It is deliberately not the browser token: this route's
+    caller is a subprocess the agent's own backend launches, whose command
+    line and environment the agent's shell may be able to read, and the
+    browser token is what authorises a permission decision over ``/ws``.
+    Holding the agent token lets a caller do what the agent can already do
+    through its own tools, with every write-grade call still reaching the
+    human; it opens no browser route (``create_app`` refuses a run whose two
+    tokens are equal).
 
     ``broker`` is whatever ``build_session`` attached to ``bus.broker``
     while constructing the session (``app.py``'s own comment on that
@@ -152,11 +173,12 @@ def register_mcp_routes(app, *, mesh_tools, broker, token, allowed_origins=()):
     function at all (``create_app`` only calls it once a real session
     exists).
     """
-    tool_table = mesh_tools.tool_table()
+    tool_table = tools.tool_table()
+    server_name = tools.name
 
     @app.post("/mcp")
     async def mcp_route(req):
-        if not _token_is_allowed(req, token):
+        if not _token_is_allowed(req, agent_token):
             return refusal()
         if not _origin_is_allowed(req, allowed_origins):
             return refusal()
@@ -186,7 +208,9 @@ def register_mcp_routes(app, *, mesh_tools, broker, token, allowed_origins=()):
                     "ok": False,
                     "error": '"params" must be {"name": str, "arguments"?: object}',
                 }, 400
-            call_result = await _call_tool_result(tool_table, broker, name, arguments)
+            call_result = await _call_tool_result(
+                tool_table, broker, name, arguments, server_name=server_name
+            )
             return {
                 "result": call_result.model_dump(mode="json", by_alias=True, exclude_none=True)
             }, 200

@@ -19,9 +19,9 @@ import pytest
 from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
-from annealage_mesh import paths
+from annealage_mesh.agent import files
+from annealage_mesh.agent.http import routes_chat
 from annealage_mesh.app import DEFAULT_PORT, create_app
-from annealage_mesh.http import routes_chat
 
 pytestmark = pytest.mark.asyncio
 
@@ -159,7 +159,7 @@ async def test_upload_over_max_image_bytes_refused_with_nothing_on_disk(make_cli
     byte is read or any file created, whichever layer (this route's own
     check or microdot's process-wide one) answers it."""
     client = make_client()
-    oversized = paths.MAX_IMAGE_BYTES + 1
+    oversized = files.MAX_IMAGE_BYTES + 1
     res = await client.post(
         _upload_url(), headers={"Content-Length": str(oversized)}, body=_png_bytes()
     )
@@ -172,7 +172,7 @@ async def test_upload_over_its_own_image_cap_refused_by_the_route_itself(
 ):
     """/upload's own Content-Length check fires on its own terms, not only
     when it happens to coincide with microdot's process-wide ceiling."""
-    monkeypatch.setattr(paths, "MAX_IMAGE_BYTES", 32)
+    monkeypatch.setattr(files, "MAX_IMAGE_BYTES", 32)
     client = make_client()
     res = await client.post(_upload_url(), headers={"Content-Length": "1000"}, body=_png_bytes())
     assert res.status_code == 413
@@ -304,12 +304,12 @@ async def test_upload_retries_past_a_name_collision_rather_than_overwriting(
     """A name already taken under images/ makes create_unique_image_file try
     again with a fresh random suffix, producing a second file rather than
     overwriting the first."""
-    monkeypatch.setattr(paths.time, "strftime", lambda fmt: "20260101-000000")
+    monkeypatch.setattr(files.time, "strftime", lambda fmt: "20260101-000000")
     hex_values = iter(["deadbeef", "c0ffee11"])
-    monkeypatch.setattr(paths.secrets, "token_hex", lambda n: next(hex_values))
+    monkeypatch.setattr(files.secrets, "token_hex", lambda n: next(hex_values))
 
     colliding_name = "upload-20260101-000000-deadbeef.png"
-    fd, target = paths.create_image_file(served_dir, colliding_name)
+    fd, target = files.create_image_file(served_dir, colliding_name)
     os.write(fd, b"already here, must survive untouched")
     os.close(fd)
 
@@ -487,7 +487,7 @@ async def test_unrecognised_bytes_are_refused_without_reading_the_whole_body(
     caps concurrent connections or times out a slow read.
     """
     app = create_app(served_dir, token=TOKEN, host=TEST_HOST, port=DEFAULT_PORT)
-    declared = paths.MAX_IMAGE_BYTES
+    declared = files.MAX_IMAGE_BYTES
     head = (
         b"POST " + _upload_url().encode() + b" HTTP/1.1\r\n"
         b"Host: " + TEST_AUTHORITY.encode() + b"\r\n"
@@ -508,7 +508,7 @@ async def test_a_directory_that_cannot_be_written_answers_json(make_client, serv
     must answer the JSON shape every other failure here answers, not microdot's
     plain-text 500 with a traceback: the pane parses JSON, and a caller that
     gets none can only say the upload failed for no stated reason."""
-    images = served_dir / paths.IMAGES_DIRNAME
+    images = served_dir / files.IMAGES_DIRNAME
     images.mkdir()
     images.chmod(0o500)
     try:

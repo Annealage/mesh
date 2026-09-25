@@ -21,11 +21,11 @@ import json
 
 import pytest
 
-from annealage_mesh import protocol
-from annealage_mesh.http import ws as ws_module
-from annealage_mesh.session.base import PauseChanged
+from annealage_mesh.agent import protocol
+from annealage_mesh.agent.http import ws as ws_module
+from annealage_mesh.agent.session.base import PauseChanged
+from annealage_mesh.agent.viewers import ViewerBus, ViewerRegistry
 from annealage_mesh.tools.registry import PAUSED_MESSAGE, MeshTools
-from annealage_mesh.viewers import ViewerBus, ViewerRegistry
 
 pytestmark = pytest.mark.asyncio
 

@@ -2,7 +2,7 @@
 and Tailscale discovery, plus the token and the startup banner that go with a
 resolved bind.
 
-``annealage_mesh.net`` does not exist in this tree yet (M4's bind-mode
+``annealage_mesh.agent.net`` does not exist in this tree yet (M4's bind-mode
 module is unwritten), so every test below imports it lazily, through the
 ``net`` fixture, rather than at module level: a missing module then fails
 each test individually with a clear ``ModuleNotFoundError``, instead of one
@@ -54,7 +54,7 @@ pytestmark = pytest.mark.asyncio
 
 @pytest.fixture
 def net():
-    import annealage_mesh.net as net_module
+    import annealage_mesh.agent.net as net_module
 
     return net_module
 

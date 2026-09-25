@@ -17,7 +17,8 @@ are things people run against a directory that already has a server on it.
 
 import pytest
 
-from annealage_mesh import cli, lock, sessions, settings
+from annealage_mesh import cli
+from annealage_mesh.agent import lock, sessions, settings
 
 # Synchronous tests, unlike most of this suite: ``cli.main`` calls
 # ``asyncio.run`` itself, and that raises when it is entered from inside a loop
@@ -30,7 +31,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     asserted in ``tests/test_session_flags.py``; every test here is about the
     command surface instead, so the requirement is satisfied for all of them
     rather than each one passing or failing on what the host has installed."""
-    from annealage_mesh.session import sdk
+    from annealage_mesh.agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
@@ -48,6 +49,8 @@ def stub_run(monkeypatch):
         port,
         on_ready=None,
         token=None,
+        agent_token=None,
+        login=None,
         extra_origins=(),
         build_session=None,
         mesh_session_id=None,
@@ -60,6 +63,8 @@ def stub_run(monkeypatch):
                 "port": port,
                 "mesh_session_id": mesh_session_id,
                 "settings": settings,
+                "token": token,
+                "login": login,
             }
         )
         if on_ready is not None:
@@ -98,7 +103,7 @@ def test_view_subcommand_runs_the_viewer_with_no_lock(tmp_path, stub_run):
     assert rc == 0
     assert len(stub_run) == 1
     assert stub_run[0]["mesh_session_id"] is None
-    assert not lock.lock_path(sessions.mesh_dir(tmp_path)).exists()
+    assert not lock.lock_path(sessions.state_dir(tmp_path)).exists()
 
 
 def test_view_subcommand_scaffolds_nothing(tmp_path, stub_run):
@@ -143,7 +148,7 @@ def test_bare_invocation_inside_claude_code_is_viewer_only(tmp_path, stub_run, m
 
     assert rc == 0
     assert stub_run[0]["mesh_session_id"] is None
-    assert not lock.lock_path(sessions.mesh_dir(tmp_path)).exists()
+    assert not lock.lock_path(sessions.state_dir(tmp_path)).exists()
     out = capsys.readouterr().out
     # Says so rather than silently doing something else than what was typed.
     assert "CLAUDECODE" in out
@@ -222,6 +227,69 @@ def test_open_browser_setting_is_honoured_without_the_flag(tmp_path, stub_run, n
     assert opened == []
 
 
+def test_the_browser_is_opened_on_a_single_use_nonce_not_the_token(
+    tmp_path, stub_run, no_git, monkeypatch, capsys
+):
+    """The URL handed to ``webbrowser.open`` ends up on the command line of
+    ``xdg-open`` or the browser, readable through ``ps``, so it carries a
+    login nonce and never the browser token. The nonce is one the run's own
+    ``/login`` route will redeem, once. The printed banner still carries the
+    reusable token link."""
+    opened = []
+    monkeypatch.setattr(cli.webbrowser, "open", lambda url: opened.append(url))
+
+    rc = cli.main([str(tmp_path), "--port", "0", "--token", "browser-secret"])
+
+    assert rc == 0
+    assert len(opened) == 1
+    assert "browser-secret" not in opened[0]
+    assert "#t=" not in opened[0]
+    nonce = opened[0].split("#n=", 1)[1]
+    login = stub_run[0]["login"]
+    assert login.redeem(nonce) is True
+    assert login.redeem(nonce) is False
+    assert "#t=browser-secret" in capsys.readouterr().out
+
+
+def test_codex_is_given_the_agent_token_and_never_the_browser_token(tmp_path, no_git, monkeypatch):
+    """The D5 wiring end to end through the CLI: the Codex session the run
+    builds carries the separate agent token for its bridge, in the
+    app-server's environment, and neither token is in the ``--config``
+    overrides that become its command line."""
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    seen = {}
+
+    async def _run(serve_dir, host, port, *, token, agent_token, build_session, **kwargs):
+        bus = SimpleNamespace(tools=None, broker=None, url="http://127.0.0.1:0/")
+        seen["session"] = build_session(lambda event: None, bus=bus)
+        seen["token"], seen["agent_token"] = token, agent_token
+
+    monkeypatch.setattr(cli.app_module, "run", _run)
+    rc = cli.main(
+        [
+            str(tmp_path),
+            "--no-open",
+            "--port",
+            "0",
+            "--backend",
+            "codex",
+            "--token",
+            "browser-secret",
+        ]
+    )
+
+    assert rc == 0
+    session = seen["session"]
+    assert seen["token"] == "browser-secret"
+    assert seen["agent_token"] not in (None, "", "browser-secret")
+    assert session._mcp_env() == {"ANNEALAGE_AGENT_TOKEN": seen["agent_token"]}
+    overrides = "\n".join(session._mcp_config_overrides())
+    assert "browser-secret" not in overrides
+    assert seen["agent_token"] not in overrides
+
+
 def test_a_malformed_config_file_is_a_clean_startup_error(tmp_path, stub_run):
     config = settings.project_config_path(tmp_path)
     config.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +314,7 @@ def test_settings_flag_prints_provenance_and_starts_nothing(tmp_path, stub_run, 
     # file to go and edit.
     assert str(settings.user_settings_path()) in out
     assert "built-in default" in out
-    assert not lock.lock_path(sessions.mesh_dir(tmp_path)).exists()
+    assert not lock.lock_path(sessions.state_dir(tmp_path)).exists()
 
 
 def test_settings_flag_reports_a_flag_as_this_run_only(tmp_path, stub_run, capsys):
@@ -269,7 +337,7 @@ def test_init_scaffolds_and_starts_no_server(tmp_path, stub_run, capsys):
     assert (tmp_path / "images").is_dir()
     assert (tmp_path / "CLAUDE.md").is_file()
     assert (tmp_path / ".gitignore").is_file()
-    assert not lock.lock_path(sessions.mesh_dir(tmp_path)).exists()
+    assert not lock.lock_path(sessions.state_dir(tmp_path)).exists()
     assert "created" in capsys.readouterr().out
 
 
@@ -334,7 +402,7 @@ def test_doctor_reports_and_starts_nothing(tmp_path, stub_run, capsys):
     assert "claude CLI" in out
     assert "sandbox" in out
     assert str(tmp_path) in out
-    assert not lock.lock_path(sessions.mesh_dir(tmp_path)).exists()
+    assert not lock.lock_path(sessions.state_dir(tmp_path)).exists()
 
 
 def test_doctor_names_the_settings_files_and_whether_they_exist(tmp_path, capsys):
@@ -349,7 +417,7 @@ def test_doctor_names_the_settings_files_and_whether_they_exist(tmp_path, capsys
 def test_doctor_reports_a_held_lock_rather_than_being_blocked_by_it(tmp_path, capsys):
     """Doctor is what someone runs *because* something is already running, so a
     live lock is a fact to report, never a reason to refuse."""
-    held = lock.acquire(sessions.mesh_dir(tmp_path), 8765, "tok")
+    held = lock.acquire(sessions.state_dir(tmp_path), 8765)
     try:
         rc = cli.main(["doctor", str(tmp_path)])
     finally:
@@ -388,7 +456,7 @@ def test_agent_mode_scaffold_happens_while_the_lock_is_held(tmp_path, stub_run, 
     real = cli.project_module.ensure_project
 
     def _watching(project_dir, *, git=True, force=False, **kwargs):
-        seen.append(lock.lock_path(sessions.mesh_dir(project_dir)).exists())
+        seen.append(lock.lock_path(sessions.state_dir(project_dir)).exists())
         return real(project_dir, git=False)
 
     monkeypatch.setattr(cli.project_module, "ensure_project", _watching)

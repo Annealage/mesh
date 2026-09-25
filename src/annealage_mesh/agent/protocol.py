@@ -209,7 +209,7 @@ def build_refused(reason: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _object_error(obj: Any, allowed: Set[str], required: Set[str], name: str) -> Optional[str]:
+def object_error(obj: Any, allowed: Set[str], required: Set[str], name: str) -> Optional[str]:
     """Whitelist check for one JSON object: not a dict, an unknown key, or
     a missing required key, in that order. Returns a reason, or None."""
     if not isinstance(obj, dict):
@@ -229,7 +229,7 @@ def _check_hello(frame: dict) -> Optional[str]:
         return "hello.last_seq must be an integer or absent"
     viewer = frame.get("viewer")
     if viewer is not None:
-        return _object_error(viewer, {"tab_id", "w", "h"}, {"tab_id"}, "hello.viewer")
+        return object_error(viewer, {"tab_id", "w", "h"}, {"tab_id"}, "hello.viewer")
     return None
 
 
@@ -250,7 +250,7 @@ def _check_turn(frame: dict) -> Optional[str]:
         spec = _BLOCK_SPECS.get(block_type)
         if spec is None:
             return "turn.blocks[%d] has unknown type: %r" % (i, block_type)
-        error = _object_error(block, spec[0], spec[1], "turn.blocks[%d]" % i)
+        error = object_error(block, spec[0], spec[1], "turn.blocks[%d]" % i)
         if error:
             return error
     return None
@@ -267,9 +267,7 @@ def _check_permission(frame: dict) -> Optional[str]:
 
 
 def _check_error(frame: dict) -> Optional[str]:
-    return _object_error(
-        frame.get("error"), {"code", "message"}, {"code", "message"}, "error.error"
-    )
+    return object_error(frame.get("error"), {"code", "message"}, {"code", "message"}, "error.error")
 
 
 def _check_pause(frame: dict) -> Optional[str]:
@@ -296,14 +294,18 @@ def _check_set_model(frame: dict) -> Optional[str]:
     return None
 
 
-def _check_state(frame: dict) -> Optional[str]:
-    return _object_error(
-        frame.get("state"), {"camera", "visibility", "selection", "mode"}, set(), "state.state"
-    )
-
-
 @dataclasses.dataclass(frozen=True)
-class _Spec:
+class FrameSpec:
+    """The shape of one inbound frame type: the keys it may carry and must
+    carry beyond ``v``/``type``, and an optional ``check`` that looks inside
+    once the flat key shape has passed, returning a refusal reason or None.
+
+    Public because a product describes its own inbound frames with it
+    (``Product.inbound_frames``); ``object_error`` above is the whitelist check
+    such a ``check`` should use for a nested object, so a product's frame is
+    refused in the same words as a generic one.
+    """
+
     allowed: Set[str]
     required: Set[str]
     check: Optional[Callable[[dict], Optional[str]]] = None
@@ -316,18 +318,47 @@ class _Spec:
 # flat key shape already passed, for the shapes that need to look inside a
 # nested object or enumerate a value's allowed contents.
 _INBOUND_SPECS = {
-    "hello": _Spec({"token", "last_seq", "viewer"}, {"token"}, _check_hello),
-    "turn": _Spec({"blocks"}, {"blocks"}, _check_turn),
-    "permission": _Spec(
+    "hello": FrameSpec({"token", "last_seq", "viewer"}, {"token"}, _check_hello),
+    "turn": FrameSpec({"blocks"}, {"blocks"}, _check_turn),
+    "permission": FrameSpec(
         {"request_id", "decision", "message"}, {"request_id", "decision"}, _check_permission
     ),
-    "result": _Spec({"id", "result"}, {"id", "result"}),
-    "error": _Spec({"id", "error"}, {"id", "error"}, _check_error),
-    "interrupt": _Spec(set(), set()),
-    "state": _Spec({"state"}, {"state"}, _check_state),
-    "pause": _Spec({"paused"}, {"paused"}, _check_pause),
-    "set_model": _Spec({"model"}, {"model"}, _check_set_model),
+    "result": FrameSpec({"id", "result"}, {"id", "result"}),
+    "error": FrameSpec({"id", "error"}, {"id", "error"}, _check_error),
+    "interrupt": FrameSpec(set(), set()),
+    "pause": FrameSpec({"paused"}, {"paused"}, _check_pause),
+    "set_model": FrameSpec({"model"}, {"model"}, _check_set_model),
 }
+
+# The installed product's own inbound frame types (Mesh: ``state``), which
+# the page sends to report its own state. Validated exactly as the generic
+# ones are; ``http/ws.py`` treats one as interaction with that tab and does
+# nothing further with it. Filled by ``register_product_frames``.
+_PRODUCT_SPECS = {}
+
+
+def check_product_frames(specs) -> None:
+    """Raise ``ValueError`` if ``specs`` (``{type: FrameSpec}``) cannot be
+    registered: a type the generic protocol already defines, or a value that
+    is not a ``FrameSpec``. Changes nothing."""
+    for frame_type, spec in dict(specs).items():
+        if frame_type in _INBOUND_SPECS:
+            raise ValueError("product frame type %r is already a protocol frame" % frame_type)
+        if not isinstance(spec, FrameSpec):
+            raise ValueError("product frame type %r has no FrameSpec" % frame_type)
+
+
+def register_product_frames(specs) -> None:
+    """Make ``specs`` the product's inbound frame types, replacing any
+    registered before. Called by ``product.install`` (after
+    ``check_product_frames``) and ``product.reset`` only."""
+    global _PRODUCT_SPECS
+    _PRODUCT_SPECS = dict(specs)
+
+
+def is_product_frame(frame_type: str) -> bool:
+    """Whether ``frame_type`` is one of the installed product's frame types."""
+    return frame_type in _PRODUCT_SPECS
 
 
 def validate_inbound(raw: Any) -> Tuple[bool, Union[dict, str]]:
@@ -353,10 +384,10 @@ def validate_inbound(raw: Any) -> Tuple[bool, Union[dict, str]]:
     if raw["v"] != PROTOCOL_VERSION:
         raise ProtocolVersionMismatch(raw["v"])
     frame_type = raw.get("type")
-    spec = _INBOUND_SPECS.get(frame_type)
+    spec = _INBOUND_SPECS.get(frame_type) or _PRODUCT_SPECS.get(frame_type)
     if spec is None:
         return False, "unknown frame type: %r" % (frame_type,)
-    error = _object_error(raw, spec.allowed | {"v", "type"}, spec.required | {"v", "type"}, "frame")
+    error = object_error(raw, spec.allowed | {"v", "type"}, spec.required | {"v", "type"}, "frame")
     if error:
         return False, error
     if spec.check is not None:

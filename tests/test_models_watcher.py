@@ -24,8 +24,8 @@ import struct
 
 import pytest
 
+from annealage_mesh.agent.session.events import EventLog
 from annealage_mesh.app import ModelsWatcher
-from annealage_mesh.session.events import EventLog
 
 pytestmark = pytest.mark.asyncio
 

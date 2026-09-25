@@ -68,6 +68,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional
@@ -95,6 +96,7 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import Notification
 
+from .. import product
 from . import turn_images
 from .base import (
     AGENT_CONNECTING,
@@ -111,6 +113,7 @@ from .base import (
     TurnEnd,
     UnknownRequest,
 )
+from .codex_mcp_stdio_bridge import AGENT_TOKEN_ENV
 from .permissions import Decision, _toml_string
 
 # The tool name a commandExecution approval is reported under. Deliberately
@@ -175,13 +178,17 @@ class CodexSession:
         self._resume = resume
         self._on_sdk_session_id = on_sdk_session_id
         self._client_factory = client_factory or CodexClient
-        # mesh's own /mcp endpoint (http/routes_mcp.py), for the
+        # The host's own /mcp endpoint (http/routes_mcp.py), for the
         # config_overrides this class registers its stdio-proxy subprocess
-        # with in start(); see _mcp_config_overrides. All three None (the
-        # default) means "no mesh tools attached to this session" - every
-        # fake-transport test that does not care about the tool-exposure
-        # bridge leaves them unset and gets an empty config_overrides,
-        # deliberately, rather than a bridge pointed at nothing.
+        # with in start(); see _mcp_config_overrides. ``mcp_token`` is the
+        # run's agent token, the only one /mcp accepts, and never the browser
+        # token that authorises /ws: it reaches the bridge through the
+        # app-server's environment (_mcp_env), not a command line. All three
+        # None (the default) means "no product tools attached to this
+        # session" - every fake-transport test that does not care about the
+        # tool-exposure bridge leaves them unset and gets an empty
+        # config_overrides, deliberately, rather than a bridge pointed at
+        # nothing.
         self._mcp_host = mcp_host
         self._mcp_port = mcp_port
         self._mcp_token = mcp_token
@@ -375,9 +382,10 @@ class CodexSession:
             self._client = self._client_factory(
                 config=CodexConfig(
                     cwd=self.cwd,
-                    client_name="annealage_mesh",
-                    client_title="Annealage Mesh",
+                    client_name=product.current().module,
+                    client_title=product.current().display_name,
                     config_overrides=self._mcp_config_overrides(),
+                    env=self._mcp_env(),
                 ),
                 approval_handler=self._approval_handler if self._broker is not None else None,
             )
@@ -432,17 +440,18 @@ class CodexSession:
         self._set_status(AGENT_UNAVAILABLE)
 
     def _mcp_config_overrides(self) -> tuple:
-        """``--config`` overrides registering mesh's own tool-exposure
-        bridge (``planning/tickets/phase3_codex-tool-mcp-bridge.md``) as an
-        MCP server scoped to this one launched app-server process - never
-        written to the human's real ``~/.codex/config.toml``.
+        """``--config`` overrides registering the agent layer's own
+        tool-exposure bridge (``planning/tickets/phase3_codex-tool-mcp-bridge.md``)
+        as an MCP server, named after the product's ``mcp_server_name``, scoped
+        to this one launched app-server process - never written to the human's
+        real ``~/.codex/config.toml``.
 
-        Empty when this session was constructed with no mesh ``/mcp``
-        endpoint to point at (``mcp_host``/``_port``/``_token`` all
-        ``None``, the constructor's default): every fake-transport test that
-        is not exercising the tool-exposure bridge leaves them unset and
-        gets Codex launched with nothing extra to prove wrong, rather than a
-        proxy pointed at a server that was never given to it.
+        Empty when this session was constructed with no ``/mcp`` endpoint to
+        point at (``mcp_host``/``_port``/``_token`` all ``None``, the
+        constructor's default): every fake-transport test that is not
+        exercising the tool-exposure bridge leaves them unset and gets Codex
+        launched with nothing extra to prove wrong, rather than a proxy
+        pointed at a server that was never given to it.
 
         Each entry is one ``--config key=value`` CLI flag
         (``client.py``'s own launch-argument construction, confirmed by
@@ -454,8 +463,8 @@ class CodexSession:
         exactly this purpose elsewhere in this project, reused rather than
         duplicated: the escaping a value needs to be a safe TOML string is
         the same whichever file the string ends up written into). The
-        launched proxy is always ``sys.executable -m
-        annealage_mesh.session.codex_mcp_stdio_bridge`` - the same
+        launched proxy is always ``sys.executable -m`` the product's
+        ``codex_bridge_module`` (the agent layer's own bridge) - the same
         interpreter and installed package running this process, guaranteed
         to have that module and its own dependencies (``mcp``, ``httpx``)
         importable regardless of whether the optional ``codex`` extra is
@@ -463,34 +472,66 @@ class CodexSession:
         ``claude-agent-sdk``, a base dependency, and are now declared
         directly.
 
-        Whether ``config_overrides`` accepts a table-shaped value the same
-        way TOML would, or only flat scalar ``key=value`` pairs, was not
-        verified against a live ``codex app-server`` process - this ticket's
-        own stated Open Question. This follows the literal example in that
-        finding note as the most standards-conformant TOML-literal encoding
-        available without a live process to check against: a bare
-        ``command="..."`` scalar assignment, and ``args=[...]`` as a TOML
-        array-of-strings literal assigned the same dotted-path way. It is a
-        follow-up item for the manual integration pass
-        (``phase3_codex-session.md``'s own open question already calls for
-        one), not something this ticket blocks on.
+        The agent token is not among these: every entry here becomes part of
+        the app-server's command line. ``env_vars`` (Codex's allowlist of
+        variables copied into an MCP child's scrubbed environment) names the
+        variable ``_mcp_env`` sets instead; checked against codex-cli 0.154.0,
+        which forwards a variable so named and drops it when it is not named.
+
+        The dotted ``key=value`` form below was later confirmed against a
+        live ``codex app-server`` (0.154.0) for ``command``, ``args`` and
+        ``env_vars``: a bare ``command="..."`` scalar assignment, and
+        ``args=[...]``/``env_vars=[...]`` as TOML array-of-strings literals
+        assigned the same dotted-path way.
+
+        The last entry keeps the token out of the shells Codex runs for the
+        model. Codex does not drop ``*TOKEN*`` variables by default (checked
+        against 0.154.0: ``codex sandbox -- env`` shows a ``*_TOKEN``
+        variable unless ``shell_environment_policy`` excludes it), and the
+        app-server's environment is what those shells inherit. The exclude
+        applies only to shells; the MCP bridge still receives the variable
+        through ``env_vars`` (both checked against the real binary). A dotted
+        override replaces the whole list, so the user's own top-level
+        ``exclude`` is read back and kept (``_shell_excludes``).
         """
         if self._mcp_host is None or self._mcp_port is None or self._mcp_token is None:
             return ()
+        installed = product.current()
+        # No token here: this list becomes the app-server's own command line,
+        # and so does anything in an ``env`` table, both readable through
+        # ``ps``. The token travels in the app-server's environment instead
+        # (``_mcp_env``), and ``env_vars`` names it as the one variable Codex
+        # copies from there into the bridge's otherwise scrubbed environment.
         proxy_args = [
             "-m",
-            "annealage_mesh.session.codex_mcp_stdio_bridge",
+            installed.codex_bridge_module,
             "--host",
             self._mcp_host,
             "--port",
             str(self._mcp_port),
-            "--token",
-            self._mcp_token,
+            "--server-name",
+            installed.distribution,
+            "--server-version",
+            installed.version,
         ]
+        key = "mcp_servers.%s" % installed.mcp_server_name
         return (
-            "mcp_servers.mesh.command=%s" % _toml_string(sys.executable),
-            "mcp_servers.mesh.args=[%s]" % ", ".join(_toml_string(arg) for arg in proxy_args),
+            "%s.command=%s" % (key, _toml_string(sys.executable)),
+            "%s.args=[%s]" % (key, ", ".join(_toml_string(arg) for arg in proxy_args)),
+            "%s.env_vars=[%s]" % (key, _toml_string(AGENT_TOKEN_ENV)),
+            "shell_environment_policy.exclude=[%s]"
+            % ", ".join(_toml_string(name) for name in _shell_excludes()),
         )
+
+    def _mcp_env(self) -> Optional[dict]:
+        """The app-server's extra environment: the agent token, for
+        ``_mcp_config_overrides``' ``env_vars`` to hand on to the bridge, or
+        None when no bridge is registered. See
+        ``session/codex_mcp_stdio_bridge.py`` for why the environment and not
+        the command line."""
+        if not self._mcp_config_overrides():
+            return None
+        return {AGENT_TOKEN_ENV: self._mcp_token}
 
     # -- OAuth: an explicit fallback, never the default path -----------------
     #
@@ -929,6 +970,36 @@ def _to_codex_input_items(blocks: list) -> list:
     return items
 
 
+def _shell_excludes() -> list:
+    """The ``shell_environment_policy.exclude`` list this app-server runs
+    with: the user's own top-level list from ``$CODEX_HOME/config.toml``
+    (``~/.codex`` by default), kept because a dotted ``--config`` override
+    replaces the list rather than extending it, plus the agent token's
+    variable.
+
+    A file that is missing, unreadable, not TOML, or holds something other
+    than a list of strings contributes nothing: Codex itself reports a broken
+    config, and the token's own exclusion must not depend on the user's file
+    parsing. A per-profile or project-level list is not read; it would be
+    replaced for this run the same way.
+    """
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10: tomllib is stdlib only from 3.11.
+        import tomli as tomllib
+
+    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    try:
+        with open(os.path.join(home, "config.toml"), "rb") as fh:
+            config = tomllib.load(fh)
+        existing = config.get("shell_environment_policy", {}).get("exclude", [])
+    except (OSError, ValueError, AttributeError):
+        existing = []
+    if not isinstance(existing, list) or not all(isinstance(n, str) for n in existing):
+        existing = []
+    return existing + ([AGENT_TOKEN_ENV] if AGENT_TOKEN_ENV not in existing else [])
+
+
 # ---------------------------------------------------------------------------
 # Remediation text, matched by exception class name for the same reason
 # session/sdk.py's _remediation_for is: a renamed or added SDK error
@@ -942,13 +1013,13 @@ def _remediation_for(exc: BaseException) -> str:
         return (
             "the bundled codex runtime could not be located; reinstall with the "
             "codex extra (`uv sync --extra codex`, or `pip install "
-            "annealage-mesh[codex]`), or set CodexConfig.codex_bin explicitly"
+            "%s[codex]`), or set CodexConfig.codex_bin explicitly" % product.current().distribution
         )
     if name == "TransportClosedError":
         return (
             "the codex app-server exited or closed its connection; run "
-            "annealage-mesh doctor, and check that it is authenticated "
-            "(run `codex login`)"
+            "%s doctor, and check that it is authenticated "
+            "(run `codex login`)" % product.current().distribution
         )
     if name in ("InvalidRequestError", "InvalidParamsError", "MethodNotFoundError"):
         return (
@@ -959,7 +1030,7 @@ def _remediation_for(exc: BaseException) -> str:
 
 
 def _bundled_codex_binary_hint() -> str:
-    """ " (the bundled binary mesh uses is at <path>)", or "" if it cannot be
+    """ " (the bundled binary <product> uses is at <path>)", or "" if it cannot be
     located -- the same defensive lookup diagnostics.py's _codex_cli_info
     makes, reused here so the remediation message names the exact binary
     this process would itself run rather than leaving a human to guess
@@ -967,6 +1038,9 @@ def _bundled_codex_binary_hint() -> str:
     try:
         from codex_cli_bin import bundled_codex_path
 
-        return " (the bundled binary mesh uses is at %s)" % bundled_codex_path()
+        return " (the bundled binary %s uses is at %s)" % (
+            product.current().name,
+            bundled_codex_path(),
+        )
     except Exception:
         return ""

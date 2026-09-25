@@ -8,7 +8,7 @@ serves file bytes.
 
 import pytest
 
-from annealage_mesh.http import file_response
+from annealage_mesh.agent.http import file_response
 
 pytestmark = pytest.mark.asyncio
 

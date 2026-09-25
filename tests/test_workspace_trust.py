@@ -14,7 +14,7 @@ what it distinguishes does not.
 import pytest
 
 from annealage_mesh import cli
-from annealage_mesh.session import workspace_trust as wt
+from annealage_mesh.agent.session import workspace_trust as wt
 
 
 @pytest.fixture(autouse=True)
@@ -22,7 +22,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     """Agent mode refuses to start without the sandbox binaries; this file is
     about the trust gate, which sits behind that refusal, so the requirement is
     reported satisfied rather than depending on what the host has installed."""
-    from annealage_mesh.session import sdk
+    from annealage_mesh.agent.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
@@ -221,6 +221,8 @@ def _run_cli(monkeypatch, args):
         port,
         on_ready=None,
         token=None,
+        agent_token=None,
+        login=None,
         extra_origins=(),
         build_session=None,
         mesh_session_id=None,

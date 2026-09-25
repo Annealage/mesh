@@ -19,8 +19,8 @@ import json
 
 import pytest
 
-from annealage_mesh.http import ws as ws_module
-from annealage_mesh.session.fake import FakeSession
+from annealage_mesh.agent.http import ws as ws_module
+from annealage_mesh.agent.session.fake import FakeSession
 
 pytestmark = pytest.mark.asyncio
 

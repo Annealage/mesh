@@ -8,7 +8,7 @@ way, by writing under ``tmp_path``.
 
 import pytest
 
-from annealage_mesh import settings
+from annealage_mesh.agent import settings
 
 
 def _write(path, text):

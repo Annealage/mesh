@@ -31,7 +31,7 @@ import base64
 import os
 from typing import Any, Tuple
 
-from .. import paths
+from .. import files
 
 # Per-turn cap on how many image_path blocks are expanded. store.js's own
 # MAX_CHAT_ATTACHMENTS is 4, so a turn built by the shipped composer never
@@ -47,20 +47,20 @@ MAX_TURN_IMAGES = 4
 # large one has used most of the budget rather than one oversized image
 # starving every attachment behind it.
 #
-# Twice ``paths.MAX_INLINE_IMAGE_BYTES``, which is deliberately less than
+# Twice ``files.MAX_INLINE_IMAGE_BYTES``, which is deliberately less than
 # ``MAX_TURN_IMAGES`` times it: four attachments are allowed, but four at the
 # per-image ceiling would put about 19 MiB of base64 into the single JSON line
 # ``submit_turn`` writes and the CLI child must read whole before it can act on
 # any of it, so this budget trims such a turn well before the count cap alone
 # would.
-MAX_TURN_IMAGE_BYTES = 2 * paths.MAX_INLINE_IMAGE_BYTES
+MAX_TURN_IMAGE_BYTES = 2 * files.MAX_INLINE_IMAGE_BYTES
 
 # An ``image_path`` block's ``path`` is always "images/<name>" (plan section
 # D): project-relative, one directory component, so the model can hand this
 # exact string to its own tools later. Stripping this prefix is the first of
 # two containment checks, and the only one that runs with no filesystem
 # access at all: anything not shaped this way is refused on the string alone.
-_IMAGES_PREFIX = paths.IMAGES_DIRNAME + "/"
+_IMAGES_PREFIX = files.IMAGES_DIRNAME + "/"
 
 
 class _ImageRejected(Exception):
@@ -119,18 +119,18 @@ def _images_rel(path: Any) -> str:
 def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
     """Read and sniff one ``image_path`` block's file, or raise ``_ImageRejected``.
 
-    ``paths.resolve_asset`` is the second and only filesystem-aware
+    ``files.resolve_asset`` is the second and only filesystem-aware
     containment check: it refuses a name that resolves outside
     ``serve_dir``/images (including through a symlink), a symlinked
     ``images/`` itself, and anything that is not a regular file, returning the
     resolved path and the identity it validated. That identity is reasserted
     against the freshly opened descriptor below, the same re-check
-    ``paths.read_fixed_file`` performs for the same reason: resolution and
+    ``files.read_fixed_file`` performs for the same reason: resolution and
     open are separate operations, and a served directory's ``images/`` is not
     a tree only this process writes to, so the name can be relinked in
     between.
 
-    The size cap is ``paths.MAX_INLINE_IMAGE_BYTES``, what may be inlined,
+    The size cap is ``files.MAX_INLINE_IMAGE_BYTES``, what may be inlined,
     which is well below what ``/upload`` will store: a photograph a human
     attached is kept at full resolution as evidence, and a file above the
     inline cap is refused as a picture while still being named to the model as
@@ -139,14 +139,14 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
     ``/upload`` is bounded by nothing else, and reading an oversized file just
     to reject it would spend the memory and IO this check exists to avoid.
 
-    The media type is decided by ``paths.sniff_image`` against these bytes,
+    The media type is decided by ``files.sniff_image`` against these bytes,
     never against ``path``'s own suffix: that suffix was chosen by this
     project from a file's bytes for anything ``/upload`` wrote, or was not
     chosen by anyone for a file a human dropped into ``images/`` directly,
     and either way it is the weaker source of the two.
     """
     rel = _images_rel(path)
-    resolved = paths.resolve_asset(serve_dir, rel)
+    resolved = files.resolve_asset(serve_dir, rel)
     if resolved is None:
         raise _ImageRejected(
             "%s does not resolve inside images/ and was dropped" % (_show_path(path),)
@@ -164,7 +164,7 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
             raise _ImageRejected(
                 "%s changed while it was being attached and was dropped" % (_show_path(path),)
             )
-        if st.st_size > paths.MAX_INLINE_IMAGE_BYTES:
+        if st.st_size > files.MAX_INLINE_IMAGE_BYTES:
             # Neither an error nor a drop. The file is on disk, is served by
             # /asset and is named to the model in this very note, so only the
             # inline copy is withheld. Inlining it anyway would put a base64
@@ -174,7 +174,7 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
                 "%s is %d bytes, over the %d byte limit for an image sent "
                 "inline, so it was not attached as a picture. It is on disk at "
                 "that path and can be read with the Read tool."
-                % (_show_path(path), st.st_size, paths.MAX_INLINE_IMAGE_BYTES)
+                % (_show_path(path), st.st_size, files.MAX_INLINE_IMAGE_BYTES)
             )
         chunks = []
         remaining = st.st_size
@@ -191,7 +191,7 @@ def _read_turn_image(serve_dir: str, path: Any) -> Tuple[str, bytes]:
         ) from exc
     finally:
         os.close(fd)
-    sniff = paths.sniff_image(data)
+    sniff = files.sniff_image(data)
     if sniff is None:
         raise _ImageRejected(
             "%s is not a recognised image (PNG, JPEG or WEBP) and was dropped" % (_show_path(path),)

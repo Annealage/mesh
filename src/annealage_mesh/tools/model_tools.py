@@ -18,7 +18,8 @@ import os
 from claude_agent_sdk import tool
 
 from .. import paths, stl
-from . import fail, ok
+from ..agent import files
+from ..agent.tools import fail, ok
 
 
 def _list(serve_dir):
@@ -37,7 +38,7 @@ def _list(serve_dir):
             entry["bytes"] = st.st_size
         listing.append(entry)
     return {
-        "dir": str(paths.resolve_serve_dir(serve_dir)),
+        "dir": str(files.resolve_serve_dir(serve_dir)),
         "models": listing,
         "truncated": truncated,
     }

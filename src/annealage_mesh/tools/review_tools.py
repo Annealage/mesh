@@ -37,8 +37,9 @@ import time
 from claude_agent_sdk import tool
 
 from .. import paths
-from ..session import events
-from . import fail, ok
+from ..agent import files
+from ..agent.session import events
+from ..agent.tools import fail, ok
 
 # Cap on how many callouts this tool will let the file grow to. Every one is a
 # marker and a sprite in the viewer and a row in the side panel, so a model
@@ -71,7 +72,7 @@ def _read_annotations(serve_dir, name):
     "there is nothing here" apart from "there is something here I could not
     read" and say so.
     """
-    raw = paths.read_fixed_file(serve_dir, name)
+    raw = files.read_fixed_file(serve_dir, name)
     if raw is None:
         return []
     try:
@@ -87,7 +88,7 @@ def _read_annotations(serve_dir, name):
 
 def _read_record(serve_dir, name):
     """The whole submission record, for ``list_comments``' own extra fields."""
-    raw = paths.read_fixed_file(serve_dir, name)
+    raw = files.read_fixed_file(serve_dir, name)
     if raw is None:
         return {}
     try:
@@ -105,11 +106,11 @@ def _write_callouts(serve_dir, annotations):
     directory entry is not, and a symlink or a hardlink left at that name would
     otherwise be written through.
     """
-    target = paths.safe_fixed_file(serve_dir, paths.CALLOUTS_JSON_NAME)
+    target = files.safe_fixed_file(serve_dir, paths.CALLOUTS_JSON_NAME)
     if target is None:
         return None
     payload = json.dumps({"annotations": annotations}, indent=2) + "\n"
-    return paths.atomic_replace(target, payload.encode("utf-8"))
+    return files.atomic_replace(target, payload.encode("utf-8"))
 
 
 def _next_callout_id(annotations):
@@ -168,7 +169,7 @@ def _write_snapshot(serve_dir, wanted, suffix, data):
 
     The name is retried rather than overwritten, because every image here is
     evidence of what a part looked like at some moment and a silent overwrite
-    loses one. ``paths.create_image_file`` raises ``FileExistsError`` for a
+    loses one. ``files.create_image_file`` raises ``FileExistsError`` for a
     taken name, which is the signal to try the next one.
 
     Returns None when the name or the ``images`` entry is not something this
@@ -179,7 +180,7 @@ def _write_snapshot(serve_dir, wanted, suffix, data):
     for attempt in range(1, _SNAPSHOT_NAME_ATTEMPTS + 1):
         name = wanted + suffix if attempt == 1 else "%s-%d%s" % (wanted, attempt, suffix)
         try:
-            created = paths.create_image_file(serve_dir, name)
+            created = files.create_image_file(serve_dir, name)
         except FileExistsError:
             continue
         if created is None:
@@ -390,13 +391,13 @@ def build(bus, serve_dir, session_id=None):
             return fail(
                 "%r and the next %d names after it are all taken in %s/; "
                 "pass a different name"
-                % (wanted + suffix, _SNAPSHOT_NAME_ATTEMPTS - 1, paths.IMAGES_DIRNAME)
+                % (wanted + suffix, _SNAPSHOT_NAME_ATTEMPTS - 1, files.IMAGES_DIRNAME)
             )
         if target is None:
             return fail(
                 "could not write the snapshot: %s/ must be a real "
                 "directory (not a symlink) and the name must be a plain "
-                "file name" % paths.IMAGES_DIRNAME
+                "file name" % files.IMAGES_DIRNAME
             )
         return ok(
             {
@@ -461,17 +462,17 @@ def build(bus, serve_dir, session_id=None):
         except FileExistsError:
             return fail(
                 "every name this export would use in %s/ is already "
-                "taken; the human will have to clear some out" % paths.REVIEW_DIRNAME
+                "taken; the human will have to clear some out" % files.REVIEW_DIRNAME
             )
         except OSError as exc:
             return fail(
                 "could not write the transcript (%s); %s/ must be a real "
                 "directory this process can write into, so tell the human "
-                "rather than retrying" % (exc, paths.REVIEW_DIRNAME)
+                "rather than retrying" % (exc, files.REVIEW_DIRNAME)
             )
         return ok(
             {
-                "path": "%s/%s" % (paths.REVIEW_DIRNAME, target.name),
+                "path": "%s/%s" % (files.REVIEW_DIRNAME, target.name),
                 "bytes": target.stat().st_size,
                 "format": fmt,
                 "include": include,

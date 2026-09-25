@@ -1,5 +1,6 @@
-"""Three-layer settings resolution: CLI flag, project ``.mesh/config.toml``,
-user ``settings.toml``, built-in default, highest precedence first.
+"""Three-layer settings resolution: CLI flag, the project's own config file
+(``<state dir>/config.toml``, e.g. Mesh's ``.mesh/config.toml``), user
+``settings.toml``, built-in default, highest precedence first.
 
 Provenance is not a debugging aid bolted on after the fact: it is the reason
 this module exists at all. A person looking at the settings window needs to
@@ -42,7 +43,7 @@ is written to be shown verbatim, to a human on a terminal or as the "error"
 field of a JSON response to a browser, and says which file or key is at
 fault and, where there is one, what to do instead.
 
-Every write goes through ``paths.atomic_replace``, so a crash partway
+Every write goes through ``files.atomic_replace``, so a crash partway
 through never leaves a config file holding half a TOML document; a reader
 either sees the file as it was before the write or as it is after, never
 something in between.
@@ -53,7 +54,7 @@ from pathlib import Path
 
 import platformdirs
 
-from . import paths
+from . import files, product, sessions
 
 try:
     import tomllib
@@ -68,7 +69,6 @@ DEFAULT = "default"
 _BYPASS_PERMISSIONS = "bypassPermissions"
 _PERMISSION_MODE_CHOICES = ("default", "acceptEdits", "plan")
 _EFFORT_CHOICES = ("low", "medium", "high", "xhigh", "max")
-_UP_AXIS_CHOICES = ("z", "y")
 
 #: Every agent backend, in no order of preference: none is the default.
 BACKENDS = ("claude", "codex", "omp")
@@ -152,7 +152,9 @@ class Key:
         return "Key(%r)" % self.name
 
 
-SETTING_KEYS = (
+#: The keys every product has: where the server listens, and how the agent
+#: session is configured.
+_AGENT_KEYS = (
     Key(
         name="host",
         type_name="str",
@@ -279,16 +281,13 @@ SETTING_KEYS = (
         py_type=str,
         nullable=True,
     ),
-    Key(
-        name="up_axis",
-        type_name='"z" or "y"',
-        default="z",
-        layers=(USER,),
-        effect="load",
-        description="Which axis the viewer treats as up: z or y.",
-        py_type=str,
-        choices=_UP_AXIS_CHOICES,
-    ),
+)
+
+#: The chat pane's own presentation keys. Kept apart from ``_AGENT_KEYS``
+#: only so a product's keys are listed between the two, which is where
+#: Mesh's ``up_axis`` has always been listed: ``--settings`` prints this
+#: order, and it is the order ``to_wire`` builds ``GET /settings`` in.
+_PRESENTATION_KEYS = (
     Key(
         name="tool_cards_collapsed",
         type_name="bool",
@@ -300,17 +299,43 @@ SETTING_KEYS = (
     ),
 )
 
+#: Every key this process resolves, generic and product, in listing order.
+#: Rebound by ``register_product_keys`` when a product is installed, so it is
+#: always read as ``settings.SETTING_KEYS`` rather than imported by name.
+SETTING_KEYS = _AGENT_KEYS + _PRESENTATION_KEYS
+
 KEYS_BY_NAME = {key.name: key for key in SETTING_KEYS}
+
+
+def check_product_keys(keys):
+    """Raise ``ValueError`` if ``keys`` cannot be registered: a name the
+    generic set already has, a name given twice, or ``token``, which is never
+    a setting (see ``_validate_file_mapping``). Changes nothing."""
+    generic = {key.name for key in _AGENT_KEYS + _PRESENTATION_KEYS}
+    seen = set()
+    for key in keys:
+        if key.name in generic or key.name in seen or key.name == "token":
+            raise ValueError("product settings key %r collides with another key" % key.name)
+        seen.add(key.name)
+
+
+def register_product_keys(keys):
+    """Make ``keys`` the product's settings keys, replacing any registered
+    before. Called by ``product.install`` (after ``check_product_keys``) and
+    ``product.reset`` only."""
+    global SETTING_KEYS, KEYS_BY_NAME
+    SETTING_KEYS = _AGENT_KEYS + tuple(keys) + _PRESENTATION_KEYS
+    KEYS_BY_NAME = {key.name: key for key in SETTING_KEYS}
 
 
 def user_settings_path():
     """The one ``settings.toml`` shared by every project on this machine."""
-    return Path(platformdirs.user_config_dir("annealage-mesh")) / "settings.toml"
+    return Path(platformdirs.user_config_dir(product.current().config_dirname)) / "settings.toml"
 
 
 def project_config_path(project_dir):
-    """``<project_dir>/.mesh/config.toml``, this project's own overrides."""
-    return Path(project_dir) / ".mesh" / "config.toml"
+    """``<project_dir>/<state dir>/config.toml``, this project's own overrides."""
+    return sessions.state_dir(project_dir) / "config.toml"
 
 
 class Resolved:
@@ -487,7 +512,7 @@ def _validate_flags(flags):
     for name, value in flags.items():
         key = KEYS_BY_NAME.get(name)
         if key is None:
-            raise SettingsError("%r is not a mesh setting" % name)
+            raise SettingsError("%r is not a %s setting" % (name, product.current().name))
         _check_value(key, value, layer=FLAG, source="a command-line flag for %r" % name)
 
 
@@ -578,8 +603,9 @@ def _toml_value(value):
     raise TypeError(type(value).__name__)
 
 
+#: ``%s`` is the product's distribution name.
 _HEADER_COMMENT = (
-    "# Written by annealage-mesh (its settings window, or --save-default).\n"
+    "# Written by %s (its settings window, or --save-default).\n"
     "# A comment added here by hand does not survive the next save: only\n"
     "# the key/value pairs below are read back and re-emitted.\n"
     "\n"
@@ -588,14 +614,14 @@ _HEADER_COMMENT = (
 
 def _serialize_mapping(mapping):
     """The whole of ``mapping`` as a TOML document, bytes ready for
-    ``paths.atomic_replace``.
+    ``files.atomic_replace``.
 
     Raises ``SettingsError`` naming the offending key if any value in
     ``mapping`` is not a string, boolean, integer or float: those are the
     only TOML value shapes this writer can express, so a table, an array or
     a datetime blocks the whole write rather than being silently dropped.
     """
-    lines = [_HEADER_COMMENT]
+    lines = [_HEADER_COMMENT % product.current().distribution]
     for name, value in mapping.items():
         try:
             rendered = _toml_value(value)
@@ -615,7 +641,7 @@ def apply(project_dir, changes, *, flags=None, layer=None):
     [names]})`` naming which keys landed in which file.
 
     Every change is validated, and every file about to be touched is loaded,
-    merged and proven writable, before ``paths.atomic_replace`` is called
+    merged and proven writable, before ``files.atomic_replace`` is called
     for any of them: a batch with one good change and one bad one writes
     neither file, and a preserved key in an existing file that this writer
     cannot express blocks the whole call rather than losing whichever change
@@ -641,7 +667,7 @@ def apply(project_dir, changes, *, flags=None, layer=None):
             )
         key = KEYS_BY_NAME.get(name)
         if key is None:
-            raise SettingsError("%r is not a mesh setting" % name)
+            raise SettingsError("%r is not a %s setting" % (name, product.current().name))
         target = layer or key.write_layer
         if target not in key.layers:
             raise SettingsError(
@@ -671,7 +697,7 @@ def apply(project_dir, changes, *, flags=None, layer=None):
     written = {USER: [], PROJECT: []}
     for layer, (path, data) in prepared.items():
         path.parent.mkdir(parents=True, exist_ok=True)
-        paths.atomic_replace(path, data)
+        files.atomic_replace(path, data)
         written[layer] = sorted(by_layer[layer])
 
     return resolve(project_dir, flags=flags), written

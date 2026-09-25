@@ -64,6 +64,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Tuple, Union
 
+from .. import product
 from .base import AgentEvent, PermissionRequest, PermissionResolved, UnknownRequest
 
 try:
@@ -123,21 +124,29 @@ NEVER_REMEMBERED = frozenset({"Bash"})
 
 DEFAULT_DENY_MESSAGE = "the human reviewing this session denied the request"
 
+# The three templates below name the product (``%(product)s``, its lowercase
+# name), because "reopen the viewer" alone does not say which one to a human
+# running more than one of these tools.
 _DENY_TIMEOUT_TEMPLATE = (
-    "no decision was received within %g seconds and the request has expired; "
-    "if this tool call is still needed, ask the human to reopen the mesh "
+    "no decision was received within %(timeout)g seconds and the request has expired; "
+    "if this tool call is still needed, ask the human to reopen the %(product)s "
     "viewer and try again"
 )
 
-_DENY_ALL_GONE = (
+_DENY_ALL_GONE_TEMPLATE = (
     "every browser viewer disconnected while this request was awaiting a "
-    "decision; ask the human to reopen the mesh viewer and try again"
+    "decision; ask the human to reopen the %(product)s viewer and try again"
 )
 
-_DENY_SHUTDOWN = (
-    "the mesh session is shutting down and cannot ask a human to decide "
+_DENY_SHUTDOWN_TEMPLATE = (
+    "the %(product)s session is shutting down and cannot ask a human to decide "
     "this; the request was not approved"
 )
+
+
+def _deny_message(template, **values):
+    return template % dict(values, product=product.current().name)
+
 
 _DENY_EMIT_FAILED_TEMPLATE = (
     "could not deliver this permission request to the browser due to an "
@@ -230,7 +239,7 @@ class PermissionBroker:
         under this call before it commits to one.
         """
         if self._shutdown:
-            return Decision(allow=False, message=_DENY_SHUTDOWN)
+            return Decision(allow=False, message=_deny_message(_DENY_SHUTDOWN_TEMPLATE))
         if tool_name in self._granted_tools:
             return Decision(allow=True, remember_tool=tool_name)
         if self._viewer_count == 0:
@@ -270,7 +279,10 @@ class PermissionBroker:
                 # its own done() check, not by a value read off a future
                 # this method has already stopped trusting.
                 self._outcomes[request_id] = OUTCOME_TIMEOUT
-                return Decision(allow=False, message=_DENY_TIMEOUT_TEMPLATE % self._timeout)
+                return Decision(
+                    allow=False,
+                    message=_deny_message(_DENY_TIMEOUT_TEMPLATE, timeout=self._timeout),
+                )
         finally:
             self._pending.pop(request_id, None)
             self._open.pop(request_id, None)
@@ -410,12 +422,12 @@ class PermissionBroker:
             return
         self._cancel_no_viewer_timer()
         if self._no_viewer_grace <= 0:
-            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+            self._deny_all_pending(_deny_message(_DENY_ALL_GONE_TEMPLATE), OUTCOME_NO_VIEWER)
             return
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+            self._deny_all_pending(_deny_message(_DENY_ALL_GONE_TEMPLATE), OUTCOME_NO_VIEWER)
             return
         self._no_viewer_timer = loop.call_later(self._no_viewer_grace, self._deny_for_no_viewer)
 
@@ -425,7 +437,7 @@ class PermissionBroker:
         firing cannot be cancelled."""
         self._no_viewer_timer = None
         if self._viewer_count == 0:
-            self._deny_all_pending(_DENY_ALL_GONE, OUTCOME_NO_VIEWER)
+            self._deny_all_pending(_deny_message(_DENY_ALL_GONE_TEMPLATE), OUTCOME_NO_VIEWER)
 
     def _cancel_no_viewer_timer(self) -> None:
         if self._no_viewer_timer is not None:
@@ -440,7 +452,7 @@ class PermissionBroker:
             )
         return (
             "no browser viewer is connected to decide this permission request; "
-            "ask the human to open the mesh viewer, then try again"
+            "ask the human to open the %s viewer, then try again" % product.current().name
         )
 
     # -- replay and shutdown -----------------------------------------------
@@ -475,7 +487,7 @@ class PermissionBroker:
         """
         self._shutdown = True
         self._cancel_no_viewer_timer()
-        self._deny_all_pending(_DENY_SHUTDOWN, OUTCOME_SHUTDOWN)
+        self._deny_all_pending(_deny_message(_DENY_SHUTDOWN_TEMPLATE), OUTCOME_SHUTDOWN)
 
     def _deny_all_pending(self, message: str, outcome: str) -> None:
         for request_id, future in list(self._pending.items()):
@@ -607,8 +619,9 @@ def _write_grants(path: Path, tools: FrozenSet[str]) -> None:
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# Allow-always permission grants for this project (annealage-mesh).",
-        "# Managed by annealage-mesh; hand-editing is safe, this is plain TOML.",
+        "# Allow-always permission grants for this project (%s)." % product.current().distribution,
+        "# Managed by %s; hand-editing is safe, this is plain TOML."
+        % product.current().distribution,
         "# Bash is never recorded here (plan section 5); an entry here would",
         "# be ignored on load regardless.",
         "%s = [" % _GRANTS_KEY,

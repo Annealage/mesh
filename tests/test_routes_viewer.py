@@ -21,7 +21,8 @@ from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
 from annealage_mesh import paths
-from annealage_mesh.app import DEFAULT_PORT, MAX_REQUEST_BODY, create_app
+from annealage_mesh.agent.app import MAX_REQUEST_BODY
+from annealage_mesh.app import DEFAULT_PORT, create_app
 from annealage_mesh.http import routes_viewer
 
 pytestmark = pytest.mark.asyncio
@@ -694,7 +695,7 @@ async def test_model_route_immune_to_traversal_shapes(client, served_dir):
 
 async def test_asset_route_refuses_every_traversal_shape(client, served_dir):
     # /asset/<rel> does a real filesystem resolve-and-contain check
-    # (paths.safe_join); these payloads exercise that check directly rather
+    # (files.safe_join); these payloads exercise that check directly rather
     # than relying on an allowlist miss.
     images = served_dir / "images"
     images.mkdir()
@@ -1368,7 +1369,7 @@ def _agent_client(served_dir, token=SUBMIT_TOKEN):
     The session is created for real rather than named, because the app opens
     that session's event log on construction.
     """
-    from annealage_mesh import sessions
+    from annealage_mesh.agent import sessions
 
     return make_test_client(
         create_app(

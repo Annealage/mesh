@@ -40,7 +40,12 @@ QUEUE_MAXSIZE = 256
 # handful of sends per second instead of one send per token.
 FLUSH_INTERVAL = 0.03
 
-NO_VIEWER_MESSAGE = "no viewer connected; ask the human to open {url}"
+# ``url`` is the tokenless address (see ``ViewerBus``), so the message says
+# which link carries the token rather than repeating it.
+NO_VIEWER_MESSAGE = (
+    "no viewer connected; ask the human to open the viewer at {url} "
+    "(the link printed when it started, which carries its access token)"
+)
 
 # How long one call into the browser is given to come back (plan section 3.3).
 # Generous enough for a phone over a tailnet to encode a viewport capture, and
@@ -662,11 +667,18 @@ class ViewerBus:
     """What the tool layer sees of the browser: one correlated call into the
     primary viewer, and the human's pause switch.
 
-    Every mesh tool handler depends on this rather than on ``ViewerRegistry``,
+    Every product tool handler depends on this rather than on ``ViewerRegistry``,
     which is what lets ``tests/test_tools.py`` drive all of them against a
     recorder with the same two members and no socket at all. It also means no
     handler has to carry the viewer URL that ``NoViewerConnected`` names, or
     decide a timeout: both are properties of the run, fixed here once.
+
+    ``url`` is where the page is served, **without** the browser token: it is
+    written into text the model reads (``NoViewerConnected``, a permission
+    request refused for want of a viewer) and from there into the session's
+    event log inside the served directory, and the browser token is what
+    approves a permission request over ``/ws``. The human opens the link the
+    startup banner printed, which carries it.
 
     **The pause switch lives here, in the server, and that is the whole
     point of it.** A flag the browser kept would not be enforcement: the tools
@@ -697,6 +709,11 @@ class ViewerBus:
         self._paused = False
 
     @property
+    def url(self) -> str:
+        """Where the page is served, with no token; see the class docstring."""
+        return self._url
+
+    @property
     def paused(self) -> bool:
         return self._paused
 
@@ -721,7 +738,7 @@ class ViewerBus:
         Raises what ``ViewerRegistry.call`` raises, untranslated:
         ``NoViewerConnected``, ``ViewerGone``, ``CallError`` and
         ``asyncio.TimeoutError``. Turning those into tool errors is the
-        registry's job (``tools/registry.py``), in one place, because the four
+        registry's job (``tools.py``'s ``_wrap``), in one place, because the four
         of them mean four different things to a model and a wrapper here would
         have to flatten them to say anything at all.
         """
