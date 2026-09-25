@@ -51,8 +51,8 @@ CLOSE_VERSION_MISMATCH = 4400
 # Close code for a connection asked to accept more than its backpressure
 # policy (viewers.py) will hold even after every relief it grants runs
 # out. 1013 is the standard "try again later" WebSocket close code; the
-# client's reconnect-and-replay-from-seq logic (js/ws.js) is what "later"
-# means here.
+# client's reconnect-and-replay-from-seq logic (agent/static/ws.js) is what
+# "later" means here.
 CLOSE_OVERFLOW = 1013
 
 #: Sent to every connected viewer as the process shuts down. Without it, a

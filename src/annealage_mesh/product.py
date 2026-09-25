@@ -11,13 +11,15 @@ in which those imports happen does not matter.
 from . import __version__
 from .agent import product as agent_product
 from .agent.protocol import FrameSpec, object_error
-from .agent.settings import USER, Key
+from .agent.settings import USER, VIEWER_SECTION, Key
 from .events import CalloutsChanged, ModelsChanged
 
 _UP_AXIS_CHOICES = ("z", "y")
 
 #: Mesh's one product setting: which axis the viewer treats as up. Read by the
-#: page on load (``static/js/settings.js``), so its effect is ``load``.
+#: page on load (``static/js/main.js`` hands ``initSettings`` the hook that
+#: applies it), so its effect is ``load``; listed in the settings window's
+#: Viewer section, before the generic tool-card preference.
 UP_AXIS_KEY = Key(
     name="up_axis",
     type_name='"z" or "y"',
@@ -27,6 +29,7 @@ UP_AXIS_KEY = Key(
     description="Which axis the viewer treats as up: z or y.",
     py_type=str,
     choices=_UP_AXIS_CHOICES,
+    section=VIEWER_SECTION,
 )
 
 
@@ -66,6 +69,9 @@ MESH = agent_product.Product(
     settings_keys=(UP_AXIS_KEY,),
     events=(CalloutsChanged, ModelsChanged),
     inbound_frames={"state": STATE_FRAME},
+    # The sketch overlay's composite (``static/js/sketch.js``), written as
+    # images/sketch-<stamp>-<hex>.png beside the composer's own uploads.
+    upload_kinds=("sketch",),
 )
 
 agent_product.install(MESH)

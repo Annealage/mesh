@@ -11,23 +11,40 @@
  * token that outlives the run it belongs to is a liability and a fresh one
  * is generated every server start anyway.
  *
- * store.setCallouts already has one caller, pins.js's refetchCallouts. This
- * module never calls it directly and never writes state itself; it only
- * decides, via startCalloutsPoll/stopCalloutsPoll/refetchCallouts handed in
- * by main.js, whether the poll or the push is the one presently allowed to
- * call it, so the two are never both running at once.
+ * This module never writes the product's state and knows nothing about what
+ * the product shows. What the product needs from the socket it hands in to
+ * `initWs` (main.js is where the two meet):
+ *
+ * - `onEvent`, `{kind: fn(event)}`, handles the product's own event kinds
+ *   (the ones the product registered server-side, e.g. Mesh's
+ *   `callouts_changed`). A kind listed there goes to its handler and nowhere
+ *   else; the server already refuses a product kind that collides with a
+ *   generic one, so this map can only ever take kinds the chat pane has no
+ *   use for.
+ * - `onLive` runs on every successful handshake, the first and every
+ *   reconnect, after the connection is marked live: the product stops its
+ *   fallback poll there and refetches whatever an event it missed while the
+ *   socket was down would have told it, since replay only covers events
+ *   still in the server's ring.
+ * - `onFallback` runs when the socket stops being the live channel for a
+ *   while (a downtime longer than one backoff interval, a protocol mismatch,
+ *   a confirmed refusal): the product starts whatever poll keeps its view
+ *   current without the socket. ws.js owns the decision of when; the product
+ *   owns the poll's mechanics, so the push and the poll never both run.
+ * - `connTitles` overrides the indicator's tooltips by state, for a product
+ *   whose live channel means something more specific than "updates".
  *
  * `onHello` and `onAgentEvent` are the chat pane's two inbound hooks:
  * `onHello` receives the hello frame's `session` object once per connection
  * (including every reconnect, since agent status can change between them),
- * and `onAgentEvent` receives every event whose kind this module does not
- * handle itself. Neither is called from here except at those two points;
+ * and `onAgentEvent` receives every event neither this module nor a product
+ * handler takes. Neither is called from here except at those two points;
  * chat.js, not this module, decides what an event means. The returned `send`
  * is this module's only outbound capability, so a turn, permission, pause or
  * interrupt frame still goes out over the one socket this closure owns, with
  * no second connection or second reconnect policy.
  *
- * `dispatchCall` is commands.js's method table, and it is what makes a `call`
+ * `dispatchCall` is the product's method table, and it is what makes a `call`
  * frame do something: this module owns the correlation (answer the id, exactly
  * once, whatever happened) and knows nothing about what any method means.
  * `onPaused` receives the pause flag from both places it can arrive, the hello
@@ -74,10 +91,12 @@ const CONN_LABEL = {
   polling: "Polling",
   refused: "Reopen URL",
 };
+// The generic tooltips; a product names what "live" and "polling" mean for
+// it through `initWs`'s `connTitles`.
 const CONN_TITLE = {
   connecting: "Connecting to the live update channel.",
-  live: "Live: callouts update without a reload.",
-  polling: "Live updates are unavailable right now; falling back to checking for callouts every 1.5s.",
+  live: "Live: updates arrive without a reload.",
+  polling: "Live updates are unavailable right now; falling back to polling.",
   refused: REFUSED_MESSAGE,
 };
 
@@ -132,12 +151,13 @@ async function extractToken() {
 const TOKEN = await extractToken();
 
 /**
- * The per-run token, for the one other module allowed to authenticate with
- * it: `uploads.js`, whose `POST /upload` needs the same token `/ws` uses.
- * Reading it here rather than a second `extractToken()` call is what keeps
- * this module the token's only holder (see the header comment): the
- * fragment is already stripped from `location.hash` by the time any other
- * module's top-level code runs, since this module evaluates first.
+ * The per-run token, for the modules that authenticate a plain HTTP request
+ * with it: an upload, the settings window, a transcript export, and any
+ * token-gated route of the product's own. Reading it here rather than a
+ * second `extractToken()` call is what keeps this module the token's only
+ * holder (see the header comment): the fragment is already stripped from
+ * `location.hash` by the time any other module's top-level code runs, since
+ * this module evaluates first.
  */
 export function authToken() {
   return TOKEN;
@@ -163,20 +183,27 @@ function wsPath() {
 
 function wsUrl() {
   const scheme = location.protocol === "https:" ? "wss:" : "ws:";
-  return scheme + "//" + location.host + wsPath();
+  return `${scheme}//${location.host}${wsPath()}`;
 }
 
+/**
+ * Connects, and keeps connecting, for the life of the page. See this
+ * module's header for what each hook is for. `indicator` is the element the
+ * connection state is shown on (default: `#connIndicator`); a page without
+ * one passes null.
+ */
 export function initWs({
-  startCalloutsPoll,
-  stopCalloutsPoll,
-  refetchCallouts,
-  refetchModels,
+  onEvent = {},
+  onLive = () => {},
+  onFallback = () => {},
   onHello = () => {},
   onAgentEvent = () => {},
   onPaused = () => {},
   onRefused = () => {},
   dispatchCall = null,
-}) {
+  connTitles = {},
+  indicator = document.getElementById("connIndicator"),
+} = {}) {
   let ws = null;
   let opened = false; // true once this attempt's WebSocket has reached readyState OPEN
   let lastSeq = 0;
@@ -187,11 +214,16 @@ export function initWs({
   let reconnectTimer = null;
   let livenessTimer = null;
 
-  const connIndicator = document.getElementById("connIndicator");
+  // A Map rather than the object itself, so an event kind can never resolve
+  // to something the object inherited ("constructor", "toString").
+  const productHandlers = new Map(Object.entries(onEvent));
+  const titles = { ...CONN_TITLE, ...connTitles };
+
   function applyConnIndicator(state) {
-    connIndicator.textContent = CONN_LABEL[state.connection] || state.connection;
-    connIndicator.title = CONN_TITLE[state.connection] || "";
-    connIndicator.dataset.state = state.connection;
+    if (!indicator) return;
+    indicator.textContent = CONN_LABEL[state.connection] || state.connection;
+    indicator.title = titles[state.connection] || "";
+    indicator.dataset.state = state.connection;
   }
   applyConnIndicator(store.getState());
   store.subscribe("connection", applyConnIndicator);
@@ -374,17 +406,12 @@ export function initWs({
     clearTimeout(fallbackTimer);
     fallbackTimer = null;
     store.setConnection("live");
-    stopCalloutsPoll();
-    // One refetch on every (re)connect, in addition to reacting to
-    // callouts_changed below: replay only covers events still in the
-    // server's 500-event ring, so a gap longer than that would otherwise
-    // leave a stale callout list with no further event to prompt a refetch.
-    refetchCallouts();
-    // And the models, for the reason above: a `models_changed` push that
-    // happened while the socket was down is not in the replay this page will
-    // act on, so a part regenerated during the gap would otherwise stay stale
-    // until something else changed.
-    refetchModels();
+    // The product's resync, on every (re)connect: it stops its fallback poll
+    // and refetches what it shows, because replay only covers events still in
+    // the server's 500-event ring, so a change announced during a longer gap
+    // would otherwise leave the page stale with no further event to prompt a
+    // refetch.
+    onLive();
     // The pause flag comes with the greeting for the same reason: this tab may
     // have connected long after it was set, and `pause_changed` only reaches a
     // client that was attached when it happened.
@@ -394,15 +421,14 @@ export function initWs({
 
   function handleEvent(frame) {
     lastSeq = frame.seq;
-    const kind = frame.event && frame.event.kind;
-    if (kind === "callouts_changed") {
-      refetchCallouts();
-    } else if (kind === "models_changed") {
-      refetchModels();
-    } else if (kind === "pause_changed") {
-      onPaused(!!frame.event.paused);
+    const event = frame.event;
+    const kind = event && event.kind;
+    if (kind === "pause_changed") {
+      onPaused(!!event.paused);
+    } else if (productHandlers.has(kind)) {
+      productHandlers.get(kind)(event);
     } else {
-      onAgentEvent(frame.event);
+      onAgentEvent(event);
     }
   }
 
@@ -420,7 +446,7 @@ export function initWs({
     }
     showError(MISMATCH_MESSAGE);
     store.setConnection("polling");
-    startCalloutsPoll();
+    onFallback();
   }
 
   function handleClose(event) {
@@ -485,7 +511,7 @@ export function initWs({
         fallbackTimer = null;
         store.setConnection("refused");
         showError(REFUSED_MESSAGE);
-        startCalloutsPoll();
+        onFallback();
         return;
       }
     } catch (err) {
@@ -507,7 +533,7 @@ export function initWs({
         if (stopped || fallbackFired || store.getState().connection === "live") return;
         fallbackFired = true;
         store.setConnection("polling");
-        startCalloutsPoll();
+        onFallback();
       }, BASE_BACKOFF_MS);
     }
     reconnectTimer = setTimeout(connect, backoffDelay(attempt));

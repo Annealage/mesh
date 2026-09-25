@@ -73,6 +73,14 @@ _EFFORT_CHOICES = ("low", "medium", "high", "xhigh", "max")
 #: Every agent backend, in no order of preference: none is the default.
 BACKENDS = ("claude", "codex", "omp")
 
+#: The settings window's section titles for the generic keys (``Key.section``).
+#: A product key names one of these to be listed in that section, after the
+#: generic keys before it in ``SETTING_KEYS`` order; Mesh's ``up_axis`` joins
+#: ``VIEWER_SECTION``.
+SERVER_SECTION = "Server"
+AGENT_SECTION = "Agent"
+VIEWER_SECTION = "Viewer"
+
 
 class SettingsError(Exception):
     """A settings value, file or requested change was refused.
@@ -99,6 +107,12 @@ class Key:
     override at this layer, fall through to the next one"; since TOML has no
     null literal, a nullable key set to ``None`` through ``apply`` is written
     by removing the key from its file rather than by writing a value.
+
+    ``section`` is the title of the settings window section the key is shown
+    in, or ``None`` for a key the window does not offer (it is still resolved,
+    reported and writable through ``PUT /settings``). Keys sharing a title
+    share a section, in listing order, so a product key can join a generic
+    section by naming its title (``sections``).
     """
 
     __slots__ = (
@@ -111,6 +125,7 @@ class Key:
         "py_type",
         "nullable",
         "choices",
+        "section",
     )
 
     def __init__(
@@ -124,6 +139,7 @@ class Key:
         py_type,
         nullable=False,
         choices=(),
+        section=None,
     ):
         self.name = name
         self.type_name = type_name
@@ -134,6 +150,7 @@ class Key:
         self.py_type = py_type
         self.nullable = nullable
         self.choices = choices
+        self.section = section
 
     @property
     def write_layer(self):
@@ -166,6 +183,7 @@ _AGENT_KEYS = (
             "loopback-only; see --host for the other bind modes."
         ),
         py_type=str,
+        section=SERVER_SECTION,
     ),
     Key(
         name="port",
@@ -175,6 +193,7 @@ _AGENT_KEYS = (
         effect="restart",
         description="The TCP port this process listens on.",
         py_type=int,
+        section=SERVER_SECTION,
     ),
     Key(
         name="open_browser",
@@ -184,6 +203,7 @@ _AGENT_KEYS = (
         effect="restart",
         description="Whether a browser tab opens automatically on startup.",
         py_type=bool,
+        section=SERVER_SECTION,
     ),
     Key(
         name="model",
@@ -200,6 +220,7 @@ _AGENT_KEYS = (
         ),
         py_type=str,
         nullable=True,
+        section=AGENT_SECTION,
     ),
     Key(
         name="effort",
@@ -215,6 +236,7 @@ _AGENT_KEYS = (
         py_type=str,
         nullable=True,
         choices=_EFFORT_CHOICES,
+        section=AGENT_SECTION,
     ),
     Key(
         name="permission_mode",
@@ -230,6 +252,7 @@ _AGENT_KEYS = (
         py_type=str,
         nullable=True,
         choices=_PERMISSION_MODE_CHOICES,
+        section=AGENT_SECTION,
     ),
     Key(
         name="backend",
@@ -249,6 +272,7 @@ _AGENT_KEYS = (
         py_type=str,
         nullable=True,
         choices=BACKENDS,
+        section=AGENT_SECTION,
     ),
     Key(
         name="omp_base_url",
@@ -296,6 +320,7 @@ _PRESENTATION_KEYS = (
         effect="load",
         description=("Whether a tool call's detail card starts collapsed in the chat pane."),
         py_type=bool,
+        section=VIEWER_SECTION,
     ),
 )
 
@@ -326,6 +351,21 @@ def register_product_keys(keys):
     global SETTING_KEYS, KEYS_BY_NAME
     SETTING_KEYS = _AGENT_KEYS + tuple(keys) + _PRESENTATION_KEYS
     KEYS_BY_NAME = {key.name: key for key in SETTING_KEYS}
+
+
+def sections():
+    """``[{"title", "keys"}]``: the settings window's sections, in the order
+    their first key is listed, each naming its keys in ``SETTING_KEYS`` order.
+
+    Built from ``Key.section`` rather than written down in the window's own
+    code, so a product's key appears in the window by declaring where, and a
+    key with no section (``None``) is left out of it entirely.
+    """
+    ordered = {}
+    for key in SETTING_KEYS:
+        if key.section is not None:
+            ordered.setdefault(key.section, []).append(key.name)
+    return [{"title": title, "keys": names} for title, names in ordered.items()]
 
 
 def user_settings_path():
@@ -373,14 +413,16 @@ class Resolved:
 
     def to_wire(self):
         """``{name: {"value", "from", "effect", "editable", "type",
-        "description"}}`` for every key, the shape ``GET /settings`` and the
-        settings window read directly.
+        "description", "choices", "nullable"}}`` for every key, the shape
+        ``GET /settings`` and the settings window read directly.
 
         ``editable`` means this key has at least one file it can be written
         to at all, not that a write would change anything visible without a
         restart; ``effect`` next to a ``from`` of ``"flag"`` is what tells a
         reader that changing it here needs a restart to take effect, because
-        a flag always outranks whatever gets written to a file.
+        a flag always outranks whatever gets written to a file. ``choices``
+        (empty for a free value) and ``nullable`` are what the window builds a
+        select from: the choices, preceded by "not set" when ``None`` is legal.
         """
         wire = {}
         for key in SETTING_KEYS:
@@ -391,6 +433,8 @@ class Resolved:
                 "editable": bool(key.layers),
                 "type": key.type_name,
                 "description": key.description,
+                "choices": list(key.choices),
+                "nullable": key.nullable,
             }
         return wire
 

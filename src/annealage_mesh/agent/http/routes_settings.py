@@ -4,7 +4,8 @@ and the diagnostics beside them.
 Registers, against one served directory:
 
     GET  /settings   every setting's effective value and provenance, what is
-                      saved on disk but not in effect, and the diagnostics block
+                      saved on disk but not in effect, how the window lays the
+                      keys out, and the diagnostics block
     PUT  /settings   validate a batch of changes and write each to its own layer
 
 Both require the token and a permitted ``Origin``, and refuse with the same
@@ -39,7 +40,7 @@ import asyncio
 import functools
 import sys
 
-from .. import diagnostics
+from .. import diagnostics, product
 from .. import settings as settings_module
 from . import read_json_body
 from .ws import _origin_is_allowed, _token_is_allowed, refusal
@@ -90,7 +91,24 @@ def register_settings_routes(
         )
         facts = await loop.run_in_executor(None, collect)
         wire = settings.to_wire()
-        body = {"ok": True, "settings": wire, "diagnostics": facts}
+        installed = product.current()
+        body = {
+            "ok": True,
+            "settings": wire,
+            # How the window lays the keys out, from each key's own section
+            # (``settings.sections``), so a product's key is shown where the
+            # product declared it without the window naming it.
+            "sections": settings_module.sections(),
+            # The names the window's prose needs and cannot know on its own:
+            # which product's version the diagnostics block reports, and the
+            # state directory the project config file lives in.
+            "product": {
+                "title": installed.title,
+                "version": installed.version,
+                "state_dirname": installed.state_dirname,
+            },
+            "diagnostics": facts,
+        }
 
         # What is on disk now, which after a write is not what this run started
         # with. A hand-edited file that no longer parses must not take the whole

@@ -75,12 +75,13 @@ jobs:
           || '' }}
 
       # The Python suite covers no JavaScript at all, so a syntax error in a
-      # module under static/js/ leaves it entirely green while the viewer fails
-      # to boot. This is two seconds and catches exactly that.
+      # module under static/js/ or agent/static/ leaves it entirely green while
+      # the viewer fails to boot. This is two seconds and catches exactly that.
       - name: every browser module parses
         run: |
           for f in src/annealage_mesh/static/js/*.js \
-                   src/annealage_mesh/static/js/vendor/*.js; do
+                   src/annealage_mesh/static/js/vendor/*.js \
+                   src/annealage_mesh/agent/static/*.js; do
             node --check "$f" || exit 1
           done
 

@@ -1,31 +1,38 @@
 /**
- * The single writer for viewer application state.
+ * Mesh's slice of the page state, and the one `store` object every Mesh
+ * module imports.
  *
- * Every other module reads state through `store.getState()` or a subscriber
- * callback and changes it only by calling one of the mutators exported on
- * `store` below. No line outside this file ever assigns to `state`, which is
- * what makes the checkbox-vs-mesh visibility binding in models.js
- * bidirectional: both are readers of the same `state.visibility`, and the
- * only way either one changes is through `setVisibility`, so a programmatic
- * call moves both.
+ * The state itself, the commit and the subscriptions belong to the agent
+ * layer's store (`agent/store.js`, whose header documents the single-writer
+ * discipline both halves follow and the chat, connection, pause and layout
+ * keys it owns). This module declares Mesh's keys there with `defineSlice`
+ * and builds its mutators on the `update` function that returns, so the
+ * viewer's keys have exactly one writer, this file, and every change still
+ * goes through the one commit queue the chat pane's changes do. `store` below
+ * is the agent layer's store with these mutators added, which is why a Mesh
+ * module reads `store.getState().chat` and `store.getState().pins` through the
+ * same object.
  *
- * State is plain, serialisable data: numbers, strings, booleans, plain
- * arrays and plain objects only. A pin's location is a 3-element number
- * array, not a THREE.Vector3; a model's colour is a hex number, not a
- * THREE.Color. No THREE.Object3D (Mesh, Sprite, Group) is ever a state
- * value. This is what would let a later milestone deliver pins over a
- * WebSocket by calling `addPin`/`removePin` from a message handler instead
- * of from a pointer event, with no second writer to reconcile against. Any
- * THREE object that represents a piece of state, a pin's marker mesh, a
- * loaded model's Mesh, lives in a side table in whichever module created it
- * (pins.js, models.js) and is reconciled against store state by a
- * subscriber; it never becomes a state value itself.
+ * The one-writer rule is what makes the checkbox-vs-mesh visibility binding
+ * in models.js bidirectional: both are readers of the same
+ * `state.visibility`, and the only way either one changes is through
+ * `setVisibility`, so a programmatic call moves both.
  *
- * State shape:
+ * No THREE object is ever a state value. A pin's location is a 3-element
+ * number array, not a THREE.Vector3; a model's colour is a hex number, not a
+ * THREE.Color. Any THREE object that represents a piece of state, a pin's
+ * marker mesh, a loaded model's Mesh, lives in a side table in whichever
+ * module created it (pins.js, models.js) and is reconciled against store
+ * state by a subscriber; it never becomes a state value itself. That is what
+ * lets a pin arrive over the socket through `addPin` exactly as one placed by
+ * a pointer event does.
+ *
+ * State shape (this slice's keys):
  *   models        [{name, file, path, rel, label, color}, ...]
  *                 manifest entries as fetched, plus a display `color`
  *                 (a hex number) assigned by models.js from a fixed
- *                 palette. `rel` is the key used everywhere else.
+ *                 palette. `rel` is the key used everywhere else. Not to be
+ *                 confused with `chat.model`, the LLM backend's model.
  *   visibility    {rel: boolean}
  *                 per-part show/hide, keyed by the same `rel` as `models`.
  *   mode          'nav' | 'annotate'
@@ -50,92 +57,11 @@
  *                 the two measure-dropdown selections, each a measurable
  *                 key ('u<id>' for a user pin, 'a<id>' for an agent pin) or
  *                 '' for unset.
- *   activeTab     string
- *                 which narrow-viewport tab is showing; the id of one of
- *                 layout.js's TABS entries.
- *   panelOpen     boolean
- *                 whether the side panel is shown at wide viewports.
- *   paused        boolean
- *                 whether the human has paused the agent's control of this
- *                 viewer. Written only from what the server reports (the
- *                 hello frame's `session.paused` and every `pause_changed`
- *                 event), never optimistically from the click that asked for
- *                 the change: the flag is enforced in the server, where the
- *                 tools it gates run, so a local value could show "paused"
- *                 while they were still running.
- *   connection    'connecting' | 'live' | 'polling' | 'refused'
- *                 ws.js's view of the /ws socket, read by the topbar
- *                 indicator. 'live' means callouts arrive by push;
- *                 'polling' means ws.js has fallen back to the 1.5s
- *                 /callouts poll, whether because the socket has not yet
- *                 reconnected or because it never will again this page
- *                 load (a protocol-version mismatch); 'refused' means a
- *                 pre-handshake 403 was confirmed, most likely a stale
- *                 token from a server restart, and the fallback poll runs
- *                 under this state too.
- *   chat          {turns, pendingUser, pending, agentStatus, banner,
- *                  attachments, uploading}
- *                 the whole chat pane's state.
- *                 `turns` is one record per SDK turn number, `{turn, user,
- *                 text, tools, stopReason, costUsd, complete}`, built up
- *                 as text_delta/tool_use/tool_result/turn_end events
- *                 arrive; `tools` is `[{tool_use_id, name, input, result}]`
- *                 with `result` null until a tool_result names that
- *                 tool_use_id. `user` pairs the record with the composer
- *                 blocks that started it, taken off `pendingUser` the
- *                 first time any event for that turn number is seen,
- *                 because the outbound `turn` frame carries no id the
- *                 server echoes back to correlate the two. `pendingUser`
- *                 is that queue: blocks the composer has sent whose turn
- *                 number has not appeared yet.
- *                 `pending` is outstanding permission requests, one entry
- *                 per live `request_id`, `{request_id, tool, input,
- *                 suggestions}`; a replayed duplicate of a still-unanswered
- *                 request is not added twice.
- *                 `agentStatus` mirrors the hello frame's `session.agent`
- *                 ('connecting' | 'ready' | 'unavailable'). `banner` is the most
- *                 recent `session_reset` or `agent_error` event as
- *                 `{kind, text}`, or null once dismissed. A `session_reset`
- *                 also clears `turns` (`resetChatTurns`), because the new
- *                 session's turn numbers start over from 1.
- *                 `model` mirrors the hello frame's `session.model` (the
- *                 CLI-configured starting model, possibly null) until an
- *                 `agent_model_changed` event corrects it to whatever a live
- *                 `set_model` frame actually took effect as. Not to be
- *                 confused with the unrelated top-level `models` array
- *                 (served 3D files, `setModels` below): this one is the LLM
- *                 backend's active model, read and written only by the chat
- *                 pane.
- *                 `attachments` is one entry per image attached to the
- *                 message being composed, in the order they were attached,
- *                 whatever state each is in: `[{id, kind, state, path, url,
- *                 bytes, mediaType, message}, ...]` where `state` is
- *                 'uploading' | 'done' | 'error'. The slot is appended before
- *                 the upload starts and filled in when it lands, so the order
- *                 is the human's, not the order the network happened to
- *                 answer in, and both the chips and the `image_path` blocks a
- *                 turn carries follow it. `id` is the identity, assigned here
- *                 and monotonic: `path` cannot be, since an entry has no path
- *                 until its upload has already succeeded. `path` is the
- *                 "images/<name>" string a turn frame carries and `url` is
- *                 "/asset/<name>", what the chip's thumbnail and the
- *                 sent-message thumbnail both fetch; both are null until
- *                 `state` is 'done', as `message` is until it is 'error'.
- *                 An upload in flight is therefore visible as a state on the
- *                 entry itself rather than as a separate count, which is what
- *                 keeps the cap, the strip and Send reading one record of one
- *                 fact. `js/uploads.js` is the only module that writes any of
- *                 it, since it is the only module that performs an upload.
- *
- *   toolCardsCollapsed
- *                 whether a tool card is created closed. A saved preference
- *                 read once at page load from `GET /settings`, held here
- *                 rather than in `chat.js` because `js/settings.js` writes it
- *                 and `chat.js` reads it, and a value two modules touch has
- *                 exactly one writer by living in this file.
  */
 
-let state = Object.freeze({
+import { defineSlice, store as pageStore } from "agent/store.js";
+
+const update = defineSlice({
   models: Object.freeze([]),
   visibility: Object.freeze({}),
   mode: "nav",
@@ -147,96 +73,14 @@ let state = Object.freeze({
   showUser: true,
   showAgent: true,
   measure: Object.freeze({ a: "", b: "" }),
-  activeTab: "model",
-  panelOpen: false,
-  paused: false,
-  connection: "connecting",
-  toolCardsCollapsed: true,
-  chat: Object.freeze({
-    turns: Object.freeze([]),
-    pendingUser: Object.freeze([]),
-    pending: Object.freeze([]),
-    agentStatus: "connecting",
-    model: null,
-    banner: null,
-    attachments: Object.freeze([]),
-  }),
 });
-
-// How many images one message may carry. Enforced in exactly one place,
-// `reserveChatAttachment` below, and against uploads in flight as well as
-// finished ones, since both hold a slot: every caller (the composer's own
-// paste, drop and picker paths, and the sketch overlay's composite) is refused
-// the same way, before its request is sent, once a message already has four.
-export const MAX_CHAT_ATTACHMENTS = 4;
-
-// Identity for an attachment slot, assigned in attach order and never reused
-// within a page's lifetime. Not the server's path: a slot exists, and is
-// already drawn as a chip, before any path is known.
-let nextAttachmentId = 1;
 
 // Assigns pin ids. Kept outside `state` because it is a generator, not a
 // fact about the current app; a pin's id, once assigned, is the fact.
 let nextPinId = 1;
 
-const listeners = new Map(); // key (or '*') -> Set<fn(state)>
-
-// True for the duration of a notify pass (the forEach in `apply`). Guards
-// against a mutator being called synchronously from inside a subscriber,
-// which is a real shape in this app: measure.js's 'pins' and 'callouts'
-// subscriber re-validates the two dropdown selections against the pins that
-// still exist, and calls setMeasure from inside that same notification when a
-// selected pin has gone. Running that call inline would notify a second time
-// from inside the first pass's own listener loop, so a listener later in the
-// pass would observe a state change its earlier siblings never saw. Queueing
-// defers it, so every listener sees one complete state change at a time, in
-// the order the mutators were actually called.
-let notifying = false;
-const pending = [];
-
-function commit(mutate, changedKeys) {
-  if (notifying) {
-    pending.push([mutate, changedKeys]);
-    return;
-  }
-  apply(mutate, changedKeys);
-  // Drained here, by the outermost commit, as a flat loop. A queued mutator
-  // that queues another one appends to this same array rather than nesting a
-  // commit inside a commit, so a long chain of re-entrant changes iterates
-  // instead of growing the stack.
-  while (pending.length) {
-    const next = pending.shift();
-    apply(next[0], next[1]);
-  }
-}
-
-function apply(mutate, changedKeys) {
-  mutate();
-  state = Object.freeze(state);
-  notifying = true;
-  try {
-    const keys = new Set([...changedKeys, "*"]);
-    keys.forEach((k) => {
-      const set = listeners.get(k);
-      if (set) set.forEach((fn) => fn(state));
-    });
-  } finally {
-    notifying = false;
-  }
-}
-
-function getState() {
-  return state;
-}
-
-function subscribe(key, fn) {
-  if (!listeners.has(key)) listeners.set(key, new Set());
-  listeners.get(key).add(fn);
-  return () => listeners.get(key).delete(fn);
-}
-
 function setModels(models) {
-  commit(() => {
+  update(["models", "visibility"], (state) => {
     const frozenModels = Object.freeze(models.map((m) => Object.freeze({ ...m })));
     // Default visibility (first model shown, rest hidden) applies only to a
     // rel not already in the map, so a rescan in a later milestone would
@@ -245,391 +89,88 @@ function setModels(models) {
     frozenModels.forEach((m, i) => {
       if (!(m.rel in visibility)) visibility[m.rel] = i === 0;
     });
-    state = { ...state, models: frozenModels, visibility: Object.freeze(visibility) };
-  }, ["models", "visibility"]);
+    return { models: frozenModels, visibility: Object.freeze(visibility) };
+  });
 }
 
 function setVisibility(rel, on) {
-  commit(() => {
-    state = { ...state, visibility: Object.freeze({ ...state.visibility, [rel]: !!on }) };
-  }, ["visibility"]);
+  update(["visibility"], (state) => ({
+    visibility: Object.freeze({ ...state.visibility, [rel]: !!on }),
+  }));
 }
 
 function setMode(mode) {
-  commit(() => {
-    state = { ...state, mode };
-  }, ["mode"]);
+  update(["mode"], () => ({ mode }));
 }
 
 function setUpAxis(axis) {
-  commit(() => {
-    state = { ...state, upAxis: axis };
-  }, ["upAxis"]);
-}
-
-function setToolCardsCollapsed(collapsed) {
-  commit(() => {
-    state = { ...state, toolCardsCollapsed: !!collapsed };
-  }, ["toolCardsCollapsed"]);
+  update(["upAxis"], () => ({ upAxis: axis }));
 }
 
 function addPin(data) {
   const id = nextPinId++;
-  commit(() => {
+  update(["pins", "selectedPinId", "dirty"], (state) => {
     const pin = Object.freeze({ id, comment: "", ...data });
-    state = {
-      ...state,
-      pins: Object.freeze([...state.pins, pin]),
-      selectedPinId: id,
-      dirty: true,
-    };
-  }, ["pins", "selectedPinId", "dirty"]);
+    return { pins: Object.freeze([...state.pins, pin]), selectedPinId: id, dirty: true };
+  });
   return id;
 }
 
 function removePin(id) {
-  commit(() => {
+  update(["pins", "selectedPinId", "dirty"], (state) => {
     const pins = state.pins.filter((p) => p.id !== id);
     const selectedPinId = state.selectedPinId === id ? null : state.selectedPinId;
-    state = { ...state, pins: Object.freeze(pins), selectedPinId, dirty: true };
-  }, ["pins", "selectedPinId", "dirty"]);
+    return { pins: Object.freeze(pins), selectedPinId, dirty: true };
+  });
 }
 
 function setPinComment(id, comment) {
-  commit(() => {
+  update(["pins", "dirty"], (state) => {
     const pins = state.pins.map((p) => (p.id === id ? Object.freeze({ ...p, comment }) : p));
-    state = { ...state, pins: Object.freeze(pins), dirty: true };
-  }, ["pins", "dirty"]);
+    return { pins: Object.freeze(pins), dirty: true };
+  });
 }
 
 function selectPin(id) {
-  commit(() => {
-    state = { ...state, selectedPinId: id };
-  }, ["selectedPinId"]);
+  update(["selectedPinId"], () => ({ selectedPinId: id }));
 }
 
 function clearPins() {
-  commit(() => {
-    state = { ...state, pins: Object.freeze([]), selectedPinId: null, dirty: true };
-  }, ["pins", "selectedPinId", "dirty"]);
+  update(["pins", "selectedPinId", "dirty"], () => ({
+    pins: Object.freeze([]),
+    selectedPinId: null,
+    dirty: true,
+  }));
 }
 
 function setCallouts(list) {
-  commit(() => {
-    state = { ...state, callouts: Object.freeze(list.map((c) => Object.freeze({ ...c }))) };
-  }, ["callouts"]);
+  update(["callouts"], () => ({
+    callouts: Object.freeze(list.map((c) => Object.freeze({ ...c }))),
+  }));
 }
 
 function setDirty(v) {
-  commit(() => {
-    state = { ...state, dirty: !!v };
-  }, ["dirty"]);
+  update(["dirty"], () => ({ dirty: !!v }));
 }
 
 function setShowUser(v) {
-  commit(() => {
-    state = { ...state, showUser: !!v };
-  }, ["showUser"]);
+  update(["showUser"], () => ({ showUser: !!v }));
 }
 
 function setShowAgent(v) {
-  commit(() => {
-    state = { ...state, showAgent: !!v };
-  }, ["showAgent"]);
+  update(["showAgent"], () => ({ showAgent: !!v }));
 }
 
 function setMeasure(aKey, bKey) {
-  commit(() => {
-    state = { ...state, measure: Object.freeze({ a: aKey, b: bKey }) };
-  }, ["measure"]);
+  update(["measure"], () => ({ measure: Object.freeze({ a: aKey, b: bKey }) }));
 }
 
-function setActiveTab(tabId) {
-  commit(() => {
-    state = { ...state, activeTab: tabId };
-  }, ["activeTab"]);
-}
-
-function setPanelOpen(v) {
-  commit(() => {
-    state = { ...state, panelOpen: !!v };
-  }, ["panelOpen"]);
-}
-
-function setConnection(v) {
-  commit(() => {
-    state = { ...state, connection: v };
-  }, ["connection"]);
-}
-
-function setPaused(v) {
-  commit(() => {
-    state = { ...state, paused: !!v };
-  }, ["paused"]);
-}
-
-// Finds the turn record for `turn` in `chat.turns`, or builds one, pairing it
-// with the oldest still-unmatched entry in `chat.pendingUser` (the outbound
-// `turn` frame carries no id the server echoes back, so the first event for
-// a turn number is what associates it with the composer blocks that started
-// it). Callers must fold the returned `turns` and `pendingUser` back into a
-// new chat object themselves; this only computes the two arrays, it does not
-// touch `state`.
-function ensureTurn(chat, turn) {
-  const idx = chat.turns.findIndex((t) => t.turn === turn);
-  if (idx !== -1) {
-    return { turns: chat.turns, pendingUser: chat.pendingUser, idx };
-  }
-  const user = chat.pendingUser.length ? chat.pendingUser[0] : null;
-  const pendingUser = chat.pendingUser.length
-    ? Object.freeze(chat.pendingUser.slice(1))
-    : chat.pendingUser;
-  const record = Object.freeze({
-    turn,
-    user,
-    text: "",
-    tools: Object.freeze([]),
-    stopReason: null,
-    costUsd: null,
-    complete: false,
-  });
-  const turns = Object.freeze([...chat.turns, record]);
-  return { turns, pendingUser, idx: turns.length - 1 };
-}
-
-function appendChatTextDelta(turn, text) {
-  commit(() => {
-    const chat = state.chat;
-    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
-    const nextTurns = Object.freeze(
-      turns.map((t, i) => (i === idx ? Object.freeze({ ...t, text: t.text + text }) : t)),
-    );
-    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
-  }, ["chat"]);
-}
-
-function addChatToolUse(turn, toolUseId, name, input) {
-  commit(() => {
-    const chat = state.chat;
-    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
-    const tool = Object.freeze({ tool_use_id: toolUseId, name, input, result: null });
-    const nextTurns = Object.freeze(
-      turns.map((t, i) =>
-        i === idx ? Object.freeze({ ...t, tools: Object.freeze([...t.tools, tool]) }) : t,
-      ),
-    );
-    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
-  }, ["chat"]);
-}
-
-// Attaches a tool's result to the tool_use record it belongs to, wherever in
-// `turns` that record is; a tool_result's frame carries only the
-// tool_use_id, not the turn number, so every turn is searched rather than
-// assuming the result lands in the same turn its tool_use did.
-function setChatToolResult(toolUseId, isError, text) {
-  commit(() => {
-    const chat = state.chat;
-    const turns = Object.freeze(
-      chat.turns.map((t) => {
-        if (!t.tools.some((tool) => tool.tool_use_id === toolUseId)) return t;
-        const tools = Object.freeze(
-          t.tools.map((tool) =>
-            tool.tool_use_id === toolUseId
-              ? Object.freeze({ ...tool, result: Object.freeze({ isError: !!isError, text }) })
-              : tool,
-          ),
-        );
-        return Object.freeze({ ...t, tools });
-      }),
-    );
-    state = { ...state, chat: Object.freeze({ ...chat, turns }) };
-  }, ["chat"]);
-}
-
-function endChatTurn(turn, stopReason, costUsd) {
-  commit(() => {
-    const chat = state.chat;
-    const { turns, pendingUser, idx } = ensureTurn(chat, turn);
-    const nextTurns = Object.freeze(
-      turns.map((t, i) =>
-        i === idx ? Object.freeze({ ...t, stopReason, costUsd, complete: true }) : t,
-      ),
-    );
-    state = { ...state, chat: Object.freeze({ ...chat, turns: nextTurns, pendingUser }) };
-  }, ["chat"]);
-}
-
-function queueChatUserTurn(blocks) {
-  commit(() => {
-    const chat = state.chat;
-    state = {
-      ...state,
-      chat: Object.freeze({ ...chat, pendingUser: Object.freeze([...chat.pendingUser, blocks]) }),
-    };
-  }, ["chat"]);
-}
-
-// Adds a permission_request to the pending list unless its request_id is
-// already there. Replay re-emits every still-unanswered request on
-// reconnect, so this call is not proof of a first sighting.
-function addChatPermissionRequest(requestId, tool, input, suggestions) {
-  commit(() => {
-    const chat = state.chat;
-    if (chat.pending.some((p) => p.request_id === requestId)) return;
-    const entry = Object.freeze({
-      request_id: requestId,
-      tool,
-      input,
-      suggestions: suggestions || null,
-    });
-    state = {
-      ...state,
-      chat: Object.freeze({ ...chat, pending: Object.freeze([...chat.pending, entry]) }),
-    };
-  }, ["chat"]);
-}
-
-// Records that this view has sent a decision for `requestId` and is waiting to
-// hear that it landed. The card stays on screen, showing that it is in flight,
-// because it is the server's `permission_resolved` that says a request is over,
-// and only that event distinguishes a decision that took effect from one
-// another view had already answered.
-function markChatPermissionSubmitted(requestId, decision) {
-  commit(() => {
-    const chat = state.chat;
-    let changed = false;
-    const pending = Object.freeze(
-      chat.pending.map((p) => {
-        if (p.request_id !== requestId || p.submitted) return p;
-        changed = true;
-        return Object.freeze({ ...p, submitted: decision });
-      }),
-    );
-    if (!changed) return;
-    state = { ...state, chat: Object.freeze({ ...chat, pending }) };
-  }, ["chat"]);
-}
-
-function removeChatPermissionRequest(requestId) {
-  commit(() => {
-    const chat = state.chat;
-    const pending = Object.freeze(chat.pending.filter((p) => p.request_id !== requestId));
-    state = { ...state, chat: Object.freeze({ ...chat, pending }) };
-  }, ["chat"]);
-}
-
-
-function setChatAgentStatus(status) {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, agentStatus: status }) };
-  }, ["chat"]);
-}
-
-function setChatModel(model) {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, model: model || null }) };
-  }, ["chat"]);
-}
-
-function setChatBanner(kind, text) {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, banner: Object.freeze({ kind, text }) }) };
-  }, ["chat"]);
-}
-
-function clearChatBanner() {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, banner: null }) };
-  }, ["chat"]);
-}
-
-// Empties `turns` without touching `pendingUser`. Called when a
-// session_reset event reports the SDK started a fresh session: that
-// session's own turn numbering starts from 1 again, so leaving the old
-// turns in place risks a later ensureTurn call finding a stale record
-// under the same turn number and folding new content into it. A message
-// already queued in `pendingUser` still belongs to the next turn the new
-// session produces, so it is left alone.
-function resetChatTurns() {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, turns: Object.freeze([]) }) };
-  }, ["chat"]);
-}
-
-// Appends an entry for an upload about to start, in the 'uploading' state,
-// and returns its id, or returns null and changes nothing when the message
-// already carries MAX_CHAT_ATTACHMENTS. Reserving the slot before the request
-// rather than on its response is what keeps the strip and the sent blocks in
-// the order the human attached things, and what lets the cap refuse a file
-// before a byte leaves the page or a file is written into the project.
-function reserveChatAttachment(kind) {
-  let id = null;
-  commit(() => {
-    const chat = state.chat;
-    if (chat.attachments.length >= MAX_CHAT_ATTACHMENTS) return;
-    id = nextAttachmentId++;
-    const entry = Object.freeze({
-      id,
-      kind,
-      state: "uploading",
-      path: null,
-      url: null,
-      bytes: null,
-      mediaType: null,
-      message: null,
-    });
-    state = {
-      ...state,
-      chat: Object.freeze({ ...chat, attachments: Object.freeze([...chat.attachments, entry]) }),
-    };
-  }, ["chat"]);
-  return id;
-}
-
-// Fills a reserved entry in place, so it keeps the position it was attached
-// at. An id no longer present (the human removed the chip, or sent the
-// message, while the upload was still in flight) matches nothing and changes
-// nothing, rather than reappearing: the bytes are on the server either way,
-// but a turn references only what is still in this list when it is sent.
-function updateChatAttachment(id, fields) {
-  commit(() => {
-    const chat = state.chat;
-    const attachments = Object.freeze(chat.attachments.map(
-      (a) => (a.id === id ? Object.freeze({ ...a, ...fields }) : a)));
-    state = { ...state, chat: Object.freeze({ ...chat, attachments }) };
-  }, ["chat"]);
-}
-
-function completeChatAttachment(id, { path, url, bytes, mediaType }) {
-  updateChatAttachment(id, { state: "done", path, url, bytes, mediaType });
-}
-
-function failChatAttachment(id, message) {
-  updateChatAttachment(id, { state: "error", message });
-}
-
-function dropChatAttachment(id) {
-  commit(() => {
-    const chat = state.chat;
-    const attachments = Object.freeze(chat.attachments.filter((a) => a.id !== id));
-    state = { ...state, chat: Object.freeze({ ...chat, attachments }) };
-  }, ["chat"]);
-}
-
-function clearChatAttachments() {
-  commit(() => {
-    state = { ...state, chat: Object.freeze({ ...state.chat, attachments: Object.freeze([]) }) };
-  }, ["chat"]);
-}
-
-export const store = {
-  getState,
-  subscribe,
+export const store = Object.freeze({
+  ...pageStore,
   setModels,
   setVisibility,
   setMode,
   setUpAxis,
-  setToolCardsCollapsed,
   addPin,
   removePin,
   setPinComment,
@@ -640,26 +181,4 @@ export const store = {
   setShowUser,
   setShowAgent,
   setMeasure,
-  setActiveTab,
-  setPanelOpen,
-  setConnection,
-  setPaused,
-  appendChatTextDelta,
-  addChatToolUse,
-  setChatToolResult,
-  endChatTurn,
-  queueChatUserTurn,
-  addChatPermissionRequest,
-  markChatPermissionSubmitted,
-  removeChatPermissionRequest,
-  setChatAgentStatus,
-  setChatModel,
-  setChatBanner,
-  clearChatBanner,
-  resetChatTurns,
-  reserveChatAttachment,
-  completeChatAttachment,
-  failChatAttachment,
-  dropChatAttachment,
-  clearChatAttachments,
-};
+});

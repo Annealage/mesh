@@ -1,11 +1,11 @@
 /**
- * The one module that POSTs `/upload`. It is the only reader of `ws.js`'s
- * `authToken()` outside `ws.js` itself, and the only writer of
+ * The one module that POSTs `/upload`, and the only writer of
  * `state.chat.attachments`, so an attachment always reaches the store through
  * this one path regardless of which UI started it: the composer's file picker,
- * paste and drop handlers in `chat.js`, or a composite the sketch overlay
- * builds. Neither of those callers writes `state.chat.attachments` itself;
- * they call `uploadImage` and read what it returns.
+ * paste and drop handlers in `chat.js`, or anything the product attaches
+ * itself (Mesh's sketch overlay composite). None of those callers writes
+ * `state.chat.attachments` itself; they call `uploadImage` and read what it
+ * returns.
  *
  * The slot is reserved before the request goes out, which is what makes the
  * attachment cap a refusal rather than an apology: a file offered when the
@@ -31,8 +31,11 @@ const ATTACHMENT_LIMIT_MESSAGE =
   "This message already carries " + MAX_CHAT_ATTACHMENTS + " attachments.";
 
 /**
- * Uploads `blob`'s bytes as `kind` ("upload" or "sketch") and records the
- * result in `state.chat.attachments`.
+ * Uploads `blob`'s bytes as `kind` and records the result in
+ * `state.chat.attachments`. `kind` is "upload" for the composer's own
+ * attachments, or a kind the product declared (`Product.upload_kinds` on the
+ * server, which refuses any other); it names the written file and nothing
+ * else.
  *
  * Returns the completed entry on success, or `null` on any failure (the cap
  * already being full, a network failure, or a non-2xx response), having

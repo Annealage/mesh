@@ -118,14 +118,29 @@ def test_registrations_follow_the_installed_product(swap_product):
         {"inbound_frames": {"turn": protocol.FrameSpec(set(), set())}},
         {"events": (TurnEnd,)},
         {"events": (object,)},
+        {"upload_kinds": ("upload",)},
+        {"upload_kinds": ("../sheet",)},
+        {"upload_kinds": ("sheet\n",)},
+        {"upload_kinds": ("sheet", "sheet")},
+        {"upload_kinds": "draw"},
     ],
-    ids=["generic-setting", "generic-frame", "generic-event-kind", "not-an-event"],
+    ids=[
+        "generic-setting",
+        "generic-frame",
+        "generic-event-kind",
+        "not-an-event",
+        "generic-upload-kind",
+        "upload-kind-not-a-slug",
+        "upload-kind-trailing-newline",
+        "upload-kind-twice",
+        "upload-kinds-a-bare-string",
+    ],
 )
 def test_a_registration_that_collides_with_the_agent_layer_installs_nothing(
     swap_product, overrides
 ):
-    """Each refusal leaves nothing half-registered: install validates all
-    three registrations before applying any of them."""
+    """Each refusal leaves nothing half-registered: install validates every
+    registration before applying any of them."""
     with pytest.raises(ValueError):
         swap_product(_toy(**overrides))
     with pytest.raises(RuntimeError, match="no product is installed"):
@@ -168,6 +183,55 @@ async def test_the_tool_server_comes_from_the_installed_products_builder(swap_pr
         body=b'{"method": "tools/list"}',
     )
     assert [t["name"] for t in res.json["result"]["tools"]] == ["peek_sheet"]
+
+
+@pytest.mark.asyncio
+async def test_upload_kinds_follow_the_installed_product(swap_product, tmp_path):
+    """/upload takes the generic kind and the installed product's own, and not
+    a kind only another product declared: running as the toy product, Mesh's
+    ``sketch`` is refused and the toy's kind names the written file."""
+    from microdot.test_client import TestClient
+
+    swap_product(_toy(upload_kinds=("sheet",)))
+    client = TestClient(_agent_mode_app(tmp_path), host="127.0.0.1:8765")
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+
+    refused = await client.post("/upload?t=browser&kind=sketch", body=png)
+    assert refused.status_code == 400
+    assert refused.json["error"] == "kind must be one of: upload, sheet"
+
+    res = await client.post("/upload?t=browser&kind=sheet", body=png)
+    assert res.status_code == 200
+    assert res.json["path"].startswith("images/sheet-")
+
+
+def test_a_product_key_is_laid_out_in_the_section_it_declares(swap_product):
+    """The settings window's layout comes from the keys: a product key with a
+    section of its own gets that section, after the generic ones listed before
+    it, and one naming a generic section's title joins it, ahead of the
+    generic keys listed after the product's."""
+
+    def key(name, section):
+        return settings.Key(
+            name=name,
+            type_name="int",
+            default=1,
+            layers=(settings.USER,),
+            effect="load",
+            description=name,
+            py_type=int,
+            section=section,
+        )
+
+    swap_product(
+        _toy(settings_keys=(key("sheet_zoom", "Sheet"), key("grid", settings.VIEWER_SECTION)))
+    )
+    assert settings.sections() == [
+        {"title": "Server", "keys": ["host", "port", "open_browser"]},
+        {"title": "Agent", "keys": ["model", "effort", "permission_mode", "backend"]},
+        {"title": "Sheet", "keys": ["sheet_zoom"]},
+        {"title": "Viewer", "keys": ["grid", "tool_cards_collapsed"]},
+    ]
 
 
 def test_an_agent_mode_app_for_a_product_without_tools_is_refused_at_startup(

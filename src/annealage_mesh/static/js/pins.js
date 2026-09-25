@@ -23,16 +23,52 @@
  */
 
 import * as THREE from "three";
+import { authToken } from "agent/ws.js";
+import { toast } from "agent/ui.js";
+import { isNarrow } from "agent/layout.js";
 import { store } from "./store.js";
-import { authToken } from "./ws.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
-import { buildMetaRows, toast } from "./ui.js";
-import { isNarrow } from "./layout.js";
 
 const USER_COLOR = 0xe86b34;
 const USER_SEL = 0xffd24a;
 const AGENT_COLOR = 0x35c7e0;
 const TAP_SLOP = 8; // px; below this a pointerup counts as a tap, not an orbit drag
+
+/**
+ * Build the two-line "part - label / coordinates" block used by the pin list
+ * and the callout list.
+ *
+ * Every value here is untrusted. A pin's `part` comes from an STL filename, and
+ * a callout's `part` and `label` come from mesh-callouts.json, which the agent
+ * writes and /callouts serves verbatim with no field validation. Interpolating
+ * either into innerHTML puts script execution in the viewer's own origin, and
+ * that origin can drive the chat composer, so a crafted filename or callout
+ * turns into an arbitrary instruction to an agent holding a shell. Text nodes
+ * cannot do that, which is why this function exists rather than a template
+ * string at each call site.
+ */
+function buildMetaRows(partText, labelText, point, round) {
+  const meta = document.createElement("div");
+  meta.className = "meta";
+
+  const part = document.createElement("div");
+  part.className = "part";
+  part.textContent = partText;
+  if (labelText) {
+    part.append(document.createTextNode(" \u00b7 "));
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = labelText;
+    part.append(label);
+  }
+
+  const loc = document.createElement("div");
+  loc.className = "loc";
+  loc.textContent = "[" + point.map((v) => round(v, 2)).join(", ") + "] mm";
+
+  meta.append(part, loc);
+  return meta;
+}
 
 /**
  * @param scene, camera, controls, renderer  the three-scene.js context
@@ -448,8 +484,9 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   renderPinList(store.getState());
 
   // Handed to ws.js by main.js, which is the only place these three and
-  // ws.js's connect logic are both in scope. refetchCallouts is exposed on
-  // its own, separately from the poll, because ws.js also calls it once,
-  // outside the poll, on every hello and on every callouts_changed event.
+  // ws.js's connect logic are both in scope: the poll's controls as its
+  // `onLive`/`onFallback` hooks, and refetchCallouts on its own, separately
+  // from the poll, because ws.js also calls it once, outside the poll, on
+  // every hello (`onLive`) and on every callouts_changed event (`onEvent`).
   return { startCalloutsPoll, stopCalloutsPoll, refetchCallouts };
 }

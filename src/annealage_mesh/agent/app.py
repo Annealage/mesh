@@ -2,12 +2,13 @@
 startup and shutdown.
 
 ``create_app`` wires the agent layer's routes (``/ws``, the chat, settings and
-``/mcp`` routes) and whatever routes the product registers onto a fresh
-``Microdot`` instance, together with the pieces every product shares: the
-Host check, the event log, the viewer registry and bus, the product's tool
-server, the session, and the security headers every response carries. A fresh
-instance per call means independent served directories never share route
-state, which matters for tests. ``serve`` binds the socket, hands control back
+``/mcp`` routes, and ``/agent/static/`` for its own front end) and whatever
+routes the product registers onto a fresh ``Microdot`` instance, together with
+the pieces every product shares: the Host check, the event log, the viewer
+registry and bus, the product's tool server, the session, and the security
+headers every response carries. A fresh instance per call means independent
+served directories never share route state, which matters for tests.
+``serve`` binds the socket, hands control back
 to the caller once it is actually listening, then serves until interrupted and
 closes the listener before returning.
 
@@ -30,6 +31,7 @@ from .http.routes_chat import register_chat_routes
 from .http.routes_login import LoginNonces, register_login_routes
 from .http.routes_mcp import register_mcp_routes
 from .http.routes_settings import register_settings_routes
+from .http.static import register_agent_static_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
 from .session.base import AgentModelChanged
 from .session.events import EventLog
@@ -227,6 +229,7 @@ def create_app(
     if register_routes is not None:
         register_routes(app, allowed_origins)
     register_chat_routes(app, serve_dir, token=token, allowed_origins=allowed_origins)
+    register_agent_static_routes(app)
     app.agent_login = login if login is not None else LoginNonces()
     register_login_routes(app, token=token, nonces=app.agent_login, allowed_origins=allowed_origins)
     register_settings_routes(

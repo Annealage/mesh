@@ -40,9 +40,9 @@
  * silently discarding the strokes.
  */
 
-import { uploadImage } from "./uploads.js";
-import { toast } from "./ui.js";
-import { activateTab } from "./layout.js";
+import { uploadImage } from "agent/uploads.js";
+import { toast } from "agent/ui.js";
+import { activateTab } from "agent/layout.js";
 import { MAX_CAPTURE_CHARS, MAX_CAPTURE_WIDTH } from "./commands.js";
 
 // Fixed here because there is no settings layer yet to carry a colour or

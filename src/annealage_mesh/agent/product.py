@@ -35,7 +35,8 @@ What a product supplies, and what each field drives:
     identifiers the agent layer has to invent per product: the omp provider
     id, the omp API-key environment variable, the omp temp directory prefix,
     and the diagnostics key that carries the product's version
-    (``<name>_version``, which the product's front end reads).
+    (``<name>_version``, which the product's ``doctor`` output reads; the
+    settings window takes the version from ``GET /settings``'s ``product``).
 ``title``
     The same name capitalised for the start of a sentence ("Mesh refuses this
     call") and the transcript heading ("# Mesh transcript").
@@ -78,7 +79,13 @@ What a product supplies, and what each field drives:
     refused at startup.
 ``settings_keys``
     Extra ``settings.Key`` rows the product adds to the generic key set (Mesh:
-    ``up_axis``), registered by ``install``.
+    ``up_axis``), registered by ``install``. A key's ``section`` names the
+    settings window section it is shown in (a section of the same title as a
+    generic one is shared with it; ``None`` leaves the key out of the window),
+    and its ``choices`` become the window's select options, so the product's
+    front end registers nothing for a key to be shown and edited. Applying a
+    ``load``-effect value to the page is the product front end's own job
+    (Mesh's ``main.js`` passes ``initSettings`` an ``onLoad`` hook for it).
 ``events``
     The product's own ``AgentEvent`` subclasses (Mesh: ``callouts_changed``,
     ``models_changed``), registered by ``install`` so a kind that collides with
@@ -88,6 +95,12 @@ What a product supplies, and what each field drives:
     page sends beyond the generic protocol (Mesh: ``state``), registered by
     ``install``. The agent layer validates them like any other frame and
     counts one as interaction with that tab; it does nothing else with them.
+``upload_kinds``
+    Extra values ``POST /upload``'s ``kind`` parameter accepts beyond the
+    generic ``upload`` (Mesh: ``sketch``, the sketch overlay's composite).
+    The kind names the written file (``sketch-<stamp>-<hex>.png``), so each
+    must be a short lowercase slug; ``install`` refuses anything else. The
+    agent layer does nothing with a kind beyond naming the file by it.
 ``codex_bridge_module``
     The module Codex launches as the stdio MCP bridge. Defaults to the agent
     layer's own bridge, which is the only one that speaks its ``/mcp``
@@ -123,6 +136,7 @@ class Product:
     settings_keys: Tuple[Any, ...] = ()
     events: Tuple[type, ...] = ()
     inbound_frames: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    upload_kinds: Tuple[str, ...] = ()
     codex_bridge_module: str = CODEX_BRIDGE_MODULE
 
     @property
@@ -141,7 +155,8 @@ _installed = None
 
 def install(product):
     """Make ``product`` the one this process runs as, and register its
-    settings keys, event kinds and inbound frame types.
+    settings keys, event kinds and inbound frame types (its upload kinds are
+    checked, and read off it by the upload route).
 
     Installing the product already installed is a no-op, so every entry point
     of a product may install it without coordinating which one runs first.
@@ -160,14 +175,17 @@ def install(product):
     # installed product through ``current`` in turn, and importing them from
     # this module's own top level would make the two import each other.
     from . import protocol, settings
+    from .http import routes_chat
     from .session import base
 
-    # Each registration validates before it changes anything, and the three are
+    # Each registration validates before it changes anything, and they are
     # checked in an order that leaves nothing half-registered if a later one
-    # refuses: all three are validated first, then all three applied.
+    # refuses: all are validated first, then all applied. Upload kinds need no
+    # applying: the upload route reads them off the installed product.
     settings.check_product_keys(product.settings_keys)
     protocol.check_product_frames(product.inbound_frames)
     base.check_product_events(product.events)
+    routes_chat.check_product_upload_kinds(product.upload_kinds)
     settings.register_product_keys(product.settings_keys)
     protocol.register_product_frames(product.inbound_frames)
     base.register_product_events(product.events)

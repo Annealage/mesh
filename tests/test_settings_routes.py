@@ -124,10 +124,39 @@ async def test_get_reports_every_key_with_provenance_and_diagnostics(make_client
     for entry in payload["settings"].values():
         assert entry["from"] in (settings.FLAG, settings.PROJECT, settings.USER, settings.DEFAULT)
         assert entry["effect"] in ("restart", "load")
-        assert set(entry) == {"value", "from", "effect", "editable", "type", "description"}
+        assert set(entry) == {
+            "value",
+            "from",
+            "effect",
+            "editable",
+            "type",
+            "description",
+            "choices",
+            "nullable",
+        }
     assert payload["settings"]["port"]["value"] == DEFAULT_PORT
     assert payload["settings"]["port"]["from"] == settings.DEFAULT
     assert payload["pending"] == {}
+
+
+async def test_get_lays_out_the_window_from_each_keys_own_section(make_client):
+    """The window names no key itself: which keys it shows, under which
+    heading and as which choices all come from here. Mesh's ``up_axis`` joins
+    the generic Viewer section ahead of the chat pane's preference, a key with
+    no section (the omp endpoint and its API key) is not laid out at all, and
+    a key with a closed set of values carries it."""
+    payload = body_of(await make_client().get("/settings?t=%s" % TOKEN))
+    assert payload["sections"] == [
+        {"title": "Server", "keys": ["host", "port", "open_browser"]},
+        {"title": "Agent", "keys": ["model", "effort", "permission_mode", "backend"]},
+        {"title": "Viewer", "keys": ["up_axis", "tool_cards_collapsed"]},
+    ]
+    assert payload["settings"]["up_axis"]["choices"] == ["z", "y"]
+    assert payload["settings"]["up_axis"]["nullable"] is False
+    assert payload["settings"]["backend"]["choices"] == ["claude", "codex", "omp"]
+    assert payload["settings"]["backend"]["nullable"] is True
+    assert payload["product"]["title"] == "Mesh"
+    assert payload["product"]["state_dirname"] == ".mesh"
 
 
 async def test_get_diagnostics_carries_the_project_and_is_json_able(make_client, served_dir):
