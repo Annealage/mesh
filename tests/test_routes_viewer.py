@@ -5,25 +5,30 @@ microdot's ``TestClient``, which dispatches a request straight into the app
 object with no socket and no thread. Covers the documented route contract
 for the packaged viewer, manifest and submit endpoints; the flat manifest
 scan with its exclusions and its handling of symlinks; the
-manifest-index-only ``/model``, ``/model_alias`` and ``/asset`` routes; and
-the request-shape and disclosure controls that keep those routes from
-serving anything outside their documented contract.
+manifest-index-only ``/model`` and ``/model_alias`` routes; and the
+request-shape and disclosure controls that keep those routes from serving
+anything outside their documented contract.
+
+The agent layer's own ``/asset`` route, and the indexed-route machinery
+``/static/`` shares with ``/agent/static/`` (traversal and symlink refusal,
+rescan on a replaced file, conditional requests), are tested in that
+package's suite. What stays here is Mesh's use of them: its real tree, its
+page resolved through that tree, and its model index.
 """
 
 import asyncio
 import json
 import os
-import time
 from pathlib import Path
 
 import pytest
+from annealage_agent import files
+from annealage_agent.app import MAX_REQUEST_BODY
+from annealage_agent.http import static as agent_static
 from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
 from annealage_mesh import paths
-from annealage_mesh.agent import files
-from annealage_mesh.agent.app import MAX_REQUEST_BODY
-from annealage_mesh.agent.http import static as agent_static
 from annealage_mesh.app import DEFAULT_PORT, create_app
 from annealage_mesh.http import routes_viewer
 
@@ -283,33 +288,6 @@ async def test_stl_alias_404s_on_an_ambiguous_basename_but_rel_still_resolves_bo
     assert res_b.body == b"solid b\nendsolid b\n"
 
 
-# --- /asset/<rel> --------------------------------------------------------------
-
-
-async def test_asset_route_serves_from_images(client, served_dir):
-    images = served_dir / "images"
-    images.mkdir()
-    (images / "photo.png").write_bytes(b"\x89PNG fake bytes")
-
-    res = await client.get("/asset/photo.png")
-    assert res.status_code == 200
-    assert res.body == b"\x89PNG fake bytes"
-    assert res.headers.get("Content-Type") == paths.CONTENT_TYPES[".png"]
-
-
-async def test_asset_route_404_when_images_dir_absent(client):
-    res = await client.get("/asset/photo.png")
-    assert res.status_code == 404
-
-
-async def test_asset_route_refuses_file_outside_images(client, served_dir):
-    (served_dir / "images").mkdir()
-    (served_dir / "sibling.png").write_bytes(b"outside images/")
-
-    res = await client.get("/asset/../sibling.png")
-    assert res.status_code == 404
-
-
 # --- /static/<path:rel> ---------------------------------------------------------
 
 
@@ -333,25 +311,12 @@ async def test_static_serves_the_extensionless_vendored_license_as_text_plain(cl
     assert res.headers.get("Content-Type") == "text/plain; charset=utf-8"
 
 
-async def test_static_head_matches_get(client):
-    res_get = await client.get("/static/css/app.css")
-    res_head = await client.request("HEAD", "/static/css/app.css")
-
-    assert res_head.status_code == res_get.status_code
-    assert res_head.headers.get("Content-Type") == res_get.headers.get("Content-Type")
-    assert res_head.headers.get("Content-Length") == res_get.headers.get("Content-Length")
-    assert res_head.body is None
-
-
 @pytest.fixture
 def static_client_factory(tmp_path, monkeypatch):
     """Build a client whose /static/<rel> routes resolve against a throwaway
-    static tree instead of the package's own static/ directory.
-
-    Lets a test plant a symlink or a disallowed file and check it is refused
-    without writing into (or risking leaving debris in) the real installed
-    static/ tree. Returns ``(client, static_dir)`` so a test can mutate a
-    file after the client already exists, for the rescan-and-retry case.
+    static tree instead of the package's own static/ directory, so a test can
+    leave a file out of the tree without touching the real installed one.
+    Returns ``(client, static_dir)``.
     """
 
     def make(build):
@@ -386,81 +351,6 @@ async def test_index_404s_with_the_static_not_found_wording_when_viewer_html_is_
         assert res.body == b"not found: viewer.html", path
 
 
-async def test_static_refuses_traversal_shapes(static_client_factory):
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-
-    client, static_dir = static_client_factory(build)
-
-    secret = static_dir.parent / "secret.txt"
-    secret.write_text("TOPSECRET-STATIC-TRAVERSAL")
-
-    payloads = [
-        "/static/../secret.txt",  # ".." traversal
-        "/static/%2e%2e/secret.txt",  # percent-encoded traversal
-        "/static/%252e%252e%2fsecret.txt",  # doubly percent-encoded
-        "/static/..%2fsecret.txt",  # percent-encoded separator
-        "/static//../secret.txt",  # doubled slash
-    ]
-    for path in payloads:
-        res = await client.get(path)
-        assert res.status_code == 404, path
-        assert b"TOPSECRET" not in (res.body or b"")
-
-
-async def test_static_refuses_a_symlink(static_client_factory):
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-        real = static_dir / "real.js"
-        real.write_text("console.log('real');")
-        (static_dir / "evil.js").symlink_to(real)
-
-    client, _ = static_client_factory(build)
-
-    res = await client.get("/static/evil.js")
-    assert res.status_code == 404
-
-    res_real = await client.get("/static/real.js")
-    assert res_real.status_code == 200
-
-
-async def test_static_refuses_a_disallowed_extension(static_client_factory):
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-        (static_dir / "notes.bak").write_text("not servable")
-        (static_dir / "source.map").write_text("not servable either")
-
-    client, _ = static_client_factory(build)
-
-    for name in ("notes.bak", "source.map"):
-        res = await client.get("/static/" + name)
-        assert res.status_code == 404, name
-
-
-async def test_static_serves_a_replaced_file_after_one_rescan_and_retry(static_client_factory):
-    # A build step or an editor's write-then-rename leaves a new inode at
-    # the same name; the cached index still points at the old one until a
-    # request's own identity check misses and forces a rescan.
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-        (static_dir / "js").mkdir()
-        (static_dir / "js" / "app.js").write_text("console.log('old');")
-
-    client, static_dir = static_client_factory(build)
-
-    res1 = await client.get("/static/js/app.js")
-    assert res1.text == "console.log('old');"
-
-    target = static_dir / "js" / "app.js"
-    tmp = static_dir / "js" / "app.js.new"
-    tmp.write_text("console.log('new');")
-    os.replace(tmp, target)
-
-    res2 = await client.get("/static/js/app.js")
-    assert res2.status_code == 200
-    assert res2.text == "console.log('new');"
-
-
 # --- conditional requests for packaged assets ----------------------------------
 #
 # The packaged tree includes a vendored three.js of well over a megabyte, and
@@ -475,91 +365,6 @@ async def test_static_get_carries_a_validator_and_asks_the_client_to_revalidate(
     assert res.status_code == 200
     assert res.headers.get("ETag", "").startswith('W/"')
     assert res.headers.get("Cache-Control") == "no-cache"
-
-
-async def test_static_returns_304_for_a_matching_validator(client):
-    first = await client.get("/static/js/main.js")
-    etag = first.headers["ETag"]
-
-    second = await client.get("/static/js/main.js", headers={"If-None-Match": etag})
-    assert second.status_code == 304
-    assert not second.body
-    # The 304 repeats the validator, or a client that revalidated once would
-    # have nothing to revalidate with next time and would refetch in full.
-    assert second.headers["ETag"] == etag
-    assert second.headers.get("Cache-Control") == "no-cache"
-
-
-async def test_static_returns_304_for_a_wildcard_validator(client):
-    res = await client.get("/static/js/main.js", headers={"If-None-Match": "*"})
-    assert res.status_code == 304
-
-
-async def test_static_ignores_a_validator_from_a_different_file(client):
-    other = await client.get("/static/css/app.css")
-    res = await client.get("/static/js/main.js", headers={"If-None-Match": other.headers["ETag"]})
-    assert res.status_code == 200
-    assert res.headers["ETag"] != other.headers["ETag"]
-    assert res.body
-
-
-async def test_static_validator_changes_when_the_file_is_edited_in_place(static_client_factory):
-    # Same inode, new content. The validator is computed from a fresh stat of
-    # the file being served, not from what the cached index scan recorded, so
-    # an in-place edit must not be affirmed as unchanged.
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-        (static_dir / "js").mkdir()
-        (static_dir / "js" / "app.js").write_text("console.log('one');")
-
-    client, static_dir = static_client_factory(build)
-    target = static_dir / "js" / "app.js"
-
-    first = await client.get("/static/js/app.js")
-    etag = first.headers["ETag"]
-    inode_before = os.stat(target).st_ino
-
-    with open(target, "r+") as fh:
-        fh.write("console.log('two and a bit longer');")
-    assert os.stat(target).st_ino == inode_before, "the edit must reuse the inode"
-
-    res = await client.get("/static/js/app.js", headers={"If-None-Match": etag})
-    assert res.status_code == 200
-    assert "two and a bit longer" in res.text
-    assert res.headers["ETag"] != etag
-
-
-async def test_static_does_not_affirm_a_validator_for_a_name_become_a_symlink(
-    static_client_factory,
-):
-    # A conditional request must not become a way to have a symlink's target
-    # validated: lstat sees the link itself, which is not a regular file, so
-    # no 304 is issued and the request falls through to the open path that
-    # refuses it outright.
-    def build(static_dir):
-        (static_dir / "viewer.html").write_text("<html></html>")
-        (static_dir / "app.js").write_text("console.log('real');")
-
-    client, static_dir = static_client_factory(build)
-
-    first = await client.get("/static/app.js")
-    etag = first.headers["ETag"]
-
-    secret = static_dir.parent / "secret.txt"
-    secret.write_text("TOPSECRET-CONDITIONAL")
-    (static_dir / "app.js").unlink()
-    (static_dir / "app.js").symlink_to(secret)
-
-    res = await client.get("/static/app.js", headers={"If-None-Match": etag})
-    assert res.status_code == 404
-    assert b"TOPSECRET" not in (res.body or b"")
-
-
-async def test_static_head_carries_the_same_validator_as_get(client):
-    res_get = await client.get("/static/css/app.css")
-    res_head = await client.request("HEAD", "/static/css/app.css")
-    assert res_head.headers["ETag"] == res_get.headers["ETag"]
-    assert res_head.headers.get("Cache-Control") == "no-cache"
 
 
 async def test_model_bytes_are_never_revalidatable(client):
@@ -698,28 +503,6 @@ async def test_model_route_immune_to_traversal_shapes(client, served_dir):
         assert b"leak" not in (res.body or b"")
 
 
-async def test_asset_route_refuses_every_traversal_shape(client, served_dir):
-    # /asset/<rel> does a real filesystem resolve-and-contain check
-    # (files.safe_join); these payloads exercise that check directly rather
-    # than relying on an allowlist miss.
-    images = served_dir / "images"
-    images.mkdir()
-    (images / "legit.png").write_bytes(b"legit image bytes")
-    (served_dir / "secret.txt").write_text("do not leak")
-
-    payloads = [
-        "/asset/../secret.txt",  # ".." traversal
-        "/asset/%2e%2e/secret.txt",  # URL-encoded traversal
-        "/asset//../secret.txt",  # doubled slash
-        "/asset/..\\secret.txt",  # backslash
-        "/asset//" + str(served_dir / "secret.txt"),  # absolute path
-    ]
-    for path in payloads:
-        res = await client.get(path)
-        assert res.status_code == 404, path
-        assert b"do not leak" not in (res.body or b"")
-
-
 async def test_stl_alias_and_manifest_exclude_symlink_outside_directory(
     client, served_dir, tmp_path_factory
 ):
@@ -736,20 +519,6 @@ async def test_stl_alias_and_manifest_exclude_symlink_outside_directory(
     assert res.status_code == 404
     res = await client.get("/model/escape.stl")
     assert res.status_code == 404
-
-
-async def test_asset_route_refuses_symlink_outside_directory(client, served_dir, tmp_path_factory):
-    outside_dir = tmp_path_factory.mktemp("outside")
-    outside_secret = outside_dir / "outside-secret.png"
-    outside_secret.write_bytes(b"outside png bytes")
-
-    images = served_dir / "images"
-    images.mkdir()
-    (images / "escape.png").symlink_to(outside_secret)
-
-    res = await client.get("/asset/escape.png")
-    assert res.status_code == 404
-    assert b"outside png bytes" not in (res.body or b"")
 
 
 # --- HEAD parity with GET ------------------------------------------------------
@@ -853,7 +622,7 @@ async def test_symlink_to_non_model_target_excluded_despite_stl_looking_name(cli
         assert b"do not leak" not in (res.body or b"")
 
 
-# --- percent-decoded model and asset paths --------------------------------------
+# --- percent-decoded model paths --------------------------------------------------
 
 
 async def test_model_route_decodes_space_and_non_ascii_filenames(client, served_dir):
@@ -921,124 +690,6 @@ async def test_model_route_decodes_a_hash_encoded_per_segment_in_a_nested_rel(cl
     assert "parts/left#bracket.stl" in rels
 
 
-async def test_asset_route_decodes_space_in_filename(client, served_dir):
-    images = served_dir / "images"
-    images.mkdir()
-    (images / "my photo.png").write_bytes(b"space photo bytes")
-
-    res = await client.get("/asset/my%20photo.png")
-    assert res.status_code == 200
-    assert res.body == b"space photo bytes"
-
-
-# --- images/ as a symlink -------------------------------------------------------
-
-
-async def test_asset_route_refuses_a_symlinked_images_directory(client, served_dir):
-    # A symlink at images/ cannot be made safe by checking where it points,
-    # because containment is satisfied by the served directory itself: an
-    # "images -> ." link passes that test and then becomes the base every
-    # /asset request is joined against, which restores the serve-anything
-    # fallback this route replaces. Pointing it at a subdirectory is no
-    # better, since nothing there was indexed.
-    real_images = served_dir / "real_images"
-    real_images.mkdir()
-    (real_images / "photo.png").write_bytes(b"\x89PNG real bytes")
-    (served_dir / "images").symlink_to(real_images)
-
-    res = await client.get("/asset/photo.png")
-    assert res.status_code == 404
-    assert b"real bytes" not in (res.body or b"")
-
-
-async def test_asset_route_refuses_images_symlinked_to_the_served_dir(client, served_dir):
-    # The specific shape that defeats a containment-only check.
-    (served_dir / "secret.txt").write_text("TOPSECRET-FLAG-ASSET")
-    (served_dir / "images").symlink_to(served_dir)
-
-    res = await client.get("/asset/secret.txt")
-    assert res.status_code == 404
-    assert b"TOPSECRET-FLAG-ASSET" not in (res.body or b"")
-
-
-async def test_asset_route_refuses_images_symlink_outside_served_dir(
-    client, served_dir, tmp_path_factory
-):
-    # An images/ symlink whose target is outside the served directory (a
-    # shape that arrives inside a zip, a tarball or a git clone, not only
-    # by an operator's own hand) must not turn every /asset request into a
-    # read of anything under that other location.
-    outside_dir = tmp_path_factory.mktemp("outside")
-    (outside_dir / "secret.png").write_bytes(b"outside png bytes")
-    (served_dir / "images").symlink_to(outside_dir)
-
-    res = await client.get("/asset/secret.png")
-    assert res.status_code == 404
-    assert b"outside png bytes" not in (res.body or b"")
-
-
-# --- /asset content-type restriction and dotdir exclusion ----------------------
-
-
-async def test_asset_route_serves_non_image_extensions_as_octet_stream(client, served_dir):
-    # images/ can contain whatever a reviewed bundle happened to ship. A
-    # file saved with an ".html" or ".svg" extension must never be labelled
-    # as active content on this server's own origin, regardless of what it
-    # actually contains, since that label is what would let a browser run
-    # it as script.
-    images = served_dir / "images"
-    images.mkdir()
-    (images / "evil.html").write_text("<script>alert(1)</script>")
-    (images / "evil.svg").write_text("<svg onload='alert(1)'></svg>")
-
-    for name in ("evil.html", "evil.svg"):
-        res = await client.get("/asset/" + name)
-        assert res.status_code == 200
-        assert res.headers.get("Content-Type") == "application/octet-stream"
-
-
-async def test_asset_route_excludes_dot_prefixed_path_components(client, served_dir):
-    hidden = served_dir / "images" / "sub" / ".secretdir"
-    hidden.mkdir(parents=True)
-    (hidden / "x.txt").write_text("do not leak")
-
-    res = await client.get("/asset/sub/.secretdir/x.txt")
-    assert res.status_code == 404
-    assert b"do not leak" not in (res.body or b"")
-
-
-async def test_responses_carry_nosniff_header(client):
-    res = await client.get("/manifest")
-    assert res.headers.get("X-Content-Type-Options") == "nosniff"
-
-
-# --- file_response 404s do not disclose the resolved path or existence ---------
-
-
-async def test_asset_404_does_not_disclose_resolved_path_or_existence(client, served_dir):
-    # An absent name and a present-but-unreadable one must produce the same
-    # template ("not found: <the name the client asked for>"), so neither
-    # echoes the server's absolute filesystem path, and the only thing that
-    # varies between the two responses is the name the client itself
-    # supplied, not a signal of which cause produced the 404.
-    images = served_dir / "images"
-    images.mkdir()
-    unreadable = images / "noperm.png"
-    unreadable.write_bytes(b"\x89PNG bytes")
-    unreadable.chmod(0o000)
-    try:
-        res_unreadable = await client.get("/asset/noperm.png")
-    finally:
-        unreadable.chmod(0o644)
-    res_absent = await client.get("/asset/does-not-exist.png")
-
-    assert res_unreadable.status_code == 404
-    assert res_absent.status_code == 404
-    assert res_unreadable.body == b"not found: noperm.png"
-    assert res_absent.body == b"not found: does-not-exist.png"
-    assert str(unreadable) not in (res_unreadable.text or "")
-
-
 # --- model-index caching keeps the scan off the event loop and shared ----------
 
 
@@ -1059,31 +710,6 @@ async def test_manifest_and_model_fetches_share_one_scan_within_the_cache_window
     await client.get("/model/widget.stl")
 
     assert len(calls) == 1
-
-
-async def test_concurrent_requests_during_a_cold_window_share_one_scan(
-    client, served_dir, monkeypatch
-):
-    # A burst of requests arriving while the cache is cold (startup, or just
-    # after the TTL expires) must not each launch their own recursive walk;
-    # they should all await the one scan already in flight. A short sleep
-    # inside the (executor-run) scan widens the race window deterministically,
-    # since without it a fast real scan might finish before a second
-    # concurrent coroutine even reaches its own cache check.
-    calls = []
-    real_scan = paths.scan_models
-
-    def slow_counting_scan(serve_dir):
-        calls.append(serve_dir)
-        time.sleep(0.05)
-        return real_scan(serve_dir)
-
-    monkeypatch.setattr(paths, "scan_models", slow_counting_scan)
-
-    results = await asyncio.gather(*[client.get("/manifest") for _ in range(20)])
-
-    assert len(calls) == 1
-    assert all(res.status_code == 200 for res in results)
 
 
 async def test_manifest_rescans_after_the_cache_window_expires(client, served_dir, monkeypatch):
@@ -1374,7 +1000,7 @@ def _agent_client(served_dir, token=SUBMIT_TOKEN):
     The session is created for real rather than named, because the app opens
     that session's event log on construction.
     """
-    from annealage_mesh.agent import sessions
+    from annealage_agent import sessions
 
     return make_test_client(
         create_app(

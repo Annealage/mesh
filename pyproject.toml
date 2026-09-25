@@ -28,60 +28,43 @@ classifiers = [
     "Topic :: Multimedia :: Graphics :: 3D Modeling",
     "Topic :: Software Development :: Testing",
 ]
-# Agent mode is the default mode, so the SDK is a base dependency rather than
-# an extra. The cost is real and worth stating: the SDK's own wheel bundles a
-# ~300 MB `claude` binary, so installing this package downloads roughly 90 MB
-# of platform-specific wheel instead of a few tens of kilobytes. This package's
-# own wheel stays pure Python and platform-independent; only the dependency
-# resolves per platform, and upstream publishes wheels for macOS arm64 and
-# x86_64, manylinux aarch64 and x86_64, and win_amd64.
+# The embedded agent (sessions for the Claude, Codex and omp backends, the
+# permission broker, the chat pane, /ws, /mcp and settings) is the separate
+# annealage-agent package, which carries its own runtime dependencies (microdot,
+# claude-agent-sdk, mcp, httpx, platformdirs, tomli) with the reasons for each.
 #
-# The floor is 0.2.136 rather than 0.2.135 because that is the version the
-# permission-broker contract was verified against: a `can_use_tool` callback
-# must return PermissionResultAllow or PermissionResultDeny, and the plain dict
-# form that older examples show is rejected outright (docs/agent-chat-plan.md
-# section 2a, fact 14). The `<0.3` cap is load-bearing, since this design
-# depends on `Transport`, which the SDK documents as internal.
+# The floor matches annealage-agent's hatch-vcs fallback version (0.0.0): the
+# package has no release yet, and uv resolves it from the sibling checkout named
+# in [tool.uv.sources] below. That source is a path, which cannot ship in this
+# package's published metadata, so a Mesh release is blocked until
+# annealage-agent is published (PyPI or a private index) and this floor names
+# a real release.
 dependencies = [
-    "microdot>=2.6,<3",
+    "annealage-agent>=0.0.0",
+    # Mesh's own tool modules (tools/*_tools.py) declare their tools with the
+    # SDK's `@tool` decorator, a direct import of this project's code, so it
+    # is declared here rather than relied on through annealage-agent. The
+    # range is annealage-agent's own (its pyproject.toml says why: 0.2.136 is
+    # the verified permission-broker contract, `<0.3` because `Transport` is
+    # internal). The SDK's wheel bundles a ~300 MB `claude` binary, so an
+    # install downloads roughly 90 MB of platform-specific wheel; this
+    # package's own wheel stays pure Python and platform-independent.
     "claude-agent-sdk>=0.2.136,<0.3",
-    # http/routes_mcp.py builds the /mcp endpoint's request and response
-    # bodies from mcp.types (Tool/CallToolResult/ListToolsResult), and
-    # session/codex_mcp_stdio_bridge.py's stdio side is built entirely on
-    # mcp.server (Server/stdio_server): both are direct imports of this
-    # project's own code, not merely something claude-agent-sdk happens to
-    # pull in underneath it (it does, which is how this floor was verified:
-    # 1.21.0 is the version already resolved and exercised in this
-    # environment through that existing dependency chain), so it is declared
-    # here rather than relied on transitively - a future claude-agent-sdk
-    # release dropping its own use of mcp must not silently break this
-    # project's own direct imports of it. The `<2` cap follows this
-    # project's usual practice of not trusting an unreleased next major to
-    # keep today's API shape.
-    "mcp>=1.21,<2",
-    # session/codex_mcp_stdio_bridge.py's only HTTP client, used to reach
-    # mesh's own /mcp endpoint from the stdio-proxy subprocess. Also already
-    # transitively present (mcp's own dependency), declared directly for the
-    # same reason as mcp above. 0.28.1 is what this floor was verified
-    # against; httpx's own versioning has stayed stable through the 0.2x
-    # series, so no upper cap tighter than the next major is warranted.
-    "httpx>=0.27,<1",
-    # settings.py locates the one user-wide settings.toml with this rather
-    # than hand-rolling the platform's config-directory convention
-    # (XDG_CONFIG_HOME on Linux, Application Support on macOS, %APPDATA% on
-    # Windows) a second time.
-    "platformdirs>=4,<5",
-    # tomllib is the standard library's TOML reader from Python 3.11 onward.
-    # tomli is the package it was vendored from, so the two parse identically;
-    # this only backfills the gap on 3.10, which this project still supports.
-    "tomli>=2;python_version<\"3.11\"",
 ]
 
 [project.optional-dependencies]
 # pre-commit>=4.6: no upper cap, matching pytest-asyncio's own convention
 # above - a stable CLI driver with no API this project imports, only ever
 # invoked as `pre-commit` (CONTRIBUTING.md, .pre-commit-config.yaml).
-dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6"]
+#
+# microdot: Mesh's own code never imports it (the app and Response it serves
+# come from annealage-agent), but its tests do, directly (tests/conftest.py's
+# TestClient, tests/test_routes_viewer.py's Request) and rely on its
+# behaviour (TestClient's Host default, Request.create). A direct import of
+# this project's code is declared here rather than relied on through
+# annealage-agent, for the same reason as claude-agent-sdk above; the range
+# is annealage-agent's own.
+dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6", "microdot>=2.6,<3"]
 # The browser suite, kept out of `dev` because it also needs a browser binary
 # installed separately (`playwright install chromium`), which is a much larger
 # download than the rest of the test dependencies put together. Declared rather
@@ -102,24 +85,15 @@ e2e = ["playwright"]
 cad = ["trimesh", "numpy"]
 
 # Optional, unlike claude-agent-sdk, because it is an alternative backend
-# (settings.py's `backend` key) rather than the default: an install that
-# only ever runs the Claude backend should not pay for a second CLI it
-# will never invoke. Like claude-agent-sdk, this wheel bundles a pinned CLI
-# runtime of its own (`openai-codex-cli-bin`), so `uv sync --extra codex`
-# downloads a second platform-specific binary on top of the base install.
-#
-# The floor is 0.154.0 because that is the exact version
-# `planning/20260919_codex-approval-handler-finding.md` verified by reading
-# the SDK's own source directly: the public `Codex`/`AsyncCodex`/
-# `AsyncCodexClient` wrappers have no way to set a custom `approval_handler`
-# at all and silently auto-accept every command-execution approval without
-# one, so `session/codex.py` constructs the low-level
-# `openai_codex.client.CodexClient` directly instead of any of those three.
-# That is reading an undocumented internal shape rather than the SDK's
-# stated public contract, so the `<1` cap is deliberately tight: a later
-# 0.x release is exactly where a shape like that is most likely to move
-# with no changelog entry warning this project to re-verify it.
-codex = ["openai-codex>=0.154,<1"]
+# (the agent's `backend` setting) rather than the default: an install that
+# only ever runs the Claude backend should not pay for a second CLI it will
+# never invoke. The backend itself lives in annealage-agent, whose own `codex`
+# extra pins the openai-codex SDK and says why the range is that tight; this
+# extra only forwards to it, so `pip install "annealage-mesh[codex]"` keeps
+# working. The SDK's wheel bundles a pinned CLI runtime of its own
+# (`openai-codex-cli-bin`), so `uv sync --extra codex` downloads a second
+# platform-specific binary on top of the base install.
+codex = ["annealage-agent[codex]"]
 
 [project.scripts]
 annealage-mesh = "annealage_mesh.cli:main"
@@ -167,19 +141,28 @@ include = [
 # static/ subdirectory whose name matches a gitignore pattern (this repo's
 # .gitignore has "lib/", "build/", "parts/" and "var/") would silently drop
 # out of both the sdist and the wheel. "artifacts" bypasses that VCS-ignore
-# filtering, so everything under both static trees (Mesh's static/ and the
-# agent layer's agent/static/) ships regardless of directory naming. Both the
-# sdist and the wheel targets need this entry: the release workflow
-# (.github/workflows/publish.yml) runs plain `uv build`, which builds the
-# wheel from the sdist it just produced rather than from the working tree,
-# so a wheel-only override here would ship a wheel with the assets during
-# local `--wheel` testing while the published wheel, built from an sdist
-# missing them, would silently drop them again.
+# filtering, so everything under static/ ships regardless of directory
+# naming (the agent's own front end, served at /agent/static/, ships in
+# annealage-agent's wheel, not this one). Both the sdist and the wheel targets
+# need this entry: the release workflow (.github/workflows/publish.yml) runs
+# plain `uv build`, which builds the wheel from the sdist it just produced
+# rather than from the working tree, so a wheel-only override here would ship
+# a wheel with the assets during local `--wheel` testing while the published
+# wheel, built from an sdist missing them, would silently drop them again.
 [tool.hatch.build]
 artifacts = [
     "src/annealage_mesh/static/**",
-    "src/annealage_mesh/agent/static/**",
 ]
+
+# annealage-agent has no release yet, so uv resolves it from its sibling
+# checkout (../agent), editable so a change there is live here without a
+# reinstall. Temporary: a path source is uv-only and never reaches published
+# metadata, so a Mesh release waits on publishing annealage-agent (an open
+# decision), after which this table goes and the floor above names that
+# release. CI checks the sibling out beside this repository for the same
+# reason (.github/workflows/test.yml).
+[tool.uv.sources]
+annealage-agent = { path = "../agent", editable = true }
 
 # Ruff is the linter and the formatter for this project. Its F rules are
 # pyflakes, which is the check this codebase is written against; every other
@@ -238,24 +221,3 @@ ignore = [
 # behaviour end to end - in every case there is no event loop to starve but
 # the test's own.
 "tests/*" = ["ASYNC220", "ASYNC230", "ASYNC240"]
-
-# `integration`-marked tests drive a real backend SDK/binary against a real
-# account or endpoint and complete an actual model turn - real network
-# calls, real credentials, real (small) cost, and no fake-transport
-# determinism. `addopts` excludes them from every default `pytest`
-# invocation (`uv run --extra dev pytest -q`, this project's own CI
-# `test.yml`) so a plain test run - local or CI - never depends on secrets
-# or reachability it may not have. They are opt-in only, run with
-# `pytest -m integration`, which overrides `addopts`'s own `-m` value
-# rather than combining with it (pytest resolves a repeated `-m` option to
-# its last occurrence, and CLI-supplied options are appended after
-# `addopts`). Each individual test still skips itself, with a clear reason,
-# when its own required credentials are not set - see
-# `tests/test_sdk_session_live.py`, `tests/test_codex_session_live.py`,
-# `tests/test_omp_session_live.py`, and
-# `planning/tickets/phase7_live-integration-tests.md`.
-[tool.pytest.ini_options]
-addopts = "-m 'not integration'"
-markers = [
-    "integration: drives a real backend SDK/binary and a real account or endpoint; opt-in only, run with `-m integration`",
-]

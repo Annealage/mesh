@@ -33,13 +33,13 @@ import pytest
 
 pytest.importorskip("playwright.sync_api")
 
+from annealage_agent import sessions as mesh_sessions
+from annealage_agent.http.routes_login import LoginNonces
+from annealage_agent.session import base as session_base
+from annealage_agent.session.fake import FakeSession
 from playwright.sync_api import sync_playwright
 
 from annealage_mesh import app as mesh_app
-from annealage_mesh.agent import sessions as mesh_sessions
-from annealage_mesh.agent.http.routes_login import LoginNonces
-from annealage_mesh.agent.session import base as session_base
-from annealage_mesh.agent.session.fake import FakeSession
 
 
 def _find_chrome():
@@ -2504,7 +2504,7 @@ def settings_server(tmp_path_factory, monkeypatch):
     inside the request rather than at import, so a file written here is what the
     route reads even though the server runs on its own thread.
     """
-    from annealage_mesh.agent import sessions as mesh_sessions
+    from annealage_agent import sessions as mesh_sessions
 
     d = tmp_path_factory.mktemp("mesh_e2e_settings")
     (d / "alpha.stl").write_bytes(_cube_stl_bytes(center=(0.0, 0.0, 0.0), half=10.0))
@@ -2627,7 +2627,7 @@ def test_saving_a_restart_required_setting_reports_it_as_saved_not_applied(
 def test_a_saved_viewer_preference_is_applied_when_the_page_loads(settings_server, browser):
     """up_axis takes effect at load rather than on restart, so a saved value
     must reach the running scene without anyone touching the topbar."""
-    from annealage_mesh.agent import settings as mesh_settings
+    from annealage_agent import settings as mesh_settings
 
     server, _served = settings_server
     path = mesh_settings.user_settings_path()

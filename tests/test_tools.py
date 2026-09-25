@@ -1,10 +1,14 @@
 """Tests for the mesh tool surface, driven against a fake ``ViewerBus``.
 
-Three things are being pinned here, and they are different in kind.
+The tool server's own mechanisms (how a grading derives what is pre-allowed
+and what the pause switch refuses, the refusal of an unclassified tool, and
+the mapping of a viewer call's four failures) are tested in annealage-agent's
+suite against a toy product. What is pinned here is Mesh's use of them, and
+Mesh's handlers.
 
 **The classification**, because it is the whole permission design for these
 tools, and because its two derived sets are deliberately not the same set: what
-prompts is the write-class three, while what the pause switch refuses is those
+prompts is the write-class tools, while what the pause switch refuses is those
 plus the five that change the view. A test that checked only one of those would
 pass with the other silently wrong, so both are asserted, exhaustively. The
 expected tuples below are written out by hand rather than imported from the
@@ -12,32 +16,29 @@ code, for the same reason ``tests/test_sdk_session.py`` writes out the allow
 list: a test that derives its expectation from the thing it is testing cannot
 notice that thing changing.
 
-**The failure mapping**, because the four ways a viewer call can fail mean four
-different things to a model. A model told "it timed out" retries; one told "no
-viewer is connected" asks the human to open the page; one told "the viewer
-refused it" reads the reason. Collapsing them would be invisible in any test
-that only checked ``is_error``, so each is asserted on its wording.
+**The pause gate**, exhaustively over every Mesh tool that changes anything
+rather than over a sample, each refused before it touches the viewer or the
+disk. A tool added later without the gate would be a hole exactly the size of
+that tool, and a spot check would not find it.
 
-**The pause gate**, exhaustively over every write-class tool rather than over a
-sample. The gate is a per-tool flag, so a tool added later without it would be
-a hole exactly the size of that tool, and a spot check would not find it.
+**The handlers**: what each sends to the viewer and writes to the served
+directory, and what it tells the model when its arguments or the files it
+reads are wrong.
 
 Every handler here is reached through ``MeshTools``, never called directly, so
 what is under test includes the wrapper that applies both policies.
 """
 
-import asyncio
 import base64
 import json
 import os
 import struct
 
 import pytest
+from annealage_agent import files
+from annealage_agent.tools import namespaced
 
 from annealage_mesh import paths
-from annealage_mesh.agent import files
-from annealage_mesh.agent.tools import namespaced
-from annealage_mesh.agent.viewers import CallError, NoViewerConnected, ViewerGone
 from annealage_mesh.tools import registry
 
 pytestmark = pytest.mark.asyncio
@@ -102,8 +103,6 @@ ARGS = {
     "snapshot": {},
     "export_transcript": {},
 }
-
-VIEWER_URL = "http://127.0.0.1:8765/#t=testtoken"
 
 
 def _cube_stl(half=5.0):
@@ -197,60 +196,15 @@ async def test_every_classified_tool_exists_and_every_built_tool_is_classified(p
 async def test_the_pre_allowed_names_are_exactly_what_the_session_pre_allows(project):
     """The two lists are one list, and this is the seam where a divergence
     would show up as a pre-allowed name matching nothing (fact 1): the tool
-    server's ``pre_allowed`` is what ``agent/launch.py`` hands the Claude
+    server's ``pre_allowed`` is what annealage-agent's ``launch.py`` hands the Claude
     session as its allow list, namespaced under the server's own name."""
     tools = registry.MeshTools(FakeBus(), project)
     assert tools.pre_allowed == tuple(namespaced("mesh", name) for name in EXPECTED_PRE_ALLOWED)
     assert list(tools.mcp_servers) == ["mesh"]
 
 
-async def test_no_write_class_tool_is_pre_allowed(project):
-    """The one assertion that keeps the approval card. A write-class name in
-    ``allowed_tools`` would silently stop the broker being consulted for it
-    (fact 2), and nothing else in the suite would notice."""
-    pre_allowed = registry.MeshTools(FakeBus(), project).pre_allowed
-    for name in EXPECTED_WRITE_CLASS:
-        assert namespaced("mesh", name) not in pre_allowed
-
-
-async def test_every_view_class_tool_is_pre_allowed_and_gated(project):
-    """The decision that separates the two derived sets: these prompt for
-    nothing, because the human is watching the screen they change, and the
-    pause switch is what stops them instead. Both halves are asserted here,
-    because either one alone would be a different design: pre-allowed and
-    ungated is a camera nothing can stop, and gated and prompting is the card
-    per camera move this deliberately does not do."""
-    pre_allowed = registry.MeshTools(FakeBus(), project).pre_allowed
-    for name in EXPECTED_VIEW_CLASS:
-        assert namespaced("mesh", name) in pre_allowed
-        assert name in registry.GRADING.pause_gated
-
-
-async def test_building_refuses_a_tool_that_was_never_classified(project, monkeypatch):
-    """A tool added to a handler module without being classified must fail
-    loudly at startup, because every default is wrong for something: read
-    removes the human's card and the pause switch's hold on it, view removes the
-    card alone, and write is a tool nobody can reach through the allow list."""
-    from claude_agent_sdk import tool
-
-    from annealage_mesh.tools import model_tools
-
-    real_build = model_tools.build
-
-    def build_with_a_stray(serve_dir):
-        @tool("wander_off", "unclassified", {})
-        async def wander_off(args):
-            return {"content": []}
-
-        return real_build(serve_dir) + [wander_off]
-
-    monkeypatch.setattr(model_tools, "build", build_with_a_stray)
-    with pytest.raises(RuntimeError, match="wander_off"):
-        registry.MeshTools(FakeBus(), project)
-
-
 # ---------------------------------------------------------------------------
-# The viewer round trip and its four failures
+# The viewer round trip
 # ---------------------------------------------------------------------------
 
 
@@ -315,52 +269,6 @@ async def test_capture_view_says_so_rather_than_delivering_an_empty_image(projec
     assert result["is_error"] is True
     assert "not delivered" in text_of(result)
     assert not [item for item in result["content"] if item["type"] == "image"]
-
-
-async def test_no_viewer_connected_reaches_the_model_with_the_url_to_open(project):
-    bus = FakeBus(
-        raises=NoViewerConnected("no viewer connected; ask the human to open %s" % VIEWER_URL)
-    )
-    result = await tools_for(bus, project)["fit_view"]({})
-    assert result["is_error"] is True
-    # Passed through unedited, because the URL is the actionable part.
-    assert text_of(result) == ("no viewer connected; ask the human to open %s" % VIEWER_URL)
-
-
-async def test_a_viewer_that_closed_is_reported_as_not_having_happened(project):
-    bus = FakeBus(raises=ViewerGone("viewer connection closed"))
-    result = await tools_for(bus, project)["set_up_axis"]({"axis": "y"})
-    assert result["is_error"] is True
-    assert "did not happen" in text_of(result)
-    assert "set_up_axis" in text_of(result)
-
-
-async def test_a_timeout_does_not_claim_either_outcome(project):
-    """The one failure where the tool genuinely does not know: the frame was
-    sent, so the browser may have acted on it. Telling the model it failed
-    would be as wrong as telling it it worked."""
-    bus = FakeBus(raises=asyncio.TimeoutError())
-    result = await tools_for(bus, project)["set_visibility"]({"rel": "cube.stl", "visible": False})
-    assert result["is_error"] is True
-    assert "may or may not have happened" in text_of(result)
-
-
-async def test_a_viewer_refusal_carries_its_code_and_reason(project):
-    bus = FakeBus(
-        raises=CallError({"code": "unknown_model", "message": 'the viewer has no part at rel "x"'})
-    )
-    result = await tools_for(bus, project)["set_visibility"]({"rel": "x", "visible": True})
-    assert result["is_error"] is True
-    assert "unknown_model" in text_of(result)
-    assert "no part at rel" in text_of(result)
-
-
-async def test_an_unexpected_failure_is_reported_as_this_packages_bug(project):
-    bus = FakeBus(raises=RuntimeError("something in mesh broke"))
-    result = await tools_for(bus, project)["get_view"]({})
-    assert result["is_error"] is True
-    assert "bug rather than anything you did" in text_of(result)
-    assert "get_view" in text_of(result)
 
 
 # ---------------------------------------------------------------------------

@@ -23,8 +23,8 @@ half-written model is waited for rather than announced.
 import struct
 
 import pytest
+from annealage_agent.session.events import EventLog
 
-from annealage_mesh.agent.session.events import EventLog
 from annealage_mesh.app import ModelsWatcher
 
 pytestmark = pytest.mark.asyncio

@@ -70,8 +70,6 @@ def test_wheel_and_sdist_ship_the_split_front_end_and_vendored_three_js(tmp_path
         "static/js/main.js",
         "static/js/vendor/three.module.js",
         "static/js/vendor/VERSIONS.json",
-        "agent/static/chat.js",
-        "agent/static/agent.css",
     ):
         assert any(n.endswith("src/annealage_mesh/" + rel) for n in sdist_names), rel
         assert "annealage_mesh/" + rel in wheel_names, rel

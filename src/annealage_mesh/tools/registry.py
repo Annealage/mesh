@@ -12,7 +12,7 @@ roughly twenty tools.
 
 The three tuples below are the whole permission design for these tools: what
 each grade means, and why view is pre-allowed but pause-gated, is written down
-once, in ``agent/tools.py``. The agent layer refuses to build a server whose
+once, in ``annealage_agent/tools.py``. The agent layer refuses to build a server whose
 tools do not match these tuples exactly, so a tool added to a handler module
 without being classified here fails at startup rather than defaulting into a
 posture nobody chose.
@@ -21,7 +21,8 @@ The tuples are ordered as plan section 3.9 lists them, so the allow list the
 agent layer derives from them can be read against the plan line by line.
 """
 
-from ..agent.tools import Grading, ToolServer
+from annealage_agent.tools import Grading, ToolServer
+
 from . import cad_tools, model_tools, review_tools, viewer_tools
 
 #: Changes nothing. Pre-allowed, and not gated by the pause switch.
@@ -60,7 +61,7 @@ WRITE_CLASS = (
 )
 
 #: The three grades together, which is what the agent layer builds the server,
-#: the pre-allowed list and the pause gate from (``agent/tools.py``). The
+#: the pre-allowed list and the pause gate from (``annealage_agent/tools.py``). The
 #: derived sets are ``GRADING.pre_allowed`` (read plus view) and
 #: ``GRADING.pause_gated`` (view plus write).
 GRADING = Grading(read=READ_CLASS, view=VIEW_CLASS, write=WRITE_CLASS)

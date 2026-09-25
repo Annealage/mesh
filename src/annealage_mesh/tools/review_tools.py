@@ -34,12 +34,12 @@ import json
 import os
 import time
 
+from annealage_agent import files
+from annealage_agent.session import events
+from annealage_agent.tools import fail, ok
 from claude_agent_sdk import tool
 
 from .. import paths
-from ..agent import files
-from ..agent.session import events
-from ..agent.tools import fail, ok
 
 # Cap on how many callouts this tool will let the file grow to. Every one is a
 # marker and a sprite in the viewer and a row in the side panel, so a model

@@ -19,9 +19,8 @@ conversion.
 
 import json
 
+from annealage_agent.tools import fail, ok
 from claude_agent_sdk import tool
-
-from ..agent.tools import fail, ok
 
 #: One coordinate triple, in model space.
 _POINT_SCHEMA = {

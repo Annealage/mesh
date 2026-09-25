@@ -9,9 +9,9 @@ skipped or refused).
 """
 
 import pytest
+from annealage_agent import files
 
 from annealage_mesh import project
-from annealage_mesh.agent import files
 
 
 class _Completed:

@@ -12,7 +12,7 @@ from __future__ import annotations
 import dataclasses
 from typing import ClassVar, Optional
 
-from .agent.session.base import AgentEvent
+from annealage_agent.session.base import AgentEvent
 
 
 @dataclasses.dataclass(frozen=True)

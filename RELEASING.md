@@ -4,6 +4,14 @@ Annealage Mesh publishes to PyPI via GitHub Actions trusted publishing
 (OIDC), so there's no API token to store. First-time setup, then it's one
 release per version.
 
+**Blocked until `annealage-agent` is published.** Mesh's agent side is the
+separate `annealage-agent` package, which has no release yet: `pyproject.toml`
+resolves it from a sibling checkout (`[tool.uv.sources]`), and a wheel built
+that way would require a package no index has. The publish workflow refuses
+to build while that path source is present. Publishing the package, raising
+the `annealage-agent` floor to that release and deleting the sources table
+lifts the block.
+
 The version is not written down anywhere: `hatch-vcs` takes it from the git
 tag at build time, and `annealage_mesh.__version__` reads it back out of the
 installed package's metadata. So the tag is the version, and there is nothing

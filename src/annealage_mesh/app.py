@@ -1,7 +1,7 @@
 """Mesh's application: the agent layer's app plus the viewer, and the two
 watchers that tell the page when the served files change.
 
-``create_app`` builds the agent layer's app (``agent/app.py``) for one served
+``create_app`` builds the agent layer's app (``annealage_agent/app.py``) for one served
 directory with Mesh's pieces plugged in: the viewer routes
 (``http/routes_viewer.py``), Mesh's tool server, and the viewer page whose
 inline script the Content-Security-Policy hashes. ``run`` serves it with the
@@ -17,13 +17,14 @@ import os
 import pathlib
 import time
 
+from annealage_agent import app as agent_app
+from annealage_agent import files, net, protocol
+
 from . import (
     paths,
     product,  # noqa: F401  (installs Mesh as this process's product)
     stl,
 )
-from .agent import app as agent_app
-from .agent import files, net, protocol
 from .events import CalloutsChanged, ModelsChanged
 from .http.routes_viewer import VIEWER_HTML, register_routes
 
