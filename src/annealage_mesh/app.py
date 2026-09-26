@@ -286,7 +286,12 @@ class ModelsWatcher:
             self._invalidate_index()
         event = ModelsChanged()
         seq = self._event_log.append(event)
-        await self._registry.broadcast(protocol.build_event(seq, event.to_wire()))
+        # Scheduled, then awaited: behind any broadcast the agent's session has
+        # already scheduled, so the page gets its events in seq order (the
+        # agent layer's ws.js drops one at or below the last seq it has).
+        await asyncio.ensure_future(
+            self._registry.broadcast(protocol.build_event(seq, event.to_wire()))
+        )
         return True
 
     async def run(self):
