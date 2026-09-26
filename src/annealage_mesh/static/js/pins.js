@@ -412,7 +412,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     });
   });
 
-  // ws.js pushes a callouts_changed event over the socket when it is live
+  // ws.js pushes a review_changed event over the socket when it is live
   // and calls refetchCallouts directly; startCalloutsPoll/stopCalloutsPoll
   // are ws.js's fallback for when the socket is not live. Whichever one is
   // driving is ws.js's decision, not this module's: pollTimer is only ever
@@ -441,7 +441,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       // silently is how a real defect looks exactly like a dropped request.
       if (!(e instanceof TypeError || e instanceof SyntaxError)) throw e;
       // transient network hiccup; the next poll tick, or the next
-      // callouts_changed event once the socket recovers, tries again
+      // review_changed event once the socket recovers, tries again
     }
   }
 
@@ -472,7 +472,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
 
   // Unconditional, so first paint of the callout list never depends on the
   // socket reaching hello first: ws.js's own refetchCallouts calls (on hello
-  // and on callouts_changed) cover every update after this one, but without
+  // and on review_changed) cover every update after this one, but without
   // this call the panel would show nothing until that first hello arrives,
   // even though /callouts has been servable since the page loaded.
   refetchCallouts();
@@ -487,6 +487,6 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   // ws.js's connect logic are both in scope: the poll's controls as its
   // `onLive`/`onFallback` hooks, and refetchCallouts on its own, separately
   // from the poll, because ws.js also calls it once, outside the poll, on
-  // every hello (`onLive`) and on every callouts_changed event (`onEvent`).
+  // every hello (`onLive`) and on every review_changed event (`onEvent`).
   return { startCalloutsPoll, stopCalloutsPoll, refetchCallouts };
 }

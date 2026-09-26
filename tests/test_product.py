@@ -14,7 +14,7 @@ from annealage_agent import product, protocol, settings
 from annealage_agent.http import routes_chat
 from annealage_agent.session import base
 
-from annealage_mesh.events import CalloutsChanged, ModelsChanged
+from annealage_mesh.events import ModelsChanged
 from annealage_mesh.product import MESH, UP_AXIS_KEY
 
 
@@ -38,5 +38,9 @@ def test_mesh_registers_its_setting_frame_upload_kind_and_events():
     assert settings.KEYS_BY_NAME["up_axis"] is UP_AXIS_KEY
     assert protocol.is_product_frame("state")
     assert routes_chat.upload_kinds() == ("upload", "sketch")
-    assert base.PRODUCT_EVENTS == (CalloutsChanged, ModelsChanged)
-    assert [event.kind for event in base.PRODUCT_EVENTS] == ["callouts_changed", "models_changed"]
+    assert base.PRODUCT_EVENTS == (ModelsChanged,)
+    assert [event.kind for event in base.PRODUCT_EVENTS] == ["models_changed"]
+    # The callouts push is the agent layer's generic review_changed now, so
+    # Mesh must not register a kind of its own for it (install would refuse a
+    # collision; a second, differently named kind would be a second push).
+    assert "review_changed" in {event.kind for event in base.GENERIC_EVENTS}

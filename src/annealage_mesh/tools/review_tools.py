@@ -1,13 +1,19 @@
 """The six tools that read the human's comments, write the agent's own, and
 write a record of the conversation out.
 
-Two of these are the other half of the file contract the published skill
-documents: ``mesh-comments.json`` is what the human's Submit writes and this
+Four of them are the agent layer's shared review tools
+(``annealage_agent.review.tools``) over ``MeshFilesStore`` (``review.py``),
+configured below so the model sees exactly the surface Mesh has always had:
+``list_comments`` for the human's submitted pins and ``list_callouts`` for the
+callouts, ``add_callout`` taking a ``comment`` and a face ``label``,
+``delete_callout``, with Mesh's own descriptions, schemas and results. That
+surface is the other half of the file contract the published skill documents:
+``mesh-comments.json`` is what the human's Submit writes and ``list_comments``
 reads, and ``mesh-callouts.json`` is what an agent writes to put a cyan pin on
-the geometry. Nothing here invents a new exchange format; ``add_callout`` and
-``delete_callout`` write exactly the shape ``SKILL.md`` and the README
-describe, so a project worked on through the chat pane and a project worked on
-by a separately running agent leave the same files behind.
+the geometry. Nothing here invents a new exchange format, so a project worked
+on through the chat pane and a project worked on by a separately running
+agent leave the same files behind. There is no ``resolve_comment``: neither
+file has a status to resolve.
 
 Two properties of that are worth stating because they are easy to assume
 wrongly.
@@ -22,30 +28,29 @@ the file.
 **A callout write is read-modify-write, and the file may have another
 writer.** The contract keeps working for a separately running agent, so if one
 is also writing this file, one of the two writes can lose the other's callout.
-The write itself is atomic, so a reader never sees a half-written list, but
-nothing here can merge two independent authors and it does not pretend to.
+Writers in this process are serialised (``annealage_agent.review.file_lock``)
+and the write itself is atomic, so a reader never sees a half-written list,
+but nothing here can merge two independent processes' authors and it does not
+pretend to.
+
+The other two, ``snapshot`` and ``export_transcript``, are Mesh's own.
 """
 
 import asyncio
 import base64
 import binascii
 import functools
-import json
 import os
 import time
 
 from annealage_agent import files
+from annealage_agent.review import tools as shared_review
 from annealage_agent.session import events
 from annealage_agent.tools import fail, ok
 from claude_agent_sdk import tool
 
 from .. import paths
-
-# Cap on how many callouts this tool will let the file grow to. Every one is a
-# marker and a sprite in the viewer and a row in the side panel, so a model
-# that pins a note per triangle makes the page unusable; the human can still
-# hand-edit the file past this.
-MAX_CALLOUTS = 200
+from ..review import MeshFilesStore
 
 # What the browser is allowed to hand back for a snapshot, decoded. The socket
 # already bounds the frame that carried it (``http/ws.py``); this bounds what
@@ -63,105 +68,120 @@ _SNAPSHOT_SUFFIX = {"png": ".png", "jpeg": ".jpg", "webp": ".webp"}
 _SNAPSHOT_NAME_ATTEMPTS = 20
 
 
-def _read_annotations(serve_dir, name):
-    """The annotation list in one exchange file, or None if it is unreadable.
-
-    Accepts both shapes the viewer accepts: a bare JSON array, and an object
-    with an ``annotations`` array. Anything else, including a file that does
-    not parse, reads as None rather than as an empty list, so a caller can tell
-    "there is nothing here" apart from "there is something here I could not
-    read" and say so.
-    """
-    raw = files.read_fixed_file(serve_dir, name)
-    if raw is None:
-        return []
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return None
-    if isinstance(parsed, list):
-        return parsed
-    if isinstance(parsed, dict) and isinstance(parsed.get("annotations"), list):
-        return parsed["annotations"]
-    return None
+# -- what the review tools show the model: Mesh's results, as they have always
+#    read, built from the store's records (each annotation verbatim) ----------
 
 
-def _read_record(serve_dir, name):
-    """The whole submission record, for ``list_comments``' own extra fields."""
-    raw = files.read_fixed_file(serve_dir, name)
-    if raw is None:
-        return {}
-    try:
-        parsed = json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _write_callouts(serve_dir, annotations):
-    """Replace the callouts file with ``annotations``, atomically.
-
-    Returns the path written, or None when the name is not something this
-    package will write: the file name is fixed by this package but its
-    directory entry is not, and a symlink or a hardlink left at that name would
-    otherwise be written through.
-    """
-    target = files.safe_fixed_file(serve_dir, paths.CALLOUTS_JSON_NAME)
-    if target is None:
-        return None
-    payload = json.dumps({"annotations": annotations}, indent=2) + "\n"
-    return files.atomic_replace(target, payload.encode("utf-8"))
-
-
-def _next_callout_id(annotations):
-    """One past the highest id present, so an id is never reused.
-
-    Reusing an id would silently reattach whatever the human had already said
-    about the old callout, since the viewer keys its markers and its list rows
-    by that number.
-    """
-    used = [a.get("id") for a in annotations if isinstance(a.get("id"), int)]
-    return (max(used) + 1) if used else 1
-
-
-def _add_callout(serve_dir, entry):
-    annotations = _read_annotations(serve_dir, paths.CALLOUTS_JSON_NAME)
-    if annotations is None:
-        return (
-            "%s exists but does not parse as JSON, so appending to it would "
-            "discard whatever is in it; read it and fix it first" % paths.CALLOUTS_JSON_NAME
+def _present_comments(store, listing):
+    if not listing.meta.get("submitted"):
+        return ok(
+            text="the human has not submitted any pin comments yet "
+            "(%s does not exist, or holds no annotations)" % paths.COMMENTS_JSON_NAME
         )
-    if len(annotations) >= MAX_CALLOUTS:
-        return (
-            "there are already %d callouts, which is this tool's limit; "
-            "delete some with delete_callout before adding more" % len(annotations)
-        )
-    entry = dict(entry, id=_next_callout_id(annotations))
-    written = _write_callouts(serve_dir, list(annotations) + [entry])
-    if written is None:
-        return (
-            "refusing to write %s: it is not a plain, single-linked file" % paths.CALLOUTS_JSON_NAME
-        )
-    return {"added": entry, "count": len(annotations) + 1, "path": str(written)}
+    return ok(
+        {
+            "submitted_at": listing.meta.get("submitted_at"),
+            "count": len(listing.comments),
+            "annotations": [c.shown() for c in listing.comments],
+        }
+    )
 
 
-def _delete_callout(serve_dir, callout_id):
-    annotations = _read_annotations(serve_dir, paths.CALLOUTS_JSON_NAME)
-    if annotations is None:
-        return (
-            "%s does not parse as JSON, so nothing can be deleted from it"
-            % paths.CALLOUTS_JSON_NAME
-        )
-    kept = [a for a in annotations if a.get("id") != callout_id]
-    if len(kept) == len(annotations):
-        present = ", ".join(str(a.get("id")) for a in annotations) or "none"
-        return "no callout with id %d; the ids present are: %s" % (callout_id, present)
-    written = _write_callouts(serve_dir, kept)
-    if written is None:
-        return (
-            "refusing to write %s: it is not a plain, single-linked file" % paths.CALLOUTS_JSON_NAME
-        )
-    return {"deleted": callout_id, "count": len(kept), "path": str(written)}
+def _present_callouts(store, listing):
+    return ok(
+        {"count": len(listing.comments), "annotations": [c.shown() for c in listing.comments]}
+    )
+
+
+def _present_added(store, written):
+    return ok({"added": written.comment.shown(), "count": written.count, "path": str(written.path)})
+
+
+def _present_deleted(store, written):
+    return ok({"deleted": written.comment.id, "count": written.count, "path": str(written.path)})
+
+
+#: The review tools as the model sees them in Mesh: names, descriptions,
+#: schemas and results are Mesh's published surface, unchanged from before the
+#: agent layer owned the review.
+MESH_REVIEW_TOOLS = (
+    shared_review.ListComments(
+        name="list_comments",
+        description="Read the human's submitted pin comments on the 3D model: each one's "
+        "number, the part and face it is on, its point in model coordinates, "
+        "and what they wrote. This is the feedback to act on. A pin the human "
+        "has placed but not yet submitted is not here yet.",
+        author="human",
+        schema={},
+        present=_present_comments,
+    ),
+    shared_review.ListComments(
+        name="list_callouts",
+        description="Read the callouts currently pinned on the 3D model, the cyan markers "
+        "the human sees, including any you added earlier and any a previous "
+        "session left. Use it before add_callout to avoid repeating a note, "
+        "and to find the id delete_callout takes.",
+        author="model",
+        schema={},
+        present=_present_callouts,
+    ),
+    shared_review.AddCallout(
+        name="add_callout",
+        description="Pin a note of your own at a point on the 3D model, which appears to "
+        "the human as a numbered cyan marker in the viewer and a row in the "
+        "review panel. This is how to point at a location instead of "
+        "describing it: put the callout on the feature you are asking about or "
+        "reporting on, and say what you mean in the comment.",
+        text_field="comment",
+        ref_field=None,
+        extra_fields={
+            "label": {
+                "type": "string",
+                "description": 'the face direction, e.g. "+Z", if it helps',
+            }
+        },
+        # Verbatim, property order included, because it is what the model has
+        # always been shown; the agent layer checks it declares exactly the
+        # fields the handler reads (the anchor's point and part, the comment,
+        # the label).
+        schema={
+            "type": "object",
+            "properties": {
+                "point": {
+                    "type": "array",
+                    "items": {"type": "number"},
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "where the marker goes, [x, y, z] in model "
+                    "coordinates, the same space as a pin's point",
+                },
+                "comment": {
+                    "type": "string",
+                    "description": "what you are saying about that point",
+                },
+                "part": {
+                    "type": "string",
+                    "description": "which part it is on, for the panel's label; "
+                    "a rel or a label from list_models",
+                },
+                "label": {
+                    "type": "string",
+                    "description": 'the face direction, e.g. "+Z", if it helps',
+                },
+            },
+            "required": ["point", "comment"],
+        },
+        present=_present_added,
+    ),
+    shared_review.DeleteCallout(
+        name="delete_callout",
+        description="Remove one of the callouts pinned on the 3D model by its id, so a "
+        "note you have finished with stops cluttering the viewer. Use "
+        "list_callouts to see the ids.",
+        schema={"id": int},
+        present=_present_deleted,
+    ),
+)
 
 
 def _write_snapshot(serve_dir, wanted, suffix, data):
@@ -196,8 +216,12 @@ def _write_snapshot(serve_dir, wanted, suffix, data):
     raise FileExistsError(name)
 
 
-def build(bus, serve_dir, session_id=None):
+def build(bus, serve_dir, session_id=None, *, store=None):
     """Return the six review tools, bound to ``bus`` and ``serve_dir``.
+
+    ``store`` is the app's ``MeshFilesStore`` (``bus.review_store``), so a
+    callout the model adds reaches the review watcher at once; ``None``
+    builds one over ``serve_dir``, which is what a test bus gets.
 
     ``session_id`` names the conversation ``export_transcript`` writes out.
     ``None`` means this tool server belongs to no session, which is what a
@@ -205,127 +229,9 @@ def build(bus, serve_dir, session_id=None):
     because the classification in ``registry.py`` refuses a server whose tools
     do not match it exactly, and refuses at call time instead.
     """
-
-    @tool(
-        "list_comments",
-        "Read the human's submitted pin comments on the 3D model: each one's "
-        "number, the part and face it is on, its point in model coordinates, "
-        "and what they wrote. This is the feedback to act on. A pin the human "
-        "has placed but not yet submitted is not here yet.",
-        {},
-    )
-    async def list_comments(args):
-        loop = asyncio.get_running_loop()
-        record = await loop.run_in_executor(None, _read_record, serve_dir, paths.COMMENTS_JSON_NAME)
-        annotations = record.get("annotations")
-        if not isinstance(annotations, list):
-            return ok(
-                text="the human has not submitted any pin comments yet "
-                "(%s does not exist, or holds no annotations)" % paths.COMMENTS_JSON_NAME
-            )
-        return ok(
-            {
-                "submitted_at": record.get("submitted_at"),
-                "count": len(annotations),
-                "annotations": annotations,
-            }
-        )
-
-    @tool(
-        "list_callouts",
-        "Read the callouts currently pinned on the 3D model, the cyan markers "
-        "the human sees, including any you added earlier and any a previous "
-        "session left. Use it before add_callout to avoid repeating a note, "
-        "and to find the id delete_callout takes.",
-        {},
-    )
-    async def list_callouts(args):
-        loop = asyncio.get_running_loop()
-        annotations = await loop.run_in_executor(
-            None, _read_annotations, serve_dir, paths.CALLOUTS_JSON_NAME
-        )
-        if annotations is None:
-            return fail(
-                "%s exists but does not parse as JSON; read the file to "
-                "see what is in it" % paths.CALLOUTS_JSON_NAME
-            )
-        return ok({"count": len(annotations), "annotations": annotations})
-
-    @tool(
-        "add_callout",
-        "Pin a note of your own at a point on the 3D model, which appears to "
-        "the human as a numbered cyan marker in the viewer and a row in the "
-        "review panel. This is how to point at a location instead of "
-        "describing it: put the callout on the feature you are asking about or "
-        "reporting on, and say what you mean in the comment.",
-        {
-            "type": "object",
-            "properties": {
-                "point": {
-                    "type": "array",
-                    "items": {"type": "number"},
-                    "minItems": 3,
-                    "maxItems": 3,
-                    "description": "where the marker goes, [x, y, z] in model "
-                    "coordinates, the same space as a pin's point",
-                },
-                "comment": {
-                    "type": "string",
-                    "description": "what you are saying about that point",
-                },
-                "part": {
-                    "type": "string",
-                    "description": "which part it is on, for the panel's label; "
-                    "a rel or a label from list_models",
-                },
-                "label": {
-                    "type": "string",
-                    "description": 'the face direction, e.g. "+Z", if it helps',
-                },
-            },
-            "required": ["point", "comment"],
-        },
-    )
-    async def add_callout(args):
-        point = args.get("point")
-        if not isinstance(point, (list, tuple)) or len(point) != 3:
-            raise ValueError(
-                "point must be an array of exactly three numbers, [x, y, z] in model coordinates"
-            )
-        try:
-            point = [float(v) for v in point]
-        except (TypeError, ValueError):
-            raise ValueError("point must be three numbers, got %r" % (point,)) from None
-        comment = args.get("comment")
-        if not isinstance(comment, str) or not comment.strip():
-            raise ValueError(
-                "comment must say what you mean about that point; "
-                "a callout with no comment is a marker the human "
-                "cannot interpret"
-            )
-        entry = {"author": "agent", "point": point, "comment": comment.strip()}
-        for key in ("part", "label"):
-            value = args.get(key)
-            if isinstance(value, str) and value.strip():
-                entry[key] = value.strip()
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _add_callout, serve_dir, entry)
-        return fail(result) if isinstance(result, str) else ok(result)
-
-    @tool(
-        "delete_callout",
-        "Remove one of the callouts pinned on the 3D model by its id, so a "
-        "note you have finished with stops cluttering the viewer. Use "
-        "list_callouts to see the ids.",
-        {"id": int},
-    )
-    async def delete_callout(args):
-        callout_id = args.get("id")
-        if not isinstance(callout_id, int) or isinstance(callout_id, bool):
-            raise ValueError("id must be a callout id, as reported by list_callouts")
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _delete_callout, serve_dir, callout_id)
-        return fail(result) if isinstance(result, str) else ok(result)
+    if store is None:
+        store = MeshFilesStore(serve_dir)
+    shared = shared_review.review_tools(store, bus=bus, tools=MESH_REVIEW_TOOLS)
 
     @tool(
         "snapshot",
@@ -479,4 +385,4 @@ def build(bus, serve_dir, session_id=None):
             }
         )
 
-    return [list_comments, list_callouts, add_callout, delete_callout, snapshot, export_transcript]
+    return shared + [snapshot, export_transcript]

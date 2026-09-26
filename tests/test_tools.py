@@ -437,9 +437,9 @@ async def test_delete_callout_names_the_ids_that_do_exist(project):
 
 
 async def test_add_callout_stops_at_the_limit(project, monkeypatch):
-    from annealage_mesh.tools import review_tools
+    from annealage_mesh import review
 
-    monkeypatch.setattr(review_tools, "MAX_CALLOUTS", 2)
+    monkeypatch.setattr(review, "MAX_CALLOUTS", 2)
     (project / paths.CALLOUTS_JSON_NAME).write_text(
         json.dumps(
             {

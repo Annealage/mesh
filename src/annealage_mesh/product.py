@@ -13,7 +13,7 @@ from annealage_agent.protocol import FrameSpec, object_error
 from annealage_agent.settings import USER, VIEWER_SECTION, Key
 
 from . import __version__
-from .events import CalloutsChanged, ModelsChanged
+from .events import ModelsChanged
 
 _UP_AXIS_CHOICES = ("z", "y")
 
@@ -52,7 +52,9 @@ def _build_tools(bus, serve_dir, session_id):
     # calls this in agent mode.
     from .tools.registry import MeshTools
 
-    return MeshTools(bus, serve_dir, session_id)
+    # The app's review store, the one its routes and watcher use (app.py
+    # hands it to the agent layer's create_app, which puts it on the bus).
+    return MeshTools(bus, serve_dir, session_id, review_store=bus.review_store)
 
 
 MESH = agent_product.Product(
@@ -68,7 +70,7 @@ MESH = agent_product.Product(
     viewer_only_command="annealage-mesh view",
     build_tools=_build_tools,
     settings_keys=(UP_AXIS_KEY,),
-    events=(CalloutsChanged, ModelsChanged),
+    events=(ModelsChanged,),
     inbound_frames={"state": STATE_FRAME},
     # The sketch overlay's composite (``static/js/sketch.js``), written as
     # images/sketch-<stamp>-<hex>.png beside the composer's own uploads.

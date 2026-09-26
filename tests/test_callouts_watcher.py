@@ -1,57 +1,40 @@
-"""Tests for the callouts watcher: the push that replaces the browser's poll.
+"""The callouts push, as Mesh runs it: the agent layer's review watcher over
+Mesh's review store (``review.py``), publishing ``review_changed``.
 
-Every test drives ``CalloutsWatcher.tick`` directly with the time it wants to
-pretend it is, rather than starting ``run`` and sleeping. Nothing here waits on
-a real clock, so the deferral rule is asserted rather than approximated, and
-the suite stays fast.
-
-The watcher's change signal is a digest of the bytes it read, not the file's
-size and modification time. Two of the tests below only mean anything because
-of that choice: a rewrite that preserves both size and mtime is indetectable
-to a stat-based watcher, and a stat-based readiness rule cannot tell a
-finished write from a stalled one.
+The watcher's state machine (priming, the digest, the parse-readiness rule and
+its deferral bound) is the agent layer's and is tested there. What is Mesh's
+is what the watcher samples: the two published files, in the served
+directory, written by writers Mesh does not control. So these tests write
+``mesh-callouts.json`` directly, the way a separately running agent does under
+the published contract, and drive ``tick`` with the time they want to pretend
+it is, rather than starting ``run`` and sleeping.
 """
 
 import asyncio
 import json
 
 import pytest
-from annealage_agent.session.events import EventLog
+from annealage_agent import sessions
+from annealage_agent.review import ReviewWatcher
+from annealage_agent.session.fake import FakeSession
+from conftest import TEST_HOST
 
 from annealage_mesh import paths
-from annealage_mesh.app import CalloutsWatcher
+from annealage_mesh.app import DEFAULT_PORT, create_app
+from annealage_mesh.review import MeshFilesStore
 
 pytestmark = pytest.mark.asyncio
 
 
-class _RecordingRegistry:
-    """Records broadcast frames instead of writing them to a socket."""
-
-    def __init__(self):
-        self.frames = []
-
-    async def broadcast(self, frame):
-        self.frames.append(frame)
-
-
 def _watcher(serve_dir, max_defer=5.0):
-    registry = _RecordingRegistry()
-    log = EventLog()
-    return CalloutsWatcher(serve_dir, registry, log, max_defer=max_defer), registry
+    events = []
+    return ReviewWatcher(MeshFilesStore(serve_dir), events.append, max_defer=max_defer), events
 
 
-async def _primed_watcher(tmp_path, max_defer=5.0):
-    """A watcher that has already taken its priming sample of ``tmp_path``.
-
-    The first tick records what it finds and announces nothing, because the
-    page's own fetch on load already covers the state the watcher starts in.
-    Every test about change detection therefore has to get past that first
-    tick before it means anything, and doing it here keeps each test's own
-    timeline starting at 0.0.
-    """
-    watcher, registry = _watcher(tmp_path, max_defer=max_defer)
+async def _primed(tmp_path, max_defer=5.0):
+    watcher, events = _watcher(tmp_path, max_defer=max_defer)
     assert await watcher.tick(-1.0) is False, "the priming tick must not announce"
-    return watcher, registry
+    return watcher, events
 
 
 def _write_callouts(serve_dir, annotations):
@@ -60,195 +43,130 @@ def _write_callouts(serve_dir, annotations):
     return path
 
 
-async def test_no_callouts_file_broadcasts_nothing(tmp_path):
-    watcher, registry = _watcher(tmp_path)
+async def test_no_comment_files_announce_nothing(tmp_path):
+    watcher, events = _watcher(tmp_path)
     assert await watcher.tick(0.0) is False
-    assert registry.frames == []
+    assert await watcher.tick(1.0) is False
+    assert events == []
 
 
-async def test_a_new_callouts_file_broadcasts_once(tmp_path):
-    watcher, registry = _watcher(tmp_path)
+async def test_a_callouts_file_written_directly_is_announced_once(tmp_path):
+    watcher, events = _watcher(tmp_path)
     await watcher.tick(0.0)  # absent, nothing to say
     _write_callouts(tmp_path, [{"id": 1, "point": [0, 0, 0], "comment": "thin"}])
 
     assert await watcher.tick(1.0) is True
-    assert len(registry.frames) == 1
-    frame = registry.frames[0]
-    assert frame["type"] == "event"
-    assert frame["event"]["kind"] == "callouts_changed"
     # The event names no content: the browser refetches /callouts for itself,
     # so the page keeps exactly one writer of that state.
-    assert "annotations" not in json.dumps(frame)
+    assert [event.to_wire() for event in events] == [{"kind": "review_changed"}]
+    assert await watcher.tick(2.0) is False
 
 
-async def test_unchanged_content_does_not_broadcast_again(tmp_path):
-    watcher, registry = await _primed_watcher(tmp_path)
-    _write_callouts(tmp_path, [{"id": 1}])
-    assert await watcher.tick(0.0) is True
-
-    for t in (1.0, 2.0, 3.0):
-        assert await watcher.tick(t) is False
-    assert len(registry.frames) == 1
-
-
-async def test_rewriting_identical_bytes_does_not_broadcast(tmp_path):
-    watcher, registry = await _primed_watcher(tmp_path)
-    _write_callouts(tmp_path, [{"id": 1}])
-    await watcher.tick(0.0)
-
-    _write_callouts(tmp_path, [{"id": 1}])  # same content, new mtime
-    assert await watcher.tick(1.0) is False, (
-        "a rewrite with identical content is not a change the browser needs to "
-        "hear about; watching mtime rather than content would push here"
-    )
-    assert len(registry.frames) == 1
-
-
-async def test_a_same_length_edit_is_still_detected(tmp_path):
-    # The digest is what makes this work. A watcher keyed on (size, mtime)
-    # can miss this entirely when the filesystem's timestamp granularity is
-    # coarser than the gap between the two writes, and the two files here are
-    # byte-for-byte the same length by construction.
-    watcher, registry = await _primed_watcher(tmp_path)
-    path = tmp_path / paths.CALLOUTS_JSON_NAME
-    path.write_text('{"annotations": [{"id": 1}]}')
-    await watcher.tick(0.0)
-    path.write_text('{"annotations": [{"id": 2}]}')
-    assert len(path.read_text()) == 28
-
-    assert await watcher.tick(1.0) is True
-    assert len(registry.frames) == 2
-
-
-async def test_deleting_the_file_is_itself_a_change(tmp_path):
-    watcher, registry = await _primed_watcher(tmp_path)
-    _write_callouts(tmp_path, [{"id": 1}])
-    await watcher.tick(0.0)
-
-    (tmp_path / paths.CALLOUTS_JSON_NAME).unlink()
-    assert await watcher.tick(1.0) is True, (
-        "a deleted callouts file leaves the viewer showing pins that are gone"
-    )
-    assert len(registry.frames) == 2
-
-
-async def test_a_half_written_file_is_not_announced_until_it_parses(tmp_path):
-    # The readiness test is whether the bytes parse, not whether a stat
-    # signature held still: an incomplete write can be sampled twice with the
-    # same size and mtime, so stability proves nothing about completeness.
-    watcher, registry = await _primed_watcher(tmp_path)
+async def test_a_half_written_callouts_file_is_not_announced_until_it_parses(tmp_path):
+    # The published skill does not require an agent to write this file
+    # atomically, so a change can be observed mid-write; whether the bytes
+    # parse is what says the write finished.
+    watcher, events = await _primed(tmp_path)
     path = tmp_path / paths.CALLOUTS_JSON_NAME
     path.write_text('{"annotations": [{"id": 1, "comm')
-
-    assert await watcher.tick(0.0) is False, "changed but does not parse yet"
-    assert await watcher.tick(0.1) is False, "still the same unparseable bytes"
-    assert registry.frames == []
-
+    assert await watcher.tick(0.0) is False
+    assert await watcher.tick(0.1) is False
     path.write_text('{"annotations": [{"id": 1, "comment": "thin"}]}')
     assert await watcher.tick(0.2) is True
-    assert len(registry.frames) == 1
+    assert len(events) == 1
 
 
-async def test_a_file_that_never_parses_is_announced_once_past_max_defer(tmp_path):
-    # Without this bound, a file being rewritten continuously never looks
-    # settled and the watcher never fires at all, which is worse than pushing
-    # an event the browser may find unparseable: the browser tolerates that
-    # and the next change produces another event.
-    watcher, registry = await _primed_watcher(tmp_path, max_defer=1.0)
-    path = tmp_path / paths.CALLOUTS_JSON_NAME
-
-    path.write_text("{not json 1")
-    assert await watcher.tick(10.0) is False
-    path.write_text("{not json 22")
-    assert await watcher.tick(10.5) is False
-    path.write_text("{not json 333")
-    assert await watcher.tick(11.5) is True, (
-        "a file that keeps changing without ever parsing must still be "
-        "announced once the deferral bound has passed"
+async def test_a_submit_is_announced_as_well(tmp_path):
+    """The human's Submit changes the review as much as a callout does. The
+    viewer's own reaction (a /callouts refetch that finds nothing new) is a
+    no-op; a page that shows submitted comments needs it."""
+    watcher, events = await _primed(tmp_path)
+    (tmp_path / paths.COMMENTS_JSON_NAME).write_text(
+        json.dumps({"submitted_at": "t", "count": 0, "annotations": []})
     )
-    assert len(registry.frames) == 1
+    assert await watcher.tick(0.0) is True
+    assert len(events) == 1
 
 
-async def test_deferral_clock_starts_at_the_first_unparseable_sample(tmp_path):
-    watcher, _registry = await _primed_watcher(tmp_path, max_defer=2.0)
-    path = tmp_path / paths.CALLOUTS_JSON_NAME
-    path.write_text("{partial")
-
-    assert await watcher.tick(100.0) is False
-    assert await watcher.tick(101.9) is False, "still inside the deferral window"
-    assert await watcher.tick(102.0) is True, "the window has now elapsed"
-
-
-async def test_the_deferral_clock_resets_once_a_change_settles(tmp_path):
-    watcher, registry = await _primed_watcher(tmp_path, max_defer=2.0)
-    path = tmp_path / paths.CALLOUTS_JSON_NAME
-
-    path.write_text("{partial")
-    assert await watcher.tick(0.0) is False
-    path.write_text('{"annotations": []}')
-    assert await watcher.tick(0.5) is True
-
-    # A later unparseable write must get its own full window, not inherit the
-    # elapsed time from the earlier one.
-    path.write_text("{partial again")
-    assert await watcher.tick(1.0) is False
-    assert await watcher.tick(2.5) is False, (
-        "the second deferral window started at 1.0, so 2.5 is still inside it"
-    )
-    assert await watcher.tick(3.0) is True
-    assert len(registry.frames) == 2
+async def test_a_comments_file_that_does_not_parse_does_not_hold_back_a_callout(tmp_path):
+    """Mesh tolerates a mesh-comments.json that is not JSON (it reads as
+    nothing submitted), so it must not make every callout change look
+    half-written: the callout is announced on the first tick, as the
+    callouts-only watcher before the shared model announced it."""
+    (tmp_path / paths.COMMENTS_JSON_NAME).write_text("{ half")
+    watcher, events = await _primed(tmp_path, max_defer=5.0)
+    _write_callouts(tmp_path, [{"id": 1, "point": [0, 0, 0], "comment": "here"}])
+    assert await watcher.tick(0.25) is True
+    assert len(events) == 1
 
 
 async def test_a_symlinked_callouts_file_is_refused_and_never_announced(tmp_path):
     # Same rule the /callouts route applies: the name is fixed but its
     # directory entry is not, and a symlink left there by a reviewed bundle
     # would otherwise have its target read and announced.
-    secret = tmp_path.parent / "secret-callouts.json"
+    secret = tmp_path.parent / ("secret-%s.json" % tmp_path.name)
     secret.write_text('{"annotations": [{"comment": "TOPSECRET"}]}')
     (tmp_path / paths.CALLOUTS_JSON_NAME).symlink_to(secret)
 
-    watcher, registry = _watcher(tmp_path)
+    watcher, events = _watcher(tmp_path)
     assert await watcher.tick(0.0) is False
-    assert registry.frames == []
+    secret.write_text('{"annotations": [{"comment": "CHANGED"}]}')
+    assert await watcher.tick(1.0) is False
+    assert events == []
 
 
-async def test_seq_comes_from_the_shared_event_log(tmp_path):
-    # The seq a client resyncs from has to come from the one monotonic stream,
-    # or a reconnecting browser replaying from last_seq would skip this event
-    # or replay it twice.
-    registry = _RecordingRegistry()
-    log = EventLog()
-    watcher = CalloutsWatcher(tmp_path, registry, log)
-    assert await watcher.tick(-1.0) is False
-
-    _write_callouts(tmp_path, [{"id": 1}])
-    await watcher.tick(0.0)
-    _write_callouts(tmp_path, [{"id": 2}])
-    await watcher.tick(1.0)
-
-    seqs = [frame["seq"] for frame in registry.frames]
-    assert seqs == [1, 2]
-    assert log.current_seq == 2
+# --- as the app runs it ---------------------------------------------------------
 
 
-async def test_run_polls_on_its_interval_and_can_be_cancelled(tmp_path):
-    # The one test that does use the real loop clock, because it is the only
-    # way to show that `run` actually calls `tick` and that cancelling it does
-    # not leave the task wedged. The interval is tiny and the assertion is
-    # "at least one", so it cannot become a timing-sensitive failure.
-    registry = _RecordingRegistry()
-    watcher = CalloutsWatcher(tmp_path, registry, EventLog(), interval=0.01)
+def _kinds(app):
+    return [wire["kind"] for _seq, wire in app.agent_event_log.replay(0).events]
 
-    task = asyncio.ensure_future(watcher.run())
-    # Written after run() has started, so the change happens on a tick this
-    # task actually takes rather than being folded into its priming sample.
-    await asyncio.sleep(0.05)
-    _write_callouts(tmp_path, [{"id": 1}])
-    for _ in range(50):
-        await asyncio.sleep(0.01)
-        if registry.frames:
+
+async def _wait_for_push(app, count=1):
+    for _ in range(300):
+        if _kinds(app).count("review_changed") >= count:
             break
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert len(registry.frames) >= 1
+        await asyncio.sleep(0.01)
+    return _kinds(app)
+
+
+async def test_the_app_pushes_a_direct_write_through_its_own_event_log(tmp_path):
+    """The seq a reconnecting page resyncs from comes from the one log, so
+    the push has to be appended to it, which is what the app's watcher does."""
+    app = create_app(tmp_path, host=TEST_HOST, port=DEFAULT_PORT)
+    app.agent_review_watcher._interval = 0.02
+    task = asyncio.ensure_future(app.agent_review_watcher.run())
+    try:
+        await asyncio.sleep(0.05)
+        _write_callouts(tmp_path, [{"id": 1, "point": [0, 0, 0], "comment": "external"}])
+        assert await _wait_for_push(app) == ["review_changed"]
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+async def test_a_callout_from_the_tool_is_pushed_without_waiting_for_a_sample(tmp_path):
+    """The tool server is built over the app's own store, so its write wakes
+    the watcher directly; the sampling interval here is longer than the test."""
+    app = create_app(
+        tmp_path,
+        host=TEST_HOST,
+        port=DEFAULT_PORT,
+        token="browser-token",
+        agent_token="agent-token",
+        mesh_session_id=sessions.create_session(tmp_path),
+        build_session=lambda on_event, *, bus: FakeSession(on_event),
+    )
+    app.agent_review_watcher._interval = 60.0
+    task = asyncio.ensure_future(app.agent_review_watcher.run())
+    try:
+        await asyncio.sleep(0.05)
+        handler = {t.name: t.handler for t in app.agent_tools.tools}["add_callout"]
+        result = await handler({"point": [1, 2, 3], "comment": "here"})
+        assert "is_error" not in result
+        assert await _wait_for_push(app) == ["review_changed"]
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
