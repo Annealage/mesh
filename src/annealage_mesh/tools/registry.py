@@ -86,16 +86,18 @@ class MeshTools(ToolServer):
     Built per session rather than at import, because every handler closes over
     the ``ViewerBus`` and the served directory of the run it belongs to.
     ``session_id`` names the conversation, for the one tool that writes it out.
+    ``review_store`` is the app's ``MeshFilesStore`` (``bus.review_store``);
+    ``None`` builds one over ``serve_dir``, which is all a test needs.
     """
 
-    def __init__(self, bus, serve_dir, session_id=None):
+    def __init__(self, bus, serve_dir, session_id=None, review_store=None):
         self.bus = bus
         self.serve_dir = serve_dir
         self.session_id = session_id
         built = (
             model_tools.build(serve_dir)
             + viewer_tools.build(bus)
-            + review_tools.build(bus, serve_dir, session_id)
+            + review_tools.build(bus, serve_dir, session_id, store=review_store)
             + cad_tools.build(serve_dir)
         )
         super().__init__(built, grading=GRADING, bus=bus, paused_message=PAUSED_MESSAGE)

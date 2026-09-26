@@ -1,0 +1,232 @@
+{
+  "_about": "Review-tool outputs captured by running Annealage Mesh at commit 406b074 (before the review model moved into annealage-agent): tool metadata, results as the model reads them, and the callouts file as written. {serve_dir} stands for the served directory. tests/test_review_contract.py replays the same calls against the current code and requires these exactly.",
+  "meta": {
+    "list_comments": {
+      "description": "Read the human's submitted pin comments on the 3D model: each one's number, the part and face it is on, its point in model coordinates, and what they wrote. This is the feedback to act on. A pin the human has placed but not yet submitted is not here yet.",
+      "input_schema": {},
+      "json_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "list_callouts": {
+      "description": "Read the callouts currently pinned on the 3D model, the cyan markers the human sees, including any you added earlier and any a previous session left. Use it before add_callout to avoid repeating a note, and to find the id delete_callout takes.",
+      "input_schema": {},
+      "json_schema": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    "add_callout": {
+      "description": "Pin a note of your own at a point on the 3D model, which appears to the human as a numbered cyan marker in the viewer and a row in the review panel. This is how to point at a location instead of describing it: put the callout on the feature you are asking about or reporting on, and say what you mean in the comment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "where the marker goes, [x, y, z] in model coordinates, the same space as a pin's point"
+          },
+          "comment": {
+            "type": "string",
+            "description": "what you are saying about that point"
+          },
+          "part": {
+            "type": "string",
+            "description": "which part it is on, for the panel's label; a rel or a label from list_models"
+          },
+          "label": {
+            "type": "string",
+            "description": "the face direction, e.g. \"+Z\", if it helps"
+          }
+        },
+        "required": [
+          "point",
+          "comment"
+        ]
+      },
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "point": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "where the marker goes, [x, y, z] in model coordinates, the same space as a pin's point"
+          },
+          "comment": {
+            "type": "string",
+            "description": "what you are saying about that point"
+          },
+          "part": {
+            "type": "string",
+            "description": "which part it is on, for the panel's label; a rel or a label from list_models"
+          },
+          "label": {
+            "type": "string",
+            "description": "the face direction, e.g. \"+Z\", if it helps"
+          }
+        },
+        "required": [
+          "point",
+          "comment"
+        ]
+      }
+    },
+    "delete_callout": {
+      "description": "Remove one of the callouts pinned on the 3D model by its id, so a note you have finished with stops cluttering the viewer. Use list_callouts to see the ids.",
+      "input_schema": {
+        "id": "int"
+      },
+      "json_schema": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  },
+  "order": [
+    "list_models",
+    "model_info",
+    "get_view",
+    "set_view",
+    "fit_view",
+    "get_visibility",
+    "set_visibility",
+    "set_up_axis",
+    "select_pin",
+    "capture_view",
+    "measure",
+    "list_comments",
+    "list_callouts",
+    "add_callout",
+    "delete_callout",
+    "snapshot",
+    "export_transcript",
+    "mesh_verify",
+    "mesh_dimensions",
+    "mesh_dimensions_set"
+  ],
+  "list_comments_absent": {
+    "is_error": false,
+    "text": "the human has not submitted any pin comments yet (mesh-comments.json does not exist, or holds no annotations)"
+  },
+  "list_comments_skill": {
+    "is_error": false,
+    "text": "{\n  \"submitted_at\": \"2026-07-23T10:15:00+00:00\",\n  \"count\": 1,\n  \"annotations\": [\n    {\n      \"id\": 1,\n      \"part\": \"shroud\",\n      \"label\": \"+Z\",\n      \"point\": [\n        12.4,\n        -3.1,\n        8.0\n      ],\n      \"normal\": [\n        0.0,\n        0.0,\n        1.0\n      ],\n      \"faceIndex\": 1523,\n      \"comment\": \"this wall looks too thin\"\n    }\n  ]\n}"
+  },
+  "list_comments_empty": {
+    "is_error": false,
+    "text": "{\n  \"submitted_at\": \"x\",\n  \"count\": 0,\n  \"annotations\": []\n}"
+  },
+  "list_comments_unparseable": {
+    "is_error": false,
+    "text": "the human has not submitted any pin comments yet (mesh-comments.json does not exist, or holds no annotations)"
+  },
+  "list_callouts_absent": {
+    "is_error": false,
+    "text": "{\n  \"count\": 0,\n  \"annotations\": []\n}"
+  },
+  "list_callouts_skill": {
+    "is_error": false,
+    "text": "{\n  \"count\": 1,\n  \"annotations\": [\n    {\n      \"id\": 1,\n      \"author\": \"agent\",\n      \"part\": \"shroud\",\n      \"label\": \"+Z\",\n      \"point\": [\n        12.4,\n        -3.1,\n        8.0\n      ],\n      \"comment\": \"widened this wall 1.2mm -> 2mm, please confirm clearance\"\n    }\n  ]\n}"
+  },
+  "list_callouts_bare": {
+    "is_error": false,
+    "text": "{\n  \"count\": 1,\n  \"annotations\": [\n    {\n      \"id\": 1,\n      \"author\": \"agent\",\n      \"part\": \"shroud\",\n      \"label\": \"+Z\",\n      \"point\": [\n        12.4,\n        -3.1,\n        8.0\n      ],\n      \"comment\": \"widened this wall 1.2mm -> 2mm, please confirm clearance\"\n    }\n  ]\n}"
+  },
+  "list_callouts_unparseable": {
+    "is_error": true,
+    "text": "mesh-callouts.json exists but does not parse as JSON; read the file to see what is in it"
+  },
+  "add_first": {
+    "is_error": false,
+    "text": "{\n  \"added\": {\n    \"author\": \"agent\",\n    \"point\": [\n      1.0,\n      2.5,\n      3.0\n    ],\n    \"comment\": \"moved this wall out 2mm\",\n    \"part\": \"bracket\",\n    \"label\": \"+Y\",\n    \"id\": 1\n  },\n  \"count\": 1,\n  \"path\": \"{serve_dir}/mesh-callouts.json\"\n}"
+  },
+  "add_first_file": "{\n  \"annotations\": [\n    {\n      \"author\": \"agent\",\n      \"point\": [\n        1.0,\n        2.5,\n        3.0\n      ],\n      \"comment\": \"moved this wall out 2mm\",\n      \"part\": \"bracket\",\n      \"label\": \"+Y\",\n      \"id\": 1\n    }\n  ]\n}\n",
+  "add_to_skill": {
+    "is_error": false,
+    "text": "{\n  \"added\": {\n    \"author\": \"agent\",\n    \"point\": [\n      0.0,\n      0.0,\n      1000.0\n    ],\n    \"comment\": \"new\",\n    \"id\": 2\n  },\n  \"count\": 2,\n  \"path\": \"{serve_dir}/mesh-callouts.json\"\n}"
+  },
+  "add_to_skill_file": "{\n  \"annotations\": [\n    {\n      \"id\": 1,\n      \"author\": \"agent\",\n      \"part\": \"shroud\",\n      \"label\": \"+Z\",\n      \"point\": [\n        12.4,\n        -3.1,\n        8.0\n      ],\n      \"comment\": \"widened this wall 1.2mm -> 2mm, please confirm clearance\"\n    },\n    {\n      \"author\": \"agent\",\n      \"point\": [\n        0.0,\n        0.0,\n        1000.0\n      ],\n      \"comment\": \"new\",\n      \"id\": 2\n    }\n  ]\n}\n",
+  "delete_1": {
+    "is_error": false,
+    "text": "{\n  \"deleted\": 1,\n  \"count\": 1,\n  \"path\": \"{serve_dir}/mesh-callouts.json\"\n}"
+  },
+  "delete_1_file": "{\n  \"annotations\": [\n    {\n      \"author\": \"agent\",\n      \"point\": [\n        0.0,\n        0.0,\n        1000.0\n      ],\n      \"comment\": \"new\",\n      \"id\": 2\n    }\n  ]\n}\n",
+  "delete_missing": {
+    "is_error": true,
+    "text": "no callout with id 9; the ids present are: 2"
+  },
+  "delete_bool": {
+    "is_error": true,
+    "text": "id must be a callout id, as reported by list_callouts"
+  },
+  "delete_str": {
+    "is_error": true,
+    "text": "id must be a callout id, as reported by list_callouts"
+  },
+  "add_bad_point_len": {
+    "is_error": true,
+    "text": "point must be an array of exactly three numbers, [x, y, z] in model coordinates"
+  },
+  "add_bad_point_type": {
+    "is_error": true,
+    "text": "point must be an array of exactly three numbers, [x, y, z] in model coordinates"
+  },
+  "add_bad_point_values": {
+    "is_error": true,
+    "text": "point must be three numbers, got [1, 'a', 3]"
+  },
+  "add_no_point": {
+    "is_error": true,
+    "text": "point must be an array of exactly three numbers, [x, y, z] in model coordinates"
+  },
+  "add_empty_comment": {
+    "is_error": true,
+    "text": "comment must say what you mean about that point; a callout with no comment is a marker the human cannot interpret"
+  },
+  "add_no_comment": {
+    "is_error": true,
+    "text": "comment must say what you mean about that point; a callout with no comment is a marker the human cannot interpret"
+  },
+  "add_unparseable": {
+    "is_error": true,
+    "text": "mesh-callouts.json exists but does not parse as JSON, so appending to it would discard whatever is in it; read it and fix it first"
+  },
+  "delete_unparseable": {
+    "is_error": true,
+    "text": "mesh-callouts.json does not parse as JSON, so nothing can be deleted from it"
+  },
+  "add_at_cap": {
+    "is_error": true,
+    "text": "there are already 200 callouts, which is this tool's limit; delete some with delete_callout before adding more"
+  },
+  "add_below_cap": {
+    "is_error": false,
+    "text": "{\n  \"added\": {\n    \"author\": \"agent\",\n    \"point\": [\n      0.0,\n      0.0,\n      1.0\n    ],\n    \"comment\": \"mine\",\n    \"id\": 200\n  },\n  \"count\": 200,\n  \"path\": \"{serve_dir}/mesh-callouts.json\"\n}"
+  },
+  "add_symlink": {
+    "is_error": true,
+    "text": "refusing to write mesh-callouts.json: it is not a plain, single-linked file"
+  },
+  "list_callouts_symlink": {
+    "is_error": false,
+    "text": "{\n  \"count\": 0,\n  \"annotations\": []\n}"
+  }
+}

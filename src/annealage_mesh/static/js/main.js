@@ -83,15 +83,23 @@ initSketch({ container: appEl, captureView: scene3d.captureView,
 // The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
 // the socket is not live; ws.js owns that decision, pins.js only owns the
 // poll's mechanics, so the poll's controls cross the boundary here.
+//
+// `review_changed` is the agent layer's generic push for a change to either
+// comment file (the review watcher over Mesh's review store). The callouts
+// are still fetched from Mesh's own /callouts, not through the agent layer's
+// review client: that route serves mesh-callouts.json verbatim to anything,
+// token or not, which the fallback poll and the published file contract both
+// rely on. A push after a Submit refetches an unchanged list, which pins.js's
+// signature check turns into no change at all.
 wsApi = initWs({
   onEvent: {
-    callouts_changed: () => pinsApi.refetchCallouts(),
+    review_changed: () => pinsApi.refetchCallouts(),
     models_changed: () => modelsApi.refetchModels(),
   },
   onLive: () => {
     pinsApi.stopCalloutsPoll();
     // One refetch of each on every (re)connect, in addition to reacting to
-    // their events above: a `callouts_changed` or `models_changed` pushed
+    // their events above: a `review_changed` or `models_changed` pushed
     // while the socket was down is not in the replay this page will act on
     // once it is older than the server's ring, so a callout written or a part
     // regenerated during the gap would otherwise stay stale until something

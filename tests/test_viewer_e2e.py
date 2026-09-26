@@ -1169,6 +1169,56 @@ def test_permission_card_allow_reaches_the_session(browser, chat_server):
         page.close()
 
 
+def test_a_request_that_is_never_remembered_offers_no_always_allow(browser, chat_server):
+    """A request the broker will never remember an "always allow" for
+    (resolving one of the human's review comments) arrives with
+    `rememberable: false`, and its card offers Allow and Deny only. An
+    ordinary card beside it keeps all three buttons."""
+    server, session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_41",
+                tool="mcp__mesh__resolve_comment",
+                input={"id": 3, "note": "made it 2mm"},
+                rememberable=False,
+            ),
+        )
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_42", tool="Write", input={"file_path": "a.py"}
+            ),
+        )
+        once = "div.permcard[data-request-id='pr_41']"
+        ordinary = "div.permcard[data-request-id='pr_42']"
+        page.wait_for_selector(once)
+        page.wait_for_selector(ordinary)
+        assert page.locator(once + " .pactions button").all_inner_texts() == ["Allow", "Deny"]
+        assert page.locator(ordinary + " .pactions button").all_inner_texts() == [
+            "Allow",
+            "Always allow (this project)",
+            "Deny",
+        ]
+
+        # Deny is still the button that denies.
+        page.click(once + " .pactions button:nth-of-type(2)")
+        _wait_until(
+            lambda: len(session.permission_decisions) == 1,
+            message="the deny decision never reached AgentSession.decide_permission",
+        )
+        assert session.permission_decisions[0] == ("pr_41", "deny", "")
+    finally:
+        page.close()
+
+
 def test_a_decision_that_did_not_apply_says_so(browser, chat_server):
     """The bug this pairing exists to prevent: a human denies a card that
     another view has already allowed. The deny changed nothing, and without the

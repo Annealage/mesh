@@ -1,44 +1,45 @@
-"""Mesh's application: the agent layer's app plus the viewer, and the two
-watchers that tell the page when the served files change.
+"""Mesh's application: the agent layer's app plus the viewer, and the watcher
+that tells the page when its models change.
 
 ``create_app`` builds the agent layer's app (``annealage_agent/app.py``) for one served
 directory with Mesh's pieces plugged in: the viewer routes
-(``http/routes_viewer.py``), Mesh's tool server, and the viewer page whose
+(``http/routes_viewer.py``), Mesh's tool server, Mesh's review store
+(``review.py``, the two published comment files) and the viewer page whose
 inline script the Content-Security-Policy hashes. ``run`` serves it with the
-callouts and models watchers running beside it. A fresh app per call means
-independent served directories never share route state, which matters for
-tests.
+models watcher running beside it; the agent layer runs the review watcher,
+which pushes ``review_changed`` when either comment file changes. A fresh app
+per call means independent served directories never share route state, which
+matters for tests.
 """
 
 import asyncio
 import hashlib
-import json
 import os
 import pathlib
 import time
 
 from annealage_agent import app as agent_app
-from annealage_agent import files, net, protocol
+from annealage_agent import net, protocol
 
 from . import (
     paths,
     product,  # noqa: F401  (installs Mesh as this process's product)
     stl,
 )
-from .events import CalloutsChanged, ModelsChanged
+from .events import ModelsChanged
 from .http.routes_viewer import VIEWER_HTML, register_routes
+from .review import MeshFilesStore
 
 # The port used when a caller does not name one. Kept here rather than only in
 # argparse so an app built directly, as the tests do, computes the same
 # Origin and Host allowlists the command line would.
 DEFAULT_PORT = 8765
 
-# How often the callouts file is checked, and how long a file that keeps
-# changing without ever parsing is waited on before an event is pushed
-# anyway. One stat-and-read of a small JSON file every quarter second is
-# cheaper than an inotify dependency and behaves the same on every platform.
-CALLOUTS_POLL_INTERVAL = 0.25
-CALLOUTS_MAX_DEFER = 5.0
+# How often the models are checked, and how long a model that keeps changing
+# without ever parsing is waited on before an event is pushed anyway. The
+# same period the agent layer's review watcher samples the comment files at.
+MODELS_POLL_INTERVAL = 0.25
+MODELS_MAX_DEFER = 5.0
 
 
 def create_app(
@@ -70,6 +71,10 @@ def create_app(
     resumed, per plan section 3.4), or None for viewer-only. It is set for
     agent mode and None for viewer-only, which is also what tells /submit
     whether to require the token.
+
+    The review store is built here, once, so the review tools, ``/review``
+    and the review watcher share one instance; the viewer's own ``/callouts``
+    and ``/submit`` go on reading and writing the same two files directly.
     """
 
     def _register_viewer_routes(app, allowed_origins):
@@ -94,123 +99,8 @@ def create_app(
         register_routes=_register_viewer_routes,
         settings=settings,
         login=login,
+        review_store=MeshFilesStore(serve_dir),
     )
-
-
-def _callouts_state(serve_dir):
-    """Return ``(digest, parses)`` for the callouts file as it is right now.
-
-    The change signal is a digest of the bytes actually read, not the file's
-    size and modification time. A digest cannot miss a rewrite that happens to
-    preserve both, and it removes the gap between deciding a file changed and
-    reading what it changed to, because there is only one read. Reading goes
-    through ``files.read_fixed_file``, so a symlink, a hard link or a FIFO left
-    at that name is refused here exactly as it is on the ``/callouts`` route.
-
-    ``parses`` is the readiness test. The agent writes this file directly and
-    the published skill does not require it to do so atomically, so a change
-    can be observed mid-write. Stability of a stat signature across two
-    samples does not prove a write finished: a same-size rewrite, or a stall
-    inside one ``write`` call, produces two identical samples of an
-    incomplete file. Whether the bytes parse as JSON does prove it, for every
-    incomplete write that is not itself coincidentally valid JSON.
-    """
-    raw = files.read_fixed_file(serve_dir, paths.CALLOUTS_JSON_NAME)
-    if raw is None:
-        return None, True
-    digest = hashlib.sha256(raw).hexdigest()
-    try:
-        json.loads(raw.decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
-        return digest, False
-    return digest, True
-
-
-class CalloutsWatcher:
-    """Pushes ``callouts_changed`` when the callouts file's contents change.
-
-    This is what replaces the browser's own 1.5 s poll. The event carries no
-    payload and the browser refetches ``/callouts`` for itself, because pushing
-    the content would give that state two writers in the page, which the
-    front-end store contract exists to prevent.
-
-    The state machine is ``tick``, which takes the current time as a parameter
-    rather than reading a clock, and the sleeping loop is ``run``. Splitting
-    them is what lets the deferral rule below be tested by calling ``tick``
-    with the times a test chooses, instead of by sleeping and hoping.
-    """
-
-    def __init__(
-        self,
-        serve_dir,
-        registry,
-        event_log,
-        interval=CALLOUTS_POLL_INTERVAL,
-        max_defer=CALLOUTS_MAX_DEFER,
-    ):
-        self._serve_dir = serve_dir
-        self._registry = registry
-        self._event_log = event_log
-        self._interval = interval
-        self._max_defer = max_defer
-        # The first tick records what it finds and announces nothing: this
-        # watcher reports changes since it started, and the state it starts in
-        # is already covered by the page's own fetch on load. Without that,
-        # every start with a callouts file already present would push an event
-        # telling the browser to refetch what it had just fetched, and every
-        # start without one would push an event about a file that does not
-        # exist. ``None`` is a real announced value, meaning "absent", so a
-        # deletion is a change; that is why this is a separate flag rather
-        # than a sentinel in ``_announced``.
-        self._primed = False
-        self._announced = None
-        self._unstable_since = None
-
-    async def tick(self, now):
-        """Sample the file once and broadcast if it changed and looks settled.
-
-        Returns True if an event was broadcast, which is what the tests assert
-        on. A change whose bytes do not yet parse is waited on rather than
-        announced, but only up to ``max_defer``: a file being rewritten
-        continuously never looks settled, and a watcher that waits for quiet
-        that never comes is a watcher that never fires. Past that bound the
-        event goes out anyway, which is safe because the browser tolerates a
-        callouts fetch that fails to parse and the next change produces
-        another event.
-        """
-        loop = asyncio.get_running_loop()
-        try:
-            digest, parses = await loop.run_in_executor(None, _callouts_state, self._serve_dir)
-        except OSError:
-            # A read that fails outright (a permission change, a directory
-            # replacing the file) is left for the next tick rather than
-            # treated as a change: there is nothing to tell the browser to
-            # refetch, and /callouts will report the same failure itself.
-            return False
-        if not self._primed:
-            self._primed = True
-            self._announced = digest
-            return False
-        if digest == self._announced:
-            self._unstable_since = None
-            return False
-        if not parses:
-            if self._unstable_since is None:
-                self._unstable_since = now
-            if now - self._unstable_since < self._max_defer:
-                return False
-        self._announced = digest
-        self._unstable_since = None
-        event = CalloutsChanged()
-        seq = self._event_log.append(event)
-        await self._registry.broadcast(protocol.build_event(seq, event.to_wire()))
-        return True
-
-    async def run(self):
-        loop = asyncio.get_running_loop()
-        while True:
-            await asyncio.sleep(self._interval)
-            await self.tick(loop.time())
 
 
 # How recently a model must have been written for its timestamp to be treated
@@ -310,18 +200,20 @@ def _model_is_complete(serve_dir, rel):
 class ModelsWatcher:
     """Pushes ``models_changed`` when a model is added, regenerated or removed.
 
-    Shares ``CalloutsWatcher``'s shape deliberately, including the split between
-    ``tick`` (which is handed the time) and ``run`` (which sleeps), so the
-    deferral rule is testable by calling ``tick`` with chosen times rather than
-    by sleeping and hoping.
+    Shares the agent layer's ``ReviewWatcher``'s shape deliberately (it
+    started as Mesh's callouts watcher), including the split between ``tick``
+    (which is handed the time) and ``run`` (which sleeps), so the deferral
+    rule is testable by calling ``tick`` with chosen times rather than by
+    sleeping and hoping.
 
-    The deferral matters more here than for callouts. An agent regenerating a
-    model writes a file that is large enough to be observed half-written, and
-    announcing that moment would make the viewer fetch a truncated STL and
-    report a load failure for a part that is about to be perfectly fine. So a
-    changed model is waited on until it parses, bounded by ``max_defer`` for the
-    same reason as callouts: a file being rewritten continuously never looks
-    settled, and a watcher that waits for quiet that never comes never fires.
+    The deferral matters more here than for the comment files. An agent
+    regenerating a model writes a file that is large enough to be observed
+    half-written, and announcing that moment would make the viewer fetch a
+    truncated STL and report a load failure for a part that is about to be
+    perfectly fine. So a changed model is waited on until it parses, bounded
+    by ``max_defer`` for the same reason as there: a file being rewritten
+    continuously never looks settled, and a watcher that waits for quiet that
+    never comes never fires.
     """
 
     def __init__(
@@ -329,8 +221,8 @@ class ModelsWatcher:
         serve_dir,
         registry,
         event_log,
-        interval=CALLOUTS_POLL_INTERVAL,
-        max_defer=CALLOUTS_MAX_DEFER,
+        interval=MODELS_POLL_INTERVAL,
+        max_defer=MODELS_MAX_DEFER,
         invalidate_index=None,
     ):
         self._serve_dir = serve_dir
@@ -420,11 +312,11 @@ async def run(
     """Serve ``serve_dir`` on ``host``:``port`` until interrupted.
 
     The serving itself is the agent layer's ``serve`` (see it for when
-    ``on_ready`` fires and how shutdown drains). What Mesh adds is the two
-    watchers, started after the session: the callouts file, and the models
-    themselves, because a regenerated model is the agent changing the subject
-    of the conversation, and a viewer showing the previous geometry is showing
-    something that no longer exists.
+    ``on_ready`` fires and how shutdown drains), which also runs the review
+    watcher over the two comment files. What Mesh adds is the models watcher,
+    started after the session, because a regenerated model is the agent
+    changing the subject of the conversation, and a viewer showing the
+    previous geometry is showing something that no longer exists.
     """
     app = create_app(
         serve_dir,
@@ -444,7 +336,6 @@ async def run(
         port,
         on_ready=on_ready,
         background=(
-            CalloutsWatcher(serve_dir, app.agent_registry, app.agent_event_log).run,
             ModelsWatcher(
                 serve_dir,
                 app.agent_registry,
