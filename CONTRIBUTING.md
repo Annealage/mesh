@@ -19,11 +19,11 @@ Signed-off-by: Your Name <you@example.com>
 - One logical change per pull request. Small focused PRs are easier to review and revert.
 - Include a test or a reproducer in the same PR where it is reasonable to do so.
 - Run `uv run --extra dev pytest -q` locally before pushing.
-- Install the pre-commit hook once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit`. CI's `lint` job runs the identical hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
+- Install the pre-commit hooks once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit` and a commit message without a `Signed-off-by:` line is rejected. CI's `lint` job runs the identical ruff hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
 
 ## Contribution licensing
 
-Annealage Mesh is offered under the PolyForm Noncommercial License 1.0.0, except for the Claude Code skill under `skill/annealage-mesh/`, which is offered under the MIT License. Andrew Leech also offers commercial licences to organisations whose use is not permitted under the PolyForm Noncommercial License. For that dual model to work, contributions need a clear licensing grant; otherwise contributed code could not be offered under a commercial licence without re-asking every contributor.
+Annealage Mesh is offered under the PolyForm Noncommercial License 1.0.0, except for the Claude Code skill under `skill/annealage-mesh/`, which is offered under the MIT License, and the vendored three.js files under `src/annealage_mesh/static/js/vendor/`, which are the three.js authors' work under the MIT License. Andrew Leech also offers commercial licences to organisations whose use is not permitted under the PolyForm Noncommercial License. For that dual model to work, contributions need a clear licensing grant; otherwise contributed code could not be offered under a commercial licence without re-asking every contributor.
 
 By submitting a contribution (a pull request, patch, or any change) to this project, you agree to the following.
 
@@ -35,7 +35,7 @@ You certify the contribution under the Developer Certificate of Origin 1.1 (<htt
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
-(`git commit -s` adds this line.) The sign-off certifies that you wrote the contribution or otherwise have the right to submit it under the terms below.
+(`git commit -s` adds this line.) The sign-off certifies that you wrote the contribution or otherwise have the right to submit it under the terms below. It is mandatory: the `verifygitlog` CI workflow checks every commit in a pull request, and every commit pushed to `main`, and fails if any lacks a `Signed-off-by:` line.
 
 ### Licence grant
 
@@ -45,7 +45,7 @@ You confirm you have the right to grant this licence (the contribution is your o
 
 ### Outbound licence
 
-Your contribution is also made available to the public under the outbound licence of the path it touches: MIT for `skill/annealage-mesh/`, PolyForm Noncommercial 1.0.0 everywhere else. Your own rights to your contribution are not otherwise affected; you retain copyright in your work.
+Your contribution is also made available to the public under the outbound licence of the path it touches: MIT for `skill/annealage-mesh/`, PolyForm Noncommercial 1.0.0 everywhere else. The vendored three.js files under `src/annealage_mesh/static/js/vendor/` stay under the three.js authors' MIT License. Change them upstream, not here. Your own rights to your contribution are not otherwise affected; you retain copyright in your work.
 
 ### Other terms
 

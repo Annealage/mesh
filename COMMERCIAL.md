@@ -2,7 +2,9 @@
 
 Annealage Mesh is published under the **PolyForm Noncommercial License 1.0.0** (see [LICENSE](LICENSE)) for noncommercial use only. This document explains when a commercial licence is required and how to obtain one.
 
-The Claude Code skill under [`skill/annealage-mesh/`](skill/annealage-mesh/) is separately licensed under the MIT License (see [skill/annealage-mesh/LICENSE](skill/annealage-mesh/LICENSE)) so it can be copied into any agent configuration without restriction. Everything else in this repository is PolyForm Noncommercial.
+The Claude Code skill under [`skill/annealage-mesh/`](skill/annealage-mesh/) is separately licensed under the MIT License (see [skill/annealage-mesh/LICENSE](skill/annealage-mesh/LICENSE)) so it can be copied into any agent configuration without restriction. The vendored three.js files in [`src/annealage_mesh/static/js/vendor/`](src/annealage_mesh/static/js/vendor/) are © the three.js authors under the MIT License (see [the LICENSE file there](src/annealage_mesh/static/js/vendor/LICENSE)) and are not covered by the PolyForm Noncommercial License or by any commercial licence from the Licensor. Everything else in this repository is PolyForm Noncommercial.
+
+A commercial licence covers the Licensor's own code only. Third-party dependencies are licensed by their owners, under their own licences and terms. In particular, the Claude Agent SDK (MIT, with its use governed by Anthropic's [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms)) and the Claude Code CLI it bundles (© Anthropic PBC, all rights reserved) are subject to Anthropic's terms, including when you use them to power products and services you make available to your own customers, and the Codex and omp backends to their own terms.
 
 ## When a commercial licence is required
 
@@ -21,7 +23,7 @@ These are illustrations of commercial-purpose use, not an exhaustive list. If yo
 
 Any noncommercial purpose is permitted free of charge under the PolyForm Noncommercial License. This includes:
 
-- Personal projects, hobby work, amateur pursuits, and private experimentation.
+- Personal projects, hobby work, amateur pursuits, religious observance, private entertainment, and private experimentation.
 - Education, including teaching, coursework, and student projects (whether or not the student is paid as a teaching assistant).
 - Academic research and experimentation, including funded research at universities and public research institutions.
 - Use by charitable organisations, government agencies, public research institutions, public safety and health organisations, and environmental protection organisations, regardless of funding source.

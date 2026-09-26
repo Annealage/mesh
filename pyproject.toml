@@ -8,8 +8,14 @@ dynamic = ["version"]
 description = "Build 3D-printable parts with an agent: a local 3D viewer beside a chat pane, where regenerated models appear live and feedback is pinned to exact coordinates"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "PolyForm-Noncommercial-1.0.0"
-license-files = ["LICENSE", "skill/annealage-mesh/LICENSE"]
+# The wheel ships the vendored three.js files (MIT, the three.js authors)
+# beside this project's own PolyForm code, so the expression names both.
+license = "PolyForm-Noncommercial-1.0.0 AND MIT"
+license-files = [
+    "LICENSE",
+    "src/annealage_mesh/static/js/vendor/LICENSE",
+    "skill/annealage-mesh/LICENSE",
+]
 authors = [
     { name = "Andrew Leech", email = "andrew@alelec.net" },
 ]
@@ -158,6 +164,7 @@ include = [
     "tools",
     "README.md",
     "LICENSE",
+    "LICENSES",
     "COMMERCIAL.md",
     "CONTRIBUTING.md",
     "REUSE.toml",
