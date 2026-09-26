@@ -2159,12 +2159,13 @@ def test_an_oversized_or_wrong_typed_drop_is_refused_without_a_request(browser, 
 
 
 def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_server):
-    """Fact 7's consequence: the bubble's thumbnail is
-    built from the composer's own record (chat.js's `renderUserAttachments`),
-    never from the agent's echo of the turn, so its `src` is a plain
-    `/asset/<name>` string this test can also fetch directly, confirming the
-    route serves exactly the bytes the picker uploaded rather than merely
-    that some `<img>` tag exists.
+    """Fact 7's consequence: the bubble's thumbnail is built from the blocks
+    the page sent, which come back as the turn's `user_turn` event (chat.js's
+    `renderUserAttachments`), never from the agent's echo of the turn, so its
+    `src` is a plain `/asset/<name>` string this test can also fetch
+    directly, confirming the route serves exactly the bytes the picker
+    uploaded rather than merely that some `<img>` tag exists. No reply is
+    emitted: the server's `user_turn` alone puts the bubble on the page.
     """
     server, session = chat_server
     page = browser.new_page()
@@ -2183,13 +2184,6 @@ def test_a_sent_turns_user_bubble_shows_the_uploaded_thumbnail(browser, chat_ser
         page.wait_for_selector("#chatAttachStrip .attachchip .attachthumb:not([hidden])")
         page.click("#chatSend")
         _wait_until(lambda: len(session.submitted_turns) == 1)
-
-        # A turn row only exists once some event has touched its turn number
-        # (store.js's `ensureTurn`); TurnEnd is the event a real reply ends
-        # with.
-        _emit_on_loop(
-            server, session, session_base.TurnEnd(turn=1, stop_reason="end_turn", cost_usd=0.0)
-        )
 
         thumb = page.wait_for_selector("div.turn[data-turn='1'] .msg.user .attachthumbs img")
         src = thumb.get_attribute("src")

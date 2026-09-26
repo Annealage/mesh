@@ -99,11 +99,11 @@ wsApi = initWs({
   onLive: () => {
     pinsApi.stopCalloutsPoll();
     // One refetch of each on every (re)connect, in addition to reacting to
-    // their events above: a `review_changed` or `models_changed` pushed
-    // while the socket was down is not in the replay this page will act on
-    // once it is older than the server's ring, so a callout written or a part
-    // regenerated during the gap would otherwise stay stale until something
-    // else changed.
+    // their live events above: a `review_changed` or `models_changed` pushed
+    // while the socket was down comes back only in the replay, which the
+    // agent layer's ws.js does not hand to these handlers, so a callout
+    // written or a part regenerated during the gap would otherwise stay stale
+    // until something else changed.
     pinsApi.refetchCallouts();
     modelsApi.refetchModels();
   },
