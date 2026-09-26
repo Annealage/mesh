@@ -117,7 +117,11 @@ def test_an_agent_mode_run_writes_neither_token_to_its_lock(tmp_path, monkeypatc
     rc = cli.main(_lock_argv(tmp_path) + ["--no-git", "--token", "browser-secret"])
 
     assert rc == 0
-    assert json.loads(seen["record"]) == {"pid": os.getpid(), "port": 0}
+    record = json.loads(seen["record"])
+    assert (record["pid"], record["port"]) == (os.getpid(), 0)
+    # Beside pid and port only the boot id and start time the agent package
+    # adds where /proc has them: nothing a token could be.
+    assert set(record) <= {"pid", "port", "boot_id", "start_time"}
     assert "browser-secret" not in seen["record"]
     assert seen["agent_token"] not in seen["record"]
 
