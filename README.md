@@ -159,4 +159,4 @@ There's a skill in `skill/` that wires this up as a workflow for agents that sup
 
 [PolyForm Noncommercial 1.0.0](LICENSE), free to use for any noncommercial purpose. Commercial use needs a separate licence; see [COMMERCIAL.md](COMMERCIAL.md).
 
-The skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) is MIT, so it can be copied into any agent configuration without restriction.
+The skill in [`skill/annealage-mesh/`](skill/annealage-mesh/) is MIT, so it can be copied into any agent configuration without restriction. The three.js files vendored in [`src/annealage_mesh/static/js/vendor/`](src/annealage_mesh/static/js/vendor/) are the three.js authors' work under the MIT License (see the [LICENSE](src/annealage_mesh/static/js/vendor/LICENSE) there).

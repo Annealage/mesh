@@ -32,3 +32,13 @@ path = "src/annealage_mesh/static/js/vendor/**"
 precedence = "override"
 SPDX-FileCopyrightText = "2010-2023 three.js authors"
 SPDX-License-Identifier = "MIT"
+
+# VERSIONS.json in that directory is not upstream code: it is this project's
+# own provenance record, written by tools/refresh-vendor.sh. The later of two
+# matching override annotations wins, so this one takes it back out of the
+# three.js annotation above.
+[[annotations]]
+path = "src/annealage_mesh/static/js/vendor/VERSIONS.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Andrew Leech"
+SPDX-License-Identifier = "PolyForm-Noncommercial-1.0.0"
