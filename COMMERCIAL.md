@@ -4,6 +4,8 @@ Annealage Mesh is published under the **PolyForm Noncommercial License 1.0.0** (
 
 The Claude Code skill under [`skill/annealage-mesh/`](skill/annealage-mesh/) is separately licensed under the MIT License (see [skill/annealage-mesh/LICENSE](skill/annealage-mesh/LICENSE)) so it can be copied into any agent configuration without restriction. The vendored three.js files in [`src/annealage_mesh/static/js/vendor/`](src/annealage_mesh/static/js/vendor/) are © the three.js authors under the MIT License (see [the LICENSE file there](src/annealage_mesh/static/js/vendor/LICENSE)) and are not covered by the PolyForm Noncommercial License or by any commercial licence from the Licensor. Everything else in this repository is PolyForm Noncommercial.
 
+Annealage Mesh depends on `annealage-agent`, the Annealage embedded-agent package (also PolyForm Noncommercial). A commercial licence for Annealage Mesh includes `annealage-agent` for use with Annealage Mesh.
+
 A commercial licence covers the Licensor's own code only. Third-party dependencies are licensed by their owners, under their own licences and terms. In particular, the Claude Agent SDK (MIT, with its use governed by Anthropic's [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms)) and the Claude Code CLI it bundles (© Anthropic PBC, all rights reserved) are subject to Anthropic's terms, including when you use them to power products and services you make available to your own customers, and the Codex and omp backends to their own terms.
 
 ## When a commercial licence is required
