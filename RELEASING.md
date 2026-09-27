@@ -4,13 +4,27 @@ Annealage Mesh publishes to PyPI via GitHub Actions trusted publishing
 (OIDC), so there's no API token to store. First-time setup, then it's one
 release per version.
 
-**Blocked until `annealage-agent` is published.** Mesh's agent side is the
-separate `annealage-agent` package, which has no release yet: `pyproject.toml`
-resolves it from a sibling checkout (`[tool.uv.sources]`), and a wheel built
-that way would require a package no index has. The publish workflow refuses
-to build while that path source is present. Publishing the package, raising
-the `annealage-agent` floor to that release and deleting the sources table
-lifts the block.
+**The agent package ships inside the wheel.** Mesh's agent side is the
+separate `annealage-agent` package, which has no release on any index, and a
+published wheel can't depend on a path. So a Mesh wheel carries it:
+`hatch_build.py` copies `annealage_agent` from the `lib/agent` submodule, at
+the commit its gitlink pins, into the wheel beside `annealage_mesh`, and
+`pyproject.toml` declares the agent's runtime dependencies as Mesh's own. The
+published metadata names no `annealage-agent`, and the build refuses to run
+with `lib/agent` empty. A release therefore ships whatever agent commit
+`lib/agent` pins: bump it first (`tools/bump-agent.sh`, CONTRIBUTING.md) if
+the release should carry newer agent work, and push that agent commit to
+GitHub before tagging, since the publish workflow checks the submodule out
+from there.
+
+The installed wheel puts a top-level `annealage_agent` package into the
+environment with no distribution of its own. Installed beside another copy (a
+second product bundling the agent the same way, or `annealage-agent` itself),
+whichever installs last overwrites the other's files, and uninstalling either
+removes them for both. `uvx` and `uv tool install` give each tool its own
+environment, which avoids it. Once `annealage-agent` is published on its own,
+this goes back to an ordinary dependency: the hook, the sdist's `lib/agent`
+entries and the copied dependency list go, and Mesh requires that release.
 
 The version is not written down anywhere: `hatch-vcs` takes it from the git
 tag at build time, and `annealage_mesh.__version__` reads it back out of the
@@ -48,6 +62,9 @@ checking by hand when the packaging itself has changed:
     # the static assets actually shipped, since a gitignore pattern has
     # silently dropped them before (see the artifacts note in pyproject.toml)
     unzip -l dist/*.whl | grep -c static/
+    # the agent package is in the wheel, and its metadata doesn't require it
+    unzip -l dist/*.whl | grep -c annealage_agent/
+    unzip -p dist/*.whl '*.dist-info/METADATA' | grep '^Requires-Dist: annealage'   # prints nothing
 
 The version in those filenames will be a dev version (`1.0.1.dev34`) unless you
 are exactly on a tag. That is expected: `local_scheme = "no-local-version"`
