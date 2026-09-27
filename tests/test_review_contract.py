@@ -339,6 +339,7 @@ async def test_get_review_maps_both_files_onto_the_shared_model(project):
         "can_delete_own": True,
         "human_adds_via_api": False,
         "human_sets_status": False,
+        "can_update_anchors": False,
         "max_open_model_callouts": 200,
     }
     assert body["comments"] == [
