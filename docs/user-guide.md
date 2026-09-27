@@ -321,7 +321,7 @@ Three buttons:
 
 A card stays on screen, dimmed, while your decision is in flight, and disappears when the server confirms it. If you have the same card open on a phone and a laptop and answer on both, the second one is told its decision did not apply and what happened instead, rather than silently appearing to work.
 
-If nothing is left to answer a request, because every browser closed, the request is denied and the agent is told why. Requests also expire after five minutes.
+If nothing is left to answer a request, because every browser closed, the request is denied and the agent is told why. Requests also expire after five minutes by default; the `approval_timeout` setting (seconds, in your user settings file or the Agent section of the settings window) changes that.
 
 ## Sessions
 
