@@ -43,7 +43,8 @@ classifiers = [
 # any index and a published wheel cannot depend on a path, so this wheel
 # bundles its `annealage_agent` package (hatch_build.py) and these are its
 # runtime dependencies, with its own ranges: its pyproject.toml gives the
-# reasons for each. Mesh's published metadata names no annealage-agent.
+# reasons for each. Mesh's published metadata names no annealage-agent. A wheel
+# refuses to build while one of them (or its codex extra's) is missing here.
 dependencies = [
     "microdot>=2.6,<3",
     # Mesh's own tool modules (tools/*_tools.py) declare their tools with the
@@ -143,6 +144,7 @@ include = [
     "/tools",
     "/hatch_build.py",
     "/lib/agent/src/annealage_agent",
+    "/lib/agent/pyproject.toml",
     "/lib/agent/LICENSE",
     "/README.md",
     "/LICENSE",
