@@ -18,7 +18,8 @@ Signed-off-by: Your Name <you@example.com>
 - Rebase onto current `main` before submitting; do not merge `main` into your branch.
 - One logical change per pull request. Small focused PRs are easier to review and revert.
 - Include a test or a reproducer in the same PR where it is reasonable to do so.
-- Run `uv run --extra dev pytest -q` locally before pushing. Until `annealage-agent` is published, uv resolves it from a sibling checkout (`../agent`, see `[tool.uv.sources]` in `pyproject.toml`), so check that repository out beside this one first.
+- Run `uv run --extra dev pytest -q` locally before pushing. uv installs `annealage-agent` from the git submodule `lib/agent` (`[tool.uv.sources]` in `pyproject.toml`), so clone with `--recurse-submodules`, or run `git submodule update --init` in an existing clone. The omp backend's tests also need `omp-rpc`, which isn't on PyPI and which `uv sync` removes: install it the way CI does (`.github/workflows/test.yml`).
+- The agent package is developed in its own repository, [Annealage/agent](https://github.com/Annealage/agent); `lib/agent` is a pinned checkout of it, not a place to make changes. To take a new agent commit into Mesh, commit it in your clone of that repository, run `tools/bump-agent.sh [REV]` (REV defaults to `main`, fetched from `$AGENT_DEV`, default `~/studio/agent`, pushed or not; it checks the commit out in `lib/agent` and stages the gitlink), and commit the bump. CI can only check the commit out once it's pushed to GitHub.
 - Install the pre-commit hooks once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit` and a commit message without a `Signed-off-by:` line is rejected. CI's `lint` job runs the identical ruff hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
 
 ## Contribution licensing

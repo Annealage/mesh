@@ -26,8 +26,9 @@ Or keep it around as a tool:
     # or
     pipx install annealage-mesh
 
-To run unreleased work instead, check this repository out beside [annealage-agent](#the-agent-package), the two as sibling directories (`mesh/` and `agent/`), and run from the checkout:
+To run unreleased work instead, clone this repository with its submodule ([annealage-agent](#the-agent-package), at `lib/agent`) and run from the checkout:
 
+    git clone --recurse-submodules https://github.com/Annealage/mesh.git
     cd mesh && uv run annealage-mesh ./path/to/part
 
 On Linux you'll also want `bubblewrap` and `socat`:
@@ -40,7 +41,7 @@ Python 3.10+. The chat pane, the agent backends, the permission cards and the re
 
 ### The agent package
 
-Everything agent-side (the chat pane and its front end, the Claude, Codex and omp sessions, the permission broker, workspace trust, secret-path protection, `/ws`, `/mcp`, settings) is the separate `annealage-agent` package, shared by the Annealage products; Mesh supplies its viewer, its tools and its settings on top. It has not been published yet, so uv resolves it from the sibling checkout (`[tool.uv.sources]` in `pyproject.toml`), and **a Mesh release is blocked until `annealage-agent` is published**: a path dependency cannot ship in a wheel, and the publish workflow refuses to upload one.
+Everything agent-side (the chat pane and its front end, the Claude, Codex and omp sessions, the permission broker, workspace trust, secret-path protection, `/ws`, `/mcp`, settings) is the separate `annealage-agent` package, shared by the Annealage products; Mesh supplies its viewer, its tools and its settings on top. It has not been published on its own: this repository carries it as the git submodule `lib/agent`, which uv installs from (`[tool.uv.sources]` in `pyproject.toml`), and **a Mesh release is blocked until `annealage-agent` is published**: a path dependency cannot ship in a wheel, and the publish workflow refuses to upload one.
 
 ### Agent backends
 
