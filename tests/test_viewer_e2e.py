@@ -2628,7 +2628,7 @@ def test_settings_window_lays_out_the_keys_the_server_declares(settings_server, 
         )
         assert sections == [
             ["Server", ["host", "port", "open_browser"]],
-            ["Agent", ["model", "effort", "permission_mode", "backend"]],
+            ["Agent", ["model", "effort", "permission_mode", "approval_timeout", "backend"]],
             ["Viewer", ["up_axis", "tool_cards_collapsed"]],
             ["Diagnostics", []],
         ]
