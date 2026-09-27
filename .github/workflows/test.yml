@@ -4,29 +4,15 @@ on:
   push:
   pull_request:
   # Called by publish.yml, so a release cannot upload an artifact built from a
-  # commit whose suite was never run. A called workflow receives none of its
-  # caller's secrets unless they are declared here and passed explicitly, and
-  # the annealage-agent checkout below needs this one (temporary, see the
-  # comment above `jobs:`).
+  # commit whose suite was never run.
   workflow_call:
-    secrets:
-      ANNEALAGE_AGENT_READ_TOKEN:
-        required: true
 
-# Temporary, until annealage-agent is published (an open decision): Mesh
-# depends on it through a uv path source, `../agent` (pyproject.toml's
-# [tool.uv.sources]), so every job that resolves Mesh's dependencies checks
-# Mesh out into mesh/ and the agent package beside it into agent/, and runs
-# from mesh/. The agent repository is private while the brand is, so its
-# checkout needs a token with read access to it (the
-# ANNEALAGE_AGENT_READ_TOKEN secret). Once the package is on an index this
-# goes back to one plain checkout and the sources table goes away.
+# annealage-agent is the git submodule lib/agent, which uv installs from
+# (pyproject.toml's [tool.uv.sources]), so every job that resolves Mesh's
+# dependencies checks submodules out. The agent repository is public.
 jobs:
   test:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mesh
     strategy:
       # Fail-fast off so one version's failure does not hide whether the others
       # pass, which is the whole reason for testing three of them.
@@ -39,19 +25,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          path: mesh
           # The version comes from the git tag (hatch-vcs), and the default
           # shallow checkout fetches none, which would build every install in
-          # this job as a 0.0.0 fallback.
+          # this job as a 0.0.0 fallback. The same goes for the agent's own
+          # version in lib/agent, so the submodule is fetched whole too.
           fetch-depth: 0
-
-      - name: check out annealage-agent beside mesh (temporary, see the top)
-        uses: actions/checkout@v7
-        with:
-          repository: Annealage/agent
-          path: agent
-          token: ${{ secrets.ANNEALAGE_AGENT_READ_TOKEN }}
-          fetch-depth: 0
+          submodules: true
 
       - uses: astral-sh/setup-uv@v10.1.0
         with:
@@ -67,8 +46,8 @@ jobs:
           # lockfile, so naming uv.lock here would key the cache on a file
           # that is never present.
           cache-dependency-glob: |
-            mesh/pyproject.toml
-            agent/pyproject.toml
+            pyproject.toml
+            lib/agent/pyproject.toml
 
       - name: install omp-rpc
         # Not a pyproject.toml extra: it is not on PyPI, and a direct git
@@ -139,22 +118,11 @@ jobs:
   # end at all, which is why it is a job and not an optional extra nobody runs.
   browser:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: mesh
     steps:
       - uses: actions/checkout@v7
         with:
-          path: mesh
           fetch-depth: 0
-
-      - name: check out annealage-agent beside mesh (temporary, see the top)
-        uses: actions/checkout@v7
-        with:
-          repository: Annealage/agent
-          path: agent
-          token: ${{ secrets.ANNEALAGE_AGENT_READ_TOKEN }}
-          fetch-depth: 0
+          submodules: true
 
       - uses: astral-sh/setup-uv@v10.1.0
         with:
@@ -164,8 +132,8 @@ jobs:
           # lockfile, so naming uv.lock here would key the cache on a file
           # that is never present.
           cache-dependency-glob: |
-            mesh/pyproject.toml
-            agent/pyproject.toml
+            pyproject.toml
+            lib/agent/pyproject.toml
 
       - name: install chromium
         run: uv run --extra dev --extra e2e playwright install --with-deps chromium

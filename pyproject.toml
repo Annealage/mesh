@@ -40,11 +40,11 @@ classifiers = [
 # claude-agent-sdk, mcp, httpx, platformdirs, tomli) with the reasons for each.
 #
 # The floor matches annealage-agent's hatch-vcs fallback version (0.0.0): the
-# package has no release yet, and uv resolves it from the sibling checkout named
-# in [tool.uv.sources] below. That source is a path, which cannot ship in this
-# package's published metadata, so a Mesh release is blocked until
-# annealage-agent is published (PyPI or a private index) and this floor names
-# a real release.
+# package has no release yet, and uv resolves it from the git submodule
+# lib/agent named in [tool.uv.sources] below. That source is a path, which
+# cannot ship in this package's published metadata, so a Mesh release is
+# blocked until annealage-agent is published (PyPI or a private index) and this
+# floor names a real release.
 dependencies = [
     "annealage-agent>=0.0.0",
     # Mesh's own tool modules (tools/*_tools.py) declare their tools with the
@@ -161,15 +161,12 @@ artifacts = [
     "src/annealage_mesh/static/**",
 ]
 
-# annealage-agent has no release yet, so uv resolves it from its sibling
-# checkout (../agent), editable so a change there is live here without a
-# reinstall. Temporary: a path source is uv-only and never reaches published
-# metadata, so a Mesh release waits on publishing annealage-agent (an open
-# decision), after which this table goes and the floor above names that
-# release. CI checks the sibling out beside this repository for the same
-# reason (.github/workflows/test.yml).
+# annealage-agent is the git submodule lib/agent, and uv installs it from
+# there, editable: the commit the gitlink pins is the agent Mesh runs, in a
+# checkout and in CI (which checks submodules out). tools/bump-agent.sh moves
+# it. A path source is uv-only and never reaches published metadata.
 [tool.uv.sources]
-annealage-agent = { path = "../agent", editable = true }
+annealage-agent = { path = "lib/agent", editable = true }
 
 # Ruff is the linter and the formatter for this project. Its F rules are
 # pyflakes, which is the check this codebase is written against; every other

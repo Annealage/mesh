@@ -4,6 +4,10 @@ version = 1
 # Authoritative, machine-readable companion to the LICENSE files. Resolves
 # the licence of any path, including files that cannot carry an inline SPDX
 # header (images, JSON, lockfiles, LICENSE itself).
+#
+# Not covered here: lib/agent is a git submodule (annealage-agent, a separate
+# repository that `reuse lint` skips), PolyForm Noncommercial 1.0.0 like this
+# one, with a REUSE.toml of its own.
 
 # The repository is PolyForm Noncommercial 1.0.0 by default.
 # precedence = "aggregate" means this applies to any file that does not
