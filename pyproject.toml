@@ -9,12 +9,15 @@ description = "Build 3D-printable parts with an agent: a local 3D viewer beside 
 readme = "README.md"
 requires-python = ">=3.10"
 # The wheel ships the vendored three.js files (MIT, the three.js authors)
-# beside this project's own PolyForm code, so the expression names both.
+# beside this project's own PolyForm code, so the expression names both. It
+# also ships the agent package (PolyForm, below), whose licence carries its
+# own required notice.
 license = "PolyForm-Noncommercial-1.0.0 AND MIT"
 license-files = [
     "LICENSE",
     "src/annealage_mesh/static/js/vendor/LICENSE",
     "skill/annealage-mesh/LICENSE",
+    "lib/agent/LICENSE",
 ]
 authors = [
     { name = "Andrew Leech", email = "andrew@alelec.net" },
@@ -35,42 +38,33 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 # The embedded agent (sessions for the Claude, Codex and omp backends, the
-# permission broker, the chat pane, /ws, /mcp and settings) is the separate
-# annealage-agent package, which carries its own runtime dependencies (microdot,
-# claude-agent-sdk, mcp, httpx, platformdirs, tomli) with the reasons for each.
-#
-# The floor matches annealage-agent's hatch-vcs fallback version (0.0.0): the
-# package has no release yet, and uv resolves it from the git submodule
-# lib/agent named in [tool.uv.sources] below. That source is a path, which
-# cannot ship in this package's published metadata, so a Mesh release is
-# blocked until annealage-agent is published (PyPI or a private index) and this
-# floor names a real release.
+# permission broker, the chat pane, /ws, /mcp and settings) is the
+# annealage-agent package, the git submodule lib/agent. It has no release on
+# any index and a published wheel cannot depend on a path, so this wheel
+# bundles its `annealage_agent` package (hatch_build.py) and these are its
+# runtime dependencies, with its own ranges: its pyproject.toml gives the
+# reasons for each. Mesh's published metadata names no annealage-agent.
 dependencies = [
-    "annealage-agent>=0.0.0",
+    "microdot>=2.6,<3",
     # Mesh's own tool modules (tools/*_tools.py) declare their tools with the
-    # SDK's `@tool` decorator, a direct import of this project's code, so it
-    # is declared here rather than relied on through annealage-agent. The
-    # range is annealage-agent's own (its pyproject.toml says why: 0.2.136 is
-    # the verified permission-broker contract, `<0.3` because `Transport` is
-    # internal). The SDK's wheel bundles a ~300 MB `claude` binary, so an
-    # install downloads roughly 90 MB of platform-specific wheel; this
-    # package's own wheel stays pure Python and platform-independent.
+    # SDK's `@tool` decorator as well. 0.2.136 is the verified
+    # permission-broker contract, `<0.3` because `Transport` is internal. The
+    # SDK's wheel bundles a ~300 MB `claude` binary, so an install downloads
+    # roughly 90 MB of platform-specific wheel; this package's own wheel stays
+    # pure Python and platform-independent.
     "claude-agent-sdk>=0.2.136,<0.3",
+    "mcp>=1.24,<2",
+    "httpx>=0.27,<1",
+    "anyio>=4.5,<5",
+    "platformdirs>=4,<5",
+    "tomli>=2;python_version<\"3.11\"",
 ]
 
 [project.optional-dependencies]
 # pre-commit>=4.6: no upper cap, matching pytest-asyncio's own convention
 # above - a stable CLI driver with no API this project imports, only ever
 # invoked as `pre-commit` (CONTRIBUTING.md, .pre-commit-config.yaml).
-#
-# microdot: Mesh's own code never imports it (the app and Response it serves
-# come from annealage-agent), but its tests do, directly (tests/conftest.py's
-# TestClient, tests/test_routes_viewer.py's Request) and rely on its
-# behaviour (TestClient's Host default, Request.create). A direct import of
-# this project's code is declared here rather than relied on through
-# annealage-agent, for the same reason as claude-agent-sdk above; the range
-# is annealage-agent's own.
-dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6", "microdot>=2.6,<3"]
+dev = ["pytest", "pytest-asyncio>=0.23", "pre-commit>=4.6"]
 # The browser suite, kept out of `dev` because it also needs a browser binary
 # installed separately (`playwright install chromium`), which is a much larger
 # download than the rest of the test dependencies put together. Declared rather
@@ -93,13 +87,18 @@ cad = ["trimesh", "numpy"]
 # Optional, unlike claude-agent-sdk, because it is an alternative backend
 # (the agent's `backend` setting) rather than the default: an install that
 # only ever runs the Claude backend should not pay for a second CLI it will
-# never invoke. The backend itself lives in annealage-agent, whose own `codex`
-# extra pins the openai-codex SDK and says why the range is that tight; this
-# extra only forwards to it, so `pip install "annealage-mesh[codex]"` keeps
-# working. The SDK's wheel bundles a pinned CLI runtime of its own
-# (`openai-codex-cli-bin`), so `uv sync --extra codex` downloads a second
-# platform-specific binary on top of the base install.
-codex = ["annealage-agent[codex]"]
+# never invoke. The range is annealage-agent's own `codex` extra's, whose
+# comment says why it is that tight. The SDK's wheel bundles a pinned CLI
+# runtime of its own (`openai-codex-cli-bin`), so `uv sync --extra codex`
+# downloads a second platform-specific binary on top of the base install.
+codex = ["openai-codex>=0.154,<1"]
+
+# A development checkout installs the agent package itself, editable from
+# lib/agent ([tool.uv.sources] below), rather than the copy a wheel bundles.
+# A dependency group, not an extra, so it never reaches published metadata;
+# `uv sync` and `uv run` install it by default ([tool.uv] below).
+[dependency-groups]
+agent = ["annealage-agent"]
 
 [project.scripts]
 annealage-mesh = "annealage_mesh.cli:main"
@@ -130,18 +129,27 @@ local_scheme = "no-local-version"
 [tool.hatch.build.targets.wheel]
 packages = ["src/annealage_mesh"]
 
+# hatch_build.py: a standard wheel also carries lib/agent's annealage_agent.
+[tool.hatch.build.targets.wheel.hooks.custom]
+
+# Anchored at the root: unanchored, "tests", "tools" or "LICENSE" would match
+# lib/agent's own too, and the sdist needs only the agent's package and its
+# licence from there.
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/annealage_mesh",
-    "skill",
-    "tests",
-    "tools",
-    "README.md",
-    "LICENSE",
-    "LICENSES",
-    "COMMERCIAL.md",
-    "CONTRIBUTING.md",
-    "REUSE.toml",
+    "/src/annealage_mesh",
+    "/skill",
+    "/tests",
+    "/tools",
+    "/hatch_build.py",
+    "/lib/agent/src/annealage_agent",
+    "/lib/agent/LICENSE",
+    "/README.md",
+    "/LICENSE",
+    "/LICENSES",
+    "/COMMERCIAL.md",
+    "/CONTRIBUTING.md",
+    "/REUSE.toml",
 ]
 
 # hatchling applies the repo .gitignore to package contents by default, so a
@@ -149,24 +157,30 @@ include = [
 # .gitignore has "lib/", "build/", "parts/" and "var/") would silently drop
 # out of both the sdist and the wheel. "artifacts" bypasses that VCS-ignore
 # filtering, so everything under static/ ships regardless of directory
-# naming (the agent's own front end, served at /agent/static/, ships in
-# annealage-agent's wheel, not this one). Both the sdist and the wheel targets
-# need this entry: the release workflow (.github/workflows/publish.yml) runs
-# plain `uv build`, which builds the wheel from the sdist it just produced
-# rather than from the working tree, so a wheel-only override here would ship
-# a wheel with the assets during local `--wheel` testing while the published
-# wheel, built from an sdist missing them, would silently drop them again.
+# naming, and the same goes for the agent's own front end (served at
+# /agent/static/), which the sdist carries for the wheel to bundle. Both the
+# sdist and the wheel targets need this entry: the release workflow
+# (.github/workflows/publish.yml) runs plain `uv build`, which builds the
+# wheel from the sdist it just produced rather than from the working tree, so
+# a wheel-only override here would ship a wheel with the assets during local
+# `--wheel` testing while the published wheel, built from an sdist missing
+# them, would silently drop them again.
 [tool.hatch.build]
 artifacts = [
     "src/annealage_mesh/static/**",
+    "lib/agent/src/annealage_agent/static/**",
 ]
 
 # annealage-agent is the git submodule lib/agent, and uv installs it from
-# there, editable: the commit the gitlink pins is the agent Mesh runs, in a
-# checkout and in CI (which checks submodules out). tools/bump-agent.sh moves
-# it. A path source is uv-only and never reaches published metadata.
+# there, editable (the `agent` dependency group): the commit the gitlink pins
+# is the agent Mesh runs, in a checkout and in CI (which checks submodules
+# out), and the one a wheel bundles. tools/bump-agent.sh moves it. A path
+# source is uv-only and never reaches published metadata.
 [tool.uv.sources]
 annealage-agent = { path = "lib/agent", editable = true }
+
+[tool.uv]
+default-groups = ["agent"]
 
 # Ruff is the linter and the formatter for this project. Its F rules are
 # pyflakes, which is the check this codebase is written against; every other

@@ -28,18 +28,10 @@ jobs:
           # shallow checkout fetches no tags at all: without this the release
           # would build and upload as the 0.0.0 fallback version.
           fetch-depth: 0
+          # The wheel bundles the agent package from the lib/agent submodule
+          # (hatch_build.py), and refuses to build without it.
+          submodules: true
       - uses: astral-sh/setup-uv@v10.1.0
-      - name: annealage-agent comes from an index
-        # Temporary, until annealage-agent is published (an open decision).
-        # While pyproject.toml resolves it from a sibling checkout
-        # ([tool.uv.sources]), the wheel built below would require an
-        # annealage-agent release no index has, and a version on PyPI cannot
-        # be replaced once uploaded, so the release is refused here instead.
-        run: |
-          if grep -q '^annealage-agent = { path' pyproject.toml; then
-            echo "annealage-agent is still a path dependency: publish it first"
-            exit 1
-          fi
       - name: build
         run: uv build
       - name: the built version matches the tag
