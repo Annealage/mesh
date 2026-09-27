@@ -170,14 +170,8 @@ async def test_agent_mode_writes_the_conversation_to_the_sessions_event_log(tmp_
 # ---------------------------------------------------------------------------
 
 
-async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(served_dir):
-    """``session_info["model"]`` is built once from ``settings`` at session
-    construction; without ``_event_publisher`` writing a live
-    ``AgentModelChanged`` back into that same dict, a browser tab connecting
-    after the switch only recovers the running model while the event
-    announcing it is still inside the replay ring buffer -- once evicted, a
-    fresh ``hello`` would permanently show the CLI-configured starting model
-    instead of what the session is actually running.
+async def _fresh_hello(app):
+    """Open one real ``/ws`` connection to ``app`` and return its ``hello``.
 
     ``TestClient.websocket()``'s fake socket drops anything the server sends
     before its own first ``read()``, which is exactly when ``hello`` is sent
@@ -193,8 +187,6 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
     from microdot.websocket import WebSocket
 
     from annealage_mesh import protocol
-    from annealage_mesh.session.base import AgentModelChanged
-    from annealage_mesh.session.fake import FakeSession
 
     class _RawSock:
         def __init__(self, initial_bytes):
@@ -234,28 +226,6 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
             offset = 10
         return opcode, frame_bytes[offset : offset + length]
 
-    built = []
-    from annealage_mesh import sessions
-
-    sid = sessions.create_session(served_dir)
-
-    def build_session(on_event, *, bus):
-        session = FakeSession(on_event, session_id=sid)
-        built.append(session)
-        return session
-
-    app = app_module.create_app(
-        served_dir,
-        token="tok",
-        mesh_session_id=sid,
-        build_session=build_session,
-        settings={"model": "claude-opus-4"},
-    )
-    # The live switch this fix keeps session_info current for -- a real
-    # driver emits this once its own control-plane set_model call takes
-    # effect (session/omp.py, session/sdk.py, session/codex.py all do).
-    built[0].emit(AgentModelChanged(model="claude-haiku-5"))
-
     client = make_test_client(app)
     headers = {
         "Upgrade": "websocket",
@@ -281,11 +251,68 @@ async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(s
     assert ws_frames, "the server never sent a hello frame"
     opcode, payload = _decode_text_frame(ws_frames[0])
     assert opcode == WebSocket.TEXT
-    hello = json.loads(payload)
-    # The property under test: a connection opened *after* the switch reads
-    # the live model, not the settings-time snapshot ("claude-opus-4") --
-    # even though this event has never left the still-full replay ring.
+    return json.loads(payload)
+
+
+def _app_with_fake_session(served_dir, status=None, **kwargs):
+    """Return ``(app, session)`` for a FakeSession-backed app on ``served_dir``,
+    with the session reporting ``status`` while the app is built."""
+    from annealage_mesh import sessions
+    from annealage_mesh.session.fake import FakeSession
+
+    built = []
+    sid = sessions.create_session(served_dir)
+
+    def build_session(on_event, *, bus):
+        session = FakeSession(on_event, session_id=sid)
+        if status is not None:
+            session.set_status(status)
+        built.append(session)
+        return session
+
+    app = app_module.create_app(
+        served_dir, token="tok", mesh_session_id=sid, build_session=build_session, **kwargs
+    )
+    return app, built[0]
+
+
+async def test_a_fresh_connection_after_a_live_model_switch_sees_the_new_model(served_dir):
+    """``session_info["model"]`` is built once from ``settings`` at session
+    construction; without ``_event_publisher`` writing a live
+    ``AgentModelChanged`` back into that same dict, a browser tab connecting
+    after the switch only recovers the running model while the event
+    announcing it is still inside the replay ring buffer -- once evicted, a
+    fresh ``hello`` would permanently show the CLI-configured starting model
+    instead of what the session is actually running.
+    """
+    from annealage_mesh.session.base import AgentModelChanged
+
+    app, session = _app_with_fake_session(served_dir, settings={"model": "claude-opus-4"})
+    # The live switch this fix keeps session_info current for -- a real
+    # driver emits this once its own control-plane set_model call takes
+    # effect (session/omp.py, session/sdk.py, session/codex.py all do).
+    session.emit(AgentModelChanged(model="claude-haiku-5"))
+
+    hello = await _fresh_hello(app)
+    # A connection opened *after* the switch reads the live model, not the
+    # settings-time snapshot ("claude-opus-4"), even though this event has
+    # never left the still-full replay ring.
     assert hello["session"]["model"] == "claude-haiku-5"
+
+
+async def test_a_fresh_connection_after_the_agent_starts_sees_it_ready(served_dir):
+    """The app snapshots ``agent_status()`` while the agent is still starting,
+    so a tab that connects once it is up has to get "ready" from the live
+    ``AgentStatus`` event, not the "connecting" it was built with."""
+    from annealage_mesh.session.base import AGENT_CONNECTING, AGENT_READY, AgentStatus
+
+    app, session = _app_with_fake_session(served_dir, status=AGENT_CONNECTING)
+
+    session.set_status(AGENT_READY)
+    session.emit(AgentStatus(status=AGENT_READY))
+
+    hello = await _fresh_hello(app)
+    assert hello["session"]["agent"] == AGENT_READY
 
 
 async def test_viewer_only_mode_writes_no_event_log(tmp_path):
