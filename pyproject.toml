@@ -184,6 +184,12 @@ annealage-agent = { path = "lib/agent", editable = true }
 [tool.uv]
 default-groups = ["agent"]
 
+# A bare `pytest` (CI's) collects Mesh's own suite only. lib/agent is the agent
+# package's checkout, whose tests install a toy product of their own and run in
+# its own CI; collecting them here fails the moment Mesh's product is installed.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 # Ruff is the linter and the formatter for this project. Its F rules are
 # pyflakes, which is the check this codebase is written against; every other
 # family below is selected deliberately rather than left to whatever a future

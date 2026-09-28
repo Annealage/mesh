@@ -893,7 +893,7 @@ def test_protocol_version_mismatch_closes_with_code_4400(browser, token_mesh_ser
 # 11. No token in the URL: the page ends refused, not stuck connecting -----
 
 
-def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh_server):
+def test_no_token_in_url_ends_refused_with_the_sign_in_message(browser, token_mesh_server):
     """Per the M4 brief, fact 2: an auth failure on /ws is an HTTP 403
     before any upgrade, never a close code, so the browser's WebSocket API
     (per fact 2's own consequence) cannot see why the handshake failed.
@@ -907,6 +907,10 @@ def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh
     of a page that already dropped its own fragment on load: none of those
     carry a token forward, since none of them are the printed URL from a
     fresh server start.
+
+    With no token to have gone stale, the refusal can only mean this login
+    is not one the server takes, so the page says to sign in (or use the
+    printed link) rather than that a link went stale.
     """
     server = token_mesh_server
     page = browser.new_page()
@@ -916,8 +920,9 @@ def test_no_token_in_url_ends_refused_with_stale_url_message(browser, token_mesh
 
         assert page.locator("#err").is_visible()
         message = page.locator("#err").inner_text().lower()
-        assert "stale" in message
-        assert "reopen the url" in message
+        assert "sign in" in message
+        assert "stale" not in message
+        assert "open the link printed in the terminal" in message
     finally:
         page.close()
 
@@ -2612,7 +2617,8 @@ def test_settings_window_lays_out_the_keys_the_server_declares(settings_server, 
     """The window's sections, headings and choices come from the server, not
     from a list in settings.js: Mesh's up_axis is shown in the Viewer section
     it declares, as its two choices, ahead of the chat pane's own preference,
-    and the diagnostics block names the product it is describing."""
+    and the diagnostics block names the product it is describing, followed by
+    the agent layer's own Agent log section."""
     server, _served = settings_server
     page = browser.new_page()
     try:
@@ -2631,6 +2637,7 @@ def test_settings_window_lays_out_the_keys_the_server_declares(settings_server, 
             ["Agent", ["model", "effort", "permission_mode", "approval_timeout", "backend"]],
             ["Viewer", ["up_axis", "tool_cards_collapsed"]],
             ["Diagnostics", []],
+            ["Agent log", []],
         ]
         up_axis = page.eval_on_selector_all("#set-up_axis option", "os => os.map(o => o.value)")
         assert up_axis == ["z", "y"]
