@@ -297,7 +297,7 @@ Point the human at a specific location by writing `<dir>/mesh-callouts.json`:
 }
 ```
 
-The server pushes callouts to the viewer live (cyan pins). Rewrite the whole file each time.
+The server pushes callouts to the viewer live (teal pins). Rewrite the whole file each time.
 
 ## Installing this skill
 

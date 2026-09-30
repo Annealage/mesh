@@ -5,10 +5,12 @@
  *
  * WebGL materials and canvas sprites cannot reference a CSS variable, so each
  * drawing module reads the resolved values here and redraws through
- * `onPaletteChange` when the colour scheme flips. The variables are defined
- * by the stylesheet (app.css, overridable by the brand tokens); a missing one
- * resolves to an empty string, which `THREE.Color` and canvas both reject
- * loudly rather than silently drawing black.
+ * `onPaletteChange` when the colour scheme flips. The variables come from the
+ * brand tokens (lib/style's tokens.css), which write them with light-dark(),
+ * so reading the custom property itself gives back that unresolved text.
+ * Each one is resolved instead through a hidden probe element's computed
+ * `color`, which yields the rgb() the current scheme (and any data-theme
+ * override) picks.
  */
 
 // The part colours are a numbered series so parts stay distinguishable; a
@@ -18,25 +20,49 @@ const PART_SLOTS = 8;
 
 const listeners = new Set();
 
-function read(style, name) {
-  return style.getPropertyValue(name).trim();
+/**
+ * Resolves once every stylesheet the page links has loaded. A module script
+ * does not wait for stylesheets, and a palette read before the tokens arrive
+ * resolves every colour to the inherited text colour, so main.js awaits this
+ * before building anything that draws.
+ */
+export const stylesReady = Promise.all(
+  [...document.querySelectorAll('link[rel="stylesheet"]')].map((link) =>
+    link.sheet
+      ? null
+      : new Promise((resolve) => {
+          link.addEventListener("load", resolve, { once: true });
+          link.addEventListener("error", resolve, { once: true });
+        }),
+  ),
+);
+
+let probe = null;
+
+function read(name) {
+  if (!probe) {
+    probe = document.createElement("span");
+    probe.hidden = true;
+    document.body.append(probe);
+  }
+  probe.style.color = "var(" + name + ")";
+  return getComputedStyle(probe).color;
 }
 
-/** The current palette, as CSS colour strings. */
+/** The current palette, as CSS rgb() colour strings. */
 export function palette() {
-  const s = getComputedStyle(document.documentElement);
   const parts = [];
-  for (let i = 1; i <= PART_SLOTS; i++) parts.push(read(s, "--mv-part-" + i));
+  for (let i = 1; i <= PART_SLOTS; i++) parts.push(read("--mv-part-" + i));
   return {
-    view: read(s, "--view"),
-    grid: read(s, "--mv-grid"),
-    grid2: read(s, "--mv-grid-2"),
-    pin: read(s, "--pin"),
-    onPin: read(s, "--on-pin"),
-    pinSelected: read(s, "--pin-selected"),
-    callout: read(s, "--callout"),
-    onCallout: read(s, "--on-callout"),
-    measure: read(s, "--measure"),
+    view: read("--view"),
+    grid: read("--mv-grid"),
+    grid2: read("--mv-grid-2"),
+    pin: read("--pin"),
+    onPin: read("--on-pin"),
+    pinSelected: read("--pin-selected"),
+    callout: read("--callout"),
+    onCallout: read("--on-callout"),
+    measure: read("--measure"),
     parts,
   };
 }

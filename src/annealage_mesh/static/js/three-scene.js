@@ -220,15 +220,21 @@ export function initScene(container, { getMeshes }) {
   });
 
   // Some CAD tools export Y-up STLs instead of Z-up; flip camera.up and refit.
-  const upBtn = document.getElementById("upBtn");
+  const upZ = document.getElementById("upZ");
+  const upY = document.getElementById("upY");
+  const sbAxis = document.getElementById("sbAxis");
   function applyUpAxis(axis) {
     camera.up.set(0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
-    upBtn.textContent = axis === "z" ? "Z-up" : "Y-up";
+    upZ.setAttribute("aria-pressed", String(axis === "z"));
+    upY.setAttribute("aria-pressed", String(axis === "y"));
+    sbAxis.textContent = axis === "z" ? "Z-up" : "Y-up";
   }
   applyUpAxis(store.getState().upAxis);
-  upBtn.addEventListener("click", () => {
-    store.setUpAxis(store.getState().upAxis === "z" ? "y" : "z");
-  });
+  const pickAxis = (axis) => {
+    if (store.getState().upAxis !== axis) store.setUpAxis(axis);
+  };
+  upZ.addEventListener("click", () => pickAxis("z"));
+  upY.addEventListener("click", () => pickAxis("y"));
   store.subscribe("upAxis", (state) => {
     applyUpAxis(state.upAxis);
     fitView();

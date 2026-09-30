@@ -12,7 +12,7 @@ I built this while iterating on a 3D-printed part with an agent. The CAD was gen
 
 Pointing at the thing is just so much easier. Click the face, type the comment right there, the agent gets it back with the actual coordinates, no guessing.
 
-It's bidirectional too, which turned out to be the good bit. The agent writes its own callouts (a location plus a note) and they show up as cyan pins in the viewer. I mark up what I want changed, it pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
+It's bidirectional too, which turned out to be the good bit. The agent writes its own callouts (a location plus a note) and they show up as teal pins in the viewer. I mark up what I want changed, it pins its questions on the geometry, and we go back and forth pointing at the same model instead of describing it in words.
 
 ## Install
 
@@ -73,12 +73,12 @@ If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./
 - Hit Submit. Your pins get written to `mesh-comments.json` in the served folder, which is what the agent reads.
 - Type in the chat pane to put the agent to work in that folder. Interrupt stops a turn mid-flight, each turn shows what it cost.
 - The agent works the viewer too, not just the folder. It can move the camera, hide and show parts, screenshot what's on screen and pin its own callouts, so "show me the underside of that boss" is something it does rather than tells you to do.
-- Hit Pause in the topbar and everything that changes the view gets refused until you hit it again. Line up a shot or type a comment without it moving underneath you. It can still read while paused.
+- Hit Pause in the title bar and everything that changes the view gets refused until you hit it again. Line up a shot or type a comment without it moving underneath you. It can still read while paused.
 - Need a distance between two features? Pick any two placed pins (yours or the agent's) in the Measure panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
 - Attach a picture to a message with the paperclip, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
-- Hit Sketch to draw straight on the 3D view, circle the wall that's wrong, send that as the picture. Quicker than a pin when the shape of the problem is the point.
+- Pick the Sketch tool on the left rail to draw straight on the 3D view, circle the wall that's wrong, send that as the picture. Quicker than a pin when the shape of the problem is the point.
 - Export in the chat header writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask for a record of what you decided.
-- The gear opens Settings: port, host, model, backend, effort, a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, same facts `doctor` prints.
+- The settings button at the top right opens Settings: port, host, model, backend, effort, a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, same facts `doctor` prints.
 
 It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan and zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
 
@@ -104,7 +104,7 @@ The helpers are CadQuery-specific, but the viewer itself just watches for STL ou
 - `model.py` - the parametric CadQuery script. `uv run model.py` writes STEP and STL into `models/`.
 - `cad/` - helper scripts: `robust_solids.py`, `section_probe.py`, `export_watertight.py`, `pin_to_model.py`.
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
-- `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (cyan, read-only). This is how an agent points back at the model.
+- `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (teal, read-only). This is how an agent points back at the model.
 - `images/` - pictures you attached, sketches you drew, screenshots the agent saved. Meant to be committed.
 - `.mesh/` - session event logs, this project's config, allow-always decisions, and a lock file so two servers can't fight over one folder. Gitignored except `config.toml`, which is shareable and holds no secret.
 - `review/` - exported transcripts. Created the first time you export one, not before.
@@ -142,7 +142,7 @@ Read the human's feedback from `mesh-comments.json`:
 
 `point` is the click location in model space (same units as the STL), so you can map a comment straight to a spot in the CAD script that generated it.
 
-Write your own callouts to `mesh-callouts.json` and they show up as cyan pins in the viewer, live:
+Write your own callouts to `mesh-callouts.json` and they show up as teal pins in the viewer, live:
 
     {
       "annotations": [

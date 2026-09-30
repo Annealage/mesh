@@ -450,7 +450,7 @@ def test_part_list_shows_both_labels_with_no_external_requests(browser, mesh_ser
     try:
         page.goto(mesh_server.base_url + "/")
         _wait_both_meshes_loaded(page)
-        labels = page.locator("#parts label span:last-child").all_inner_texts()
+        labels = page.locator("#parts label .pname").all_inner_texts()
         assert sorted(labels) == ["alpha", "beta"]
         assert blocked == []
     finally:
@@ -511,7 +511,7 @@ def test_programmatic_set_visibility_unchecks_checkbox_and_hides_mesh(browser, m
 
 
 def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
-    """At 390x844 the tab bar governs which of #app/#side is shown, starting
+    """At 390x844 the tab bar governs which of #view/#review is shown, starting
     on Model; switching to Review hides the canvas's container, and
     switching back must resume actual rendering, proving the zero-size
     guard in three-scene.js's ResizeObserver callback does not strand the
@@ -534,12 +534,12 @@ def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
         assert page.is_visible("#tabbar button[data-tab='model']")
         assert page.is_visible("#tabbar button[data-tab='review']")
         assert page.is_visible("#app")
-        assert not page.is_visible("#side")
+        assert not page.is_visible("#review")
 
         page.click("#tabbar button[data-tab='review']")
-        page.wait_for_function("() => document.querySelector('#side').style.display !== 'none'")
+        page.wait_for_function("() => document.querySelector('#review').style.display !== 'none'")
         assert not page.is_visible("#app")
-        assert page.is_visible("#side")
+        assert page.is_visible("#review")
 
         frame_while_hidden = page.evaluate("window.mesh.renderer.info.render.frame")
 
@@ -565,7 +565,7 @@ def test_narrow_viewport_tabs_and_canvas_resize_recovery(browser, mesh_server):
 
 def test_wide_viewport_no_tabbar_and_panel_toggle_resizes_canvas(browser, mesh_server):
     """At 1600 px wide the tab bar stays CSS-hidden and the Panel button
-    governs #side instead; toggling it must change the canvas's own pixel
+    governs #review instead; toggling it must change the canvas's own pixel
     width, which only a ResizeObserver on #app's content box can produce,
     since window.innerWidth never changes across the click."""
     page = browser.new_page(viewport={"width": 1600, "height": 900})
@@ -604,7 +604,7 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         page.goto(mesh_server.base_url + "/")
         _wait_both_meshes_loaded(page)
 
-        page.click("#modeBtn")
+        page.click("#pinTool")
         page.wait_for_function("() => window.mesh.store.getState().mode === 'annotate'")
 
         assert page.locator("#pins .empty").count() == 1, (
@@ -1879,7 +1879,7 @@ def test_an_unknown_rel_comes_back_as_the_viewers_own_refusal(browser, chat_serv
 # 21. Mesh tools: the human's pause switch is enforced in the server -----------
 
 
-def test_the_topbar_pause_button_stops_the_agent_driving_the_view(browser, chat_server):
+def test_the_pause_button_stops_the_agent_driving_the_view(browser, chat_server):
     """What the previous version of this control claimed and did not do. The
     click has to travel to the server, because that is where the tools run: a
     button that latched locally would show "Paused" while the agent went on
@@ -1977,20 +1977,21 @@ def test_a_callout_the_agent_adds_appears_as_a_pin_without_a_reload(browser, cha
         page.close()
 
 
-def test_the_topbar_still_fits_a_narrow_viewport(browser, chat_server):
-    """The topbar has gained a button per milestone, and a phone is a required
-    workflow rather than a nice-to-have, so this is a regression guard on the
-    row rather than on any one control: at 390 px nothing in it may overflow."""
+def test_the_title_bar_still_fits_a_narrow_viewport(browser, chat_server):
+    """A phone is a required workflow rather than a nice-to-have, so this is a
+    regression guard on the title bar's row rather than on any one control: at
+    390 px nothing in it may overflow, and Pause, the safety control that lives
+    there, stays on screen."""
     server, _session = chat_server
     page = browser.new_page(viewport={"width": 390, "height": 844})
     try:
         page.goto(server.viewer_url)
         _wait_connection_state(page, "live")
         overflow = page.evaluate(
-            "() => { const b = document.getElementById('topbar');"
+            "() => { const b = document.querySelector('.titlebar');"
             " return b.scrollWidth - b.clientWidth; }"
         )
-        assert overflow <= 0, "the topbar overflows by %dpx at 390px wide" % overflow
+        assert overflow <= 0, "the title bar overflows by %dpx at 390px wide" % overflow
         assert page.locator("#pauseBtn").is_visible()
     finally:
         page.close()
@@ -2220,7 +2221,7 @@ def test_drawing_a_sketch_stroke_never_moves_the_camera(browser, chat_server):
         before_pos = page.evaluate("() => window.mesh.camera.position.toArray()")
         before_target = page.evaluate("() => window.mesh.controls.target.toArray()")
 
-        page.click("#chatSketchBtn")
+        page.click("#sketchBtn")
         box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
 
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
@@ -2309,7 +2310,7 @@ def test_attaching_a_sketch_delivers_a_composited_image_path_block(browser, chat
         _wait_connection_state(page, "live")
         page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
-        page.click("#chatSketchBtn")
+        page.click("#sketchBtn")
         box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         page.mouse.move(cx - 50, cy - 30)
@@ -2380,7 +2381,7 @@ def test_a_sketch_is_refused_when_the_view_moved_under_it(browser, chat_server):
         _wait_connection_state(page, "live")
         page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
-        page.click("#chatSketchBtn")
+        page.click("#sketchBtn")
         box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         page.mouse.move(cx - 40, cy)
@@ -2473,7 +2474,7 @@ def test_escape_leaves_sketch_mode_with_nothing_uploaded(browser, chat_server):
         _wait_connection_state(page, "live")
         page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
-        page.click("#chatSketchBtn")
+        page.click("#sketchBtn")
         box = page.wait_for_selector("#app canvas.sketch-overlay").bounding_box()
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         page.mouse.move(cx - 30, cy)
@@ -2503,7 +2504,7 @@ def test_leaving_sketch_mode_restores_orbit_controls(browser, chat_server):
         _wait_connection_state(page, "live")
         page.wait_for_function("() => window.mesh && Object.keys(window.mesh.meshes).length === 1")
 
-        page.click("#chatSketchBtn")
+        page.click("#sketchBtn")
         page.wait_for_selector("#app canvas.sketch-overlay")
         page.click("#sketchCancelBtn")
         page.wait_for_selector("#app canvas.sketch-overlay", state="detached")
@@ -2743,7 +2744,7 @@ def test_submit_works_in_agent_mode_where_the_route_requires_the_token(settings_
         page.goto(server.viewer_url)
         _wait_one_mesh_loaded(page)
 
-        page.click("#modeBtn")
+        page.click("#pinTool")
         page.wait_for_function("() => window.mesh.store.getState().mode === 'annotate'")
         page.click("#app canvas")
         page.wait_for_function("() => window.mesh.store.getState().pins.length === 1")

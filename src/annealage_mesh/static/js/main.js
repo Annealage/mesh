@@ -25,6 +25,10 @@ import { initPins } from "./pins.js";
 import { initMeasure } from "./measure.js";
 import { initCommands } from "./commands.js";
 import { initSketch } from "./sketch.js";
+import { initChrome } from "./chrome.js";
+import { stylesReady } from "./palette.js";
+
+await stylesReady;
 
 const appEl = document.getElementById("app");
 
@@ -54,8 +58,8 @@ initMeasure({ scene: scene3d.scene, markerRadius: scene3d.markerRadius });
 // narrow ones, after the model and the review panel.
 initLayout({
   tabs: [
-    { id: "model", label: "Model", target: "#app" },
-    { id: "review", label: "Review", target: "#side" },
+    { id: "model", label: "Model", target: "#view" },
+    { id: "review", label: "Review", target: "#review" },
     { id: "chat", label: "Chat", target: "#chat" },
   ],
 });
@@ -79,6 +83,7 @@ const pauseApi = initPause({ send });
 const commandsApi = initCommands({ scene3d });
 initSketch({ container: appEl, captureView: scene3d.captureView,
              cameraState: scene3d.cameraState });
+initChrome();
 
 // The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
 // the socket is not live; ws.js owns that decision, pins.js only owns the
