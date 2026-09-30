@@ -42,19 +42,38 @@ async def test_index_serves_viewer_html(client):
     # The shell promises these things and nothing about how the app itself
     # fetches its data: the importmap resolving the bare "three" specifier to
     # the vendored module and the "agent/" prefix to the agent layer's own
-    # front end, the two stylesheet links, and the module script that
+    # front end, the stylesheet links in the order the brand theme needs
+    # (tokens, agent.css, theme, Mesh's own), and the module script that
     # bootstraps the split front end. Which endpoints main.js and its imports
     # go on to call is js/models.js's business, not the shell's.
+    links = [
+        '<link rel="stylesheet" href="/style/tokens.css">',
+        '<link rel="stylesheet" href="/agent/static/agent.css">',
+        '<link rel="stylesheet" href="/style/theme.css">',
+        '<link rel="stylesheet" href="/static/css/app.css">',
+    ]
     for path in ("/", "/index.html"):
         res = await client.get(path)
         assert res.status_code == 200, path
         assert "text/html" in res.headers.get("Content-Type", "")
-        assert 'id="topbar"' in res.text
         assert '"three": "/static/js/vendor/three.module.js"' in res.text
         assert '"agent/": "/agent/static/"' in res.text
-        assert '<link rel="stylesheet" href="/agent/static/agent.css">' in res.text
-        assert '<link rel="stylesheet" href="/static/css/app.css">' in res.text
+        positions = [res.text.find(link) for link in links]
+        assert -1 not in positions, positions
+        assert positions == sorted(positions)
         assert '<script type="module" src="/static/js/main.js"></script>' in res.text
+
+
+async def test_the_brand_stylesheets_the_shell_links_are_served(client):
+    # /style/ is served from the lib/style submodule in a checkout (and from
+    # the copy a wheel carries), outside the package's static/ tree, so a
+    # wrong STYLE_DIR would leave the page unstyled while every /static asset
+    # still loaded.
+    for name in ("tokens.css", "theme.css"):
+        res = await client.get("/style/" + name)
+        assert res.status_code == 200, name
+        assert res.headers.get("Content-Type", "").startswith("text/css"), name
+        assert res.body, name
 
 
 # --- /manifest ---------------------------------------------------------------

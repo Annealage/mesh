@@ -187,8 +187,8 @@ Point-in-solid probes confirm a cavity is hollow or a corner got rounded:
 
 ## Placing pins
 
-1. Click **Navigate** in the top bar to switch it to **Add pin**.
-2. Click the model. A numbered orange pin drops exactly where you clicked.
+1. Pick **Add pin** on the tool rail down the left of the view (or press A). On a phone the tools sit along the bottom of the Model tab.
+2. Click the model. A numbered pin drops exactly where you clicked.
 3. Type your comment against that pin in the Review panel.
 4. Click **Submit**.
 
@@ -236,7 +236,7 @@ A sketch is a picture, not coordinates. If you need the agent to have exact mode
 
 ## Settings, and where a value came from
 
-The gear in the topbar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode, backend), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
+The settings button at the right of the title bar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode, backend), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
 
 Every field says where its current value came from, because there are four places it could be and knowing which one is the difference between fixing it in a second and hunting for it. Highest wins:
 
@@ -291,7 +291,7 @@ A tool that needs the browser fails immediately if no page is open, with a messa
 
 ## Pausing the agent's view control
 
-**Pause** in the top bar refuses everything in the "driving" and "writing" lists above until you press it again. Use it when you are lining up a view you want to keep, or typing a comment against a pin, and you do not want the camera moving or a part disappearing underneath you.
+**Pause** in the title bar refuses everything in the "driving" and "writing" lists above until you press it again. Use it when you are lining up a view you want to keep, or typing a comment against a pin, and you do not want the camera moving or a part disappearing underneath you.
 
 This is the only control over the driving tools, since those never produce an approval card, so it is worth knowing it is there rather than discovering it when the camera moves at an awkward moment.
 
@@ -453,7 +453,7 @@ A subcommand is only recognised as the first argument, so a directory of models 
 
 **"It is serving:" and an address.** A Mesh is already running for this directory. The address carries no access token, so it will not log you in on its own: open the link that instance printed in its own startup banner (the `open:` line), or stop the other one.
 
-**A model does not appear.** It must be a regular `.stl` file inside the served tree. Symlinks are refused, and files under dot-directories are skipped. A part the agent has just generated should show up within about a second; if it does not, check the connection pill in the top bar, since the update is pushed over the WebSocket and a page showing "Reopen URL" is not receiving pushes at all.
+**A model does not appear.** It must be a regular `.stl` file inside the served tree. Symlinks are refused, and files under dot-directories are skipped. A part the agent has just generated should show up within about a second; if it does not, check the connection state at the left of the status bar along the bottom, since the update is pushed over the WebSocket and a page showing "Reopen URL" is not receiving pushes at all.
 
 **A regenerated part still looks like the old one.** Same cause: the push needs a live connection. Reopen the URL printed in the terminal.
 

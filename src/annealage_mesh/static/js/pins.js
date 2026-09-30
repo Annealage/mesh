@@ -33,8 +33,8 @@ import { onPaletteChange, palette } from "./palette.js";
 const TAP_SLOP = 8; // px; below this a pointerup counts as a tap, not an orbit drag
 
 /**
- * Build the two-line "part - label / coordinates" block used by the pin list
- * and the callout list.
+ * Build the Part / Face / At (mm) field grid used by the pin list and the
+ * callout list.
  *
  * Every value here is untrusted. A pin's `part` comes from an STL filename, and
  * a callout's `part` and `label` come from mesh-callouts.json, which the agent
@@ -45,27 +45,31 @@ const TAP_SLOP = 8; // px; below this a pointerup counts as a tap, not an orbit 
  * cannot do that, which is why this function exists rather than a template
  * string at each call site.
  */
-function buildMetaRows(partText, labelText, point, round) {
-  const meta = document.createElement("div");
-  meta.className = "meta";
+function buildFields(partText, labelText, point) {
+  const dl = document.createElement("dl");
+  dl.className = "fields";
+  const field = (name, value, cls) => {
+    const div = document.createElement("div");
+    const dt = document.createElement("dt");
+    dt.textContent = name;
+    const dd = document.createElement("dd");
+    dd.textContent = value;
+    if (cls) dd.className = cls;
+    div.append(dt, dd);
+    dl.append(div);
+  };
+  field("Part", partText, "part");
+  field("Face", labelText || "-");
+  field("At (mm)", point.map((v) => (Math.round(v * 10) / 10).toFixed(1)).join(", "));
+  return dl;
+}
 
-  const part = document.createElement("div");
-  part.className = "part";
-  part.textContent = partText;
-  if (labelText) {
-    part.append(document.createTextNode(" \u00b7 "));
-    const label = document.createElement("span");
-    label.className = "label";
-    label.textContent = labelText;
-    part.append(label);
-  }
-
-  const loc = document.createElement("div");
-  loc.className = "loc";
-  loc.textContent = "[" + point.map((v) => round(v, 2)).join(", ") + "] mm";
-
-  meta.append(part, loc);
-  return meta;
+/** The chamfered marker badge a pin or callout row leads with. */
+function marker(kind, text) {
+  const mk = document.createElement("span");
+  mk.className = "mk mk--" + kind;
+  mk.textContent = text;
+  return mk;
 }
 
 /**
@@ -99,17 +103,15 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   }
 
   // ---- mode: gates picking so a touch-swipe to orbit doesn't drop a stray pin ----
-  const modeBtn = document.getElementById("modeBtn");
-  // The glyph and the word are separate elements because the word is dropped by
-  // CSS at phone width, where the topbar has no room for it; writing the whole
-  // label with textContent would delete the span that rule targets.
-  const modeGlyph = document.getElementById("modeGlyph");
-  const modeLabel = document.getElementById("modeLabel");
+  // Navigate and Add pin are two rail tools over the one `mode` value.
+  const navTool = document.getElementById("navTool");
+  const pinTool = document.getElementById("pinTool");
+  const sbMode = document.getElementById("sbMode");
   function applyMode(mode) {
     const on = mode === "annotate";
-    modeBtn.classList.toggle("on", on);
-    modeGlyph.textContent = on ? "●" : "○";
-    modeLabel.textContent = on ? " Add pin" : " Navigate";
+    navTool.setAttribute("aria-pressed", String(!on));
+    pinTool.setAttribute("aria-pressed", String(on));
+    sbMode.textContent = on ? "Add pin" : "Navigate";
     renderer.domElement.style.cursor = on ? "crosshair" : "grab";
   }
   applyMode(store.getState().mode);
@@ -117,7 +119,8 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   function toggleMode() {
     store.setMode(store.getState().mode === "annotate" ? "nav" : "annotate");
   }
-  modeBtn.addEventListener("click", toggleMode);
+  navTool.addEventListener("click", () => store.setMode("nav"));
+  pinTool.addEventListener("click", () => store.setMode("annotate"));
   addEventListener("keydown", (e) => {
     if (e.target && (e.target.tagName === "TEXTAREA" || e.target.tagName === "INPUT")) return;
     if (e.key === "a" || e.key === "A") toggleMode();
@@ -215,8 +218,9 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       controls.update();
     }
     document.querySelectorAll("#pins .pin").forEach((el) => {
-      el.classList.toggle("sel", Number(el.dataset.id) === state.selectedPinId);
+      el.classList.toggle("is-selected", Number(el.dataset.id) === state.selectedPinId);
     });
+    renderSelectedPin(state);
   });
 
   const pinsDiv = document.getElementById("pins");
@@ -228,31 +232,32 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
 
   function makePinRow(p) {
     const el = document.createElement("div");
-    el.className = "pin";
+    el.className = "row pin";
     el.dataset.id = p.id;
 
-    const top = document.createElement("div");
-    top.className = "top";
-    const num = document.createElement("div");
-    num.className = "num";
-    const meta = document.createElement("div");
-    meta.className = "meta";
+    const num = marker("human", p.id);
+    const meta = document.createElement("dl");
     const del = document.createElement("button");
-    del.className = "del";
-    del.title = "delete";
-    del.textContent = "×";
+    del.className = "btn quiet icon x";
+    del.type = "button";
+    del.setAttribute("aria-label", "Delete pin " + p.id);
+    del.innerHTML = '<svg class="ico ico--sm"><use href="/style/icons.svg#i-x"/></svg>';
     del.addEventListener("click", (ev) => {
       ev.stopPropagation();
       store.removePin(p.id);
     });
-    top.append(num, meta, del);
-    top.addEventListener("click", () => store.selectPin(p.id));
+    num.addEventListener("click", () => store.selectPin(p.id));
 
     const ta = document.createElement("textarea");
+    ta.rows = 2;
+    ta.setAttribute("aria-label", "Comment on pin " + p.id);
     ta.addEventListener("input", () => store.setPinComment(p.id, ta.value));
     ta.addEventListener("focus", () => store.selectPin(p.id));
 
-    el.append(top, ta);
+    el.append(num, meta, del, ta);
+    el.addEventListener("click", (ev) => {
+      if (ev.target === el) store.selectPin(p.id);
+    });
     return { el, num, meta, ta };
   }
 
@@ -263,8 +268,10 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   // reconciliation exists to avoid.
   function updatePinRow(row, p) {
     row.num.textContent = p.id;
-    row.meta.replaceChildren(
-      ...buildMetaRows(p.part, p.label, p.point, (v) => v).children);
+    const fields = buildFields(p.part, p.label, p.point);
+    row.meta.replaceWith(fields);
+    row.meta = fields;
+    fields.addEventListener("click", () => store.selectPin(p.id));
     row.ta.placeholder = "Comment for pin #" + p.id + "…";
     if (row.ta !== document.activeElement && row.ta.value !== p.comment) {
       row.ta.value = p.comment;
@@ -302,16 +309,36 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     } else {
       pinsDiv.appendChild(emptyMsg);
     }
+    pinCount.textContent = state.pins.length || "";
     updateStatus(state);
+    renderSelectedPin(state);
   }
 
+  const pinCount = document.getElementById("pinCount");
+  const reviewCounts = document.getElementById("reviewCounts");
   const statusEl = document.getElementById("status");
   function updateStatus(state) {
-    statusEl.textContent =
-      state.pins.length + " pin" + (state.pins.length === 1 ? "" : "s") +
-      (state.dirty ? " · unsaved" : " · submitted");
+    const b = document.createElement("b");
+    b.textContent = state.pins.length + " pin" + (state.pins.length === 1 ? "" : "s");
+    statusEl.replaceChildren(b, state.dirty ? ", unsaved" : ", submitted");
+    reviewCounts.textContent =
+      state.pins.length + " pin" + (state.pins.length === 1 ? "" : "s") + ", " +
+      state.callouts.length + " callout" + (state.callouts.length === 1 ? "" : "s");
   }
   store.subscribe("dirty", updateStatus);
+
+  // The status bar names the selected pin and where it is.
+  const sbPin = document.getElementById("sbPin");
+  function renderSelectedPin(state) {
+    const p = state.pins.find((x) => x.id === state.selectedPinId);
+    if (!p) {
+      sbPin.replaceChildren();
+      return;
+    }
+    const b = document.createElement("b");
+    b.textContent = p.point.map((v) => round(v, 1)).join(", ");
+    sbPin.replaceChildren("Pin " + p.id + " at ", b, " mm");
+  }
 
   document.getElementById("clear").addEventListener("click", () => {
     const count = store.getState().pins.length;
@@ -355,6 +382,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
 
   // ---- agent callouts: rendered from state.callouts, reaching it only via refetchCallouts/setCallouts below ----
   const agentPinsDiv = document.getElementById("agentPins");
+  const calloutCount = document.getElementById("calloutCount");
   let agentSig = null;
   let calloutsGen = 0; // bumped on every refetchCallouts call; guards against an in-flight fetch applying its reply after a later call has already started
 
@@ -387,28 +415,17 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       agentSide.push({ marker, sprite, point: p });
     });
 
-    agentPinsDiv.innerHTML = "";
-    if (!state.callouts.length) return;
-    const hdr = document.createElement("div");
-    hdr.className = "sec-hdr";
-    hdr.textContent = "Agent callouts (" + state.callouts.length + ")";
-    agentPinsDiv.appendChild(hdr);
+    agentPinsDiv.replaceChildren();
+    calloutCount.textContent = state.callouts.length || "";
+    updateStatus(state);
     state.callouts.forEach((a, i) => {
       const num = a.id != null ? a.id : i + 1;
       const p = a.point || [0, 0, 0];
       const el = document.createElement("div");
-      el.className = "apin";
-      const top = document.createElement("div");
-      top.className = "top";
-      const n = document.createElement("div");
-      n.className = "num";
-      n.textContent = num;
-      const meta = buildMetaRows(a.part || "unknown", a.label || "", p, round);
-      top.append(n, meta);
-      const cmt = document.createElement("div");
-      cmt.className = "cmt";
+      el.className = "row apin";
+      const cmt = document.createElement("p");
       cmt.textContent = a.comment || "(no comment)";
-      el.append(top, cmt);
+      el.append(marker("agent", "A" + num), buildFields(a.part || "unknown", a.label || "", p), cmt);
       el.addEventListener("click", () => {
         controls.target.set(p[0], p[1], p[2]);
         controls.update();

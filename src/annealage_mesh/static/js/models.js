@@ -130,6 +130,7 @@ export function initModels({ scene, fitView, meshes }) {
 
   function makePartRow(m) {
     const lab = document.createElement("label");
+    lab.className = "check";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.addEventListener("change", () => store.setVisibility(m.rel, cb.checked));
@@ -137,10 +138,13 @@ export function initModels({ scene, fitView, meshes }) {
     sw.className = "sw";
     sw.style.background = partColor(pal, m.slot);
     const txt = document.createElement("span");
+    txt.className = "pname";
     txt.textContent = m.label;
     txt.title = m.rel;
-    lab.append(cb, sw, txt);
-    return { lab, cb, sw, slot: m.slot };
+    const tris = document.createElement("span");
+    tris.className = "hint mono";
+    lab.append(cb, sw, txt, tris);
+    return { lab, cb, sw, tris, slot: m.slot };
   }
 
   function renderParts(state) {
@@ -154,6 +158,8 @@ export function initModels({ scene, fitView, meshes }) {
         partsDiv.appendChild(row.lab);
       }
       row.cb.checked = !!state.visibility[m.rel];
+      const n = state.triangles[m.rel];
+      row.tris.textContent = n == null ? "" : n.toLocaleString();
     });
     // A part deleted from the directory loses its row. Without this the list
     // would keep offering a checkbox for a file that no longer exists, and
@@ -175,50 +181,48 @@ export function initModels({ scene, fitView, meshes }) {
     }
   });
   store.subscribe("visibility", renderParts);
+  store.subscribe("triangles", renderParts);
 
   // --- The view's document tab: the served folder, the triangle total of the
   // parts on show, and when this page last saw a model rebuilt. ---
   const docName = document.getElementById("docName");
   const docTris = document.getElementById("docTris");
   const docRebuilt = document.getElementById("docRebuilt");
+  const docRebuiltAt = document.getElementById("docRebuiltAt");
+  const docParts = document.getElementById("docParts");
+  const partCount = document.getElementById("partCount");
   const hhmm = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
 
   function renderDocTab(state) {
     let total = 0;
     for (const rel in state.triangles) if (state.visibility[rel]) total += state.triangles[rel];
-    docTris.textContent = total.toLocaleString() + " triangles";
+    docTris.textContent = total.toLocaleString();
+    const n = state.models.length;
+    docParts.textContent = n + (n === 1 ? " part" : " parts");
+    partCount.textContent = n || "";
     docRebuilt.hidden = state.rebuiltAt == null;
-    if (state.rebuiltAt != null) docRebuilt.textContent = "Rebuilt " + hhmm.format(state.rebuiltAt);
+    if (state.rebuiltAt != null) docRebuiltAt.textContent = hhmm.format(state.rebuiltAt);
   }
-  ["triangles", "visibility", "rebuiltAt"].forEach((k) => store.subscribe(k, renderDocTab));
+  ["models", "triangles", "visibility", "rebuiltAt"].forEach((k) => store.subscribe(k, renderDocTab));
 
   function updateTitle(models, dir) {
-    // Heading shows exactly what's being reviewed: the file's absolute path
-    // for a single STL, otherwise the served directory. Left-truncated so
-    // the filename stays visible.
-    const titleEl = document.querySelector("#topbar .title");
-    const shown = (models.length === 1 ? models[0].path || models[0].file : dir || "") || "";
-    if (!titleEl || !shown) return;
-    titleEl.textContent = shown;
-    titleEl.title = shown;
-    Object.assign(titleEl.style, {
-      textTransform: "none",
-      overflow: "hidden",
-      textOverflow: "ellipsis",
-      maxWidth: "58vw",
-      direction: "rtl",
-      textAlign: "left",
-      cursor: "context-menu",
-    });
-    // right-click copies the shown path instead of opening the browser menu
-    titleEl.addEventListener("contextmenu", (e) => {
-      e.preventDefault();
-      navigator.clipboard
-        .writeText(shown)
-        .then(() => toast("Copied path to clipboard", true))
-        .catch((err) => toast("Copy failed: " + err.message, false));
-    });
+    // The title bar shows exactly what's being reviewed: the file's absolute
+    // path for a single STL, otherwise the served directory. Right-click
+    // copies it.
+    shownPath = (models.length === 1 ? models[0].path || models[0].file : dir || "") || "";
+    docPath.textContent = shownPath;
+    docPath.title = shownPath;
   }
+  let shownPath = "";
+  const docPath = document.getElementById("docPath");
+  docPath.addEventListener("contextmenu", (e) => {
+    if (!shownPath) return;
+    e.preventDefault();
+    navigator.clipboard
+      .writeText(shownPath)
+      .then(() => toast("Copied path to clipboard", true))
+      .catch((err) => toast("Copy failed: " + err.message, false));
+  });
 
   /**
    * Refetch the manifest and bring the scene into line with it.

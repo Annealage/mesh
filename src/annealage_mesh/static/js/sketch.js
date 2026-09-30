@@ -1,9 +1,7 @@
 /**
  * Sketch mode: draw directly over the 3D pane to point at exact geometry,
- * entered from a control in the composer rather than the topbar, since a
- * sketch is an attachment to the message being composed, not a viewer-wide
- * mode (and the topbar has no room left at 390px; see its own overflow
- * guard in tests/test_viewer_e2e.py).
+ * entered from the Sketch tool on the rail, like the view's other modes. The
+ * finished sketch becomes an attachment to the message being composed.
  *
  * An overlay canvas, sized from the same container box three-scene.js sizes
  * the renderer from, sits above the renderer's own canvas for as long as
@@ -54,7 +52,7 @@ const STROKE_COLOR = "#35c7e0";
 const STROKE_WIDTH = 3; // CSS pixels in the overlay; scaled for the composite
 
 export function initSketch({ container, captureView, cameraState }) {
-  const sketchBtn = document.getElementById("chatSketchBtn");
+  const sketchBtn = document.getElementById("sketchBtn");
 
   let active = false;
   let overlay = null;
@@ -212,7 +210,7 @@ export function initSketch({ container, captureView, cameraState }) {
     overlay.addEventListener("pointerup", endStroke);
     overlay.addEventListener("pointercancel", endStroke);
     addEventListener("keydown", onKeydown);
-    sketchBtn.classList.add("on");
+    sketchBtn.setAttribute("aria-pressed", "true");
   }
 
   function teardown() {
@@ -227,7 +225,7 @@ export function initSketch({ container, captureView, cameraState }) {
     const bar = container.querySelector(".sketchbar");
     if (bar) bar.remove();
     removeEventListener("keydown", onKeydown);
-    sketchBtn.classList.remove("on");
+    sketchBtn.setAttribute("aria-pressed", "false");
   }
 
   function cancel() { teardown(); }

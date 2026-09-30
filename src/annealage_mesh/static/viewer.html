@@ -1,10 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-product="mesh">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Annealage Mesh - STL review</title>
+<title>Annealage Mesh</title>
+<link rel="stylesheet" href="/style/tokens.css">
 <link rel="stylesheet" href="/agent/static/agent.css">
+<link rel="stylesheet" href="/style/theme.css">
 <link rel="stylesheet" href="/static/css/app.css">
 <script type="importmap">
 { "imports": {
@@ -14,95 +16,119 @@
 </script>
 </head>
 <body>
+<div class="wb" data-side="review">
 
-<div id="topbar">
-  <span class="title">Annealage Mesh - STL review</span>
-  <span id="connIndicator" class="conn"></span>
-  <button id="modeBtn" title="Toggle pin/navigate mode"><span id="modeGlyph">○</span><span class="btnlabel" id="modeLabel"> Navigate</span></button>
-  <button id="fit" title="Fit view (F)">Fit</button>
-  <button id="upBtn" title="Toggle which axis is 'up'">Z-up</button>
-  <button id="pauseBtn" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view.">❙❙ Pause</button>
-  <button id="panelBtn" title="Show/hide panel">☰ Panel</button>
-  <button id="settingsBtn" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed">⚙<span class="btnlabel"> Settings</span></button>
-</div>
-
-<nav id="tabbar"></nav>
-
-<div id="main">
-  <div id="app">
-    <div id="docTab" class="doctab"><span id="docName" class="docname"></span><span id="docTris"></span><span id="docRebuilt" hidden></span></div>
-  </div>
-
-  <aside id="side">
-    <header>
-      <h1>Review</h1>
-      <div class="sub">Drag to orbit · pinch to zoom · two-finger to pan. Switch to <b>Add pin</b> to drop comments.</div>
-      <div class="legend">
-        <label><input type="checkbox" id="tgAgent" checked><span class="dot agent"></span>Agent callouts (read-only)</label>
-        <label><input type="checkbox" id="tgUser" checked><span class="dot user"></span>Your pins</label>
-      </div>
-    </header>
-    <div id="parts-sec">
-      <div class="sec-hdr">Parts</div>
-      <div id="parts"></div>
+  <header class="titlebar">
+    <picture class="mark"><source srcset="/style/marks/mesh-layers-dark.svg" media="(prefers-color-scheme: dark)"><img src="/style/marks/mesh-layers.svg" alt="" width="640" height="512"></picture>
+    <span class="prod">Annealage Mesh</span>
+    <span class="tsep"></span>
+    <span class="doc"><code id="docPath"></code></span>
+    <div class="tb-right">
+      <button id="pauseBtn" class="btn quiet" type="button" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view.">Pause</button>
+      <button id="panelBtn" class="btn quiet icon" type="button" aria-label="Show or hide the review panel" title="Review panel"><svg class="ico"><use href="/style/icons.svg#i-panel"/></svg></button>
+      <button id="settingsBtn" class="btn quiet icon" type="button" aria-label="Settings" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed"><svg class="ico"><use href="/style/icons.svg#i-settings"/></svg></button>
     </div>
-    <div id="measure-sec">
-      <div class="sec-hdr">Measure</div>
-      <div class="mrow">
-        <select id="mA"><option value="">Pin A…</option></select>
-        <select id="mB"><option value="">Pin B…</option></select>
+  </header>
+
+  <nav id="tabbar" aria-label="Panes"></nav>
+
+  <nav class="rail" aria-label="Tools">
+    <button id="navTool" class="tool" type="button" aria-pressed="true" aria-label="Navigate" title="Navigate: drag to orbit, pinch to zoom, two fingers to pan"><svg class="ico"><use href="/style/icons.svg#i-select"/></svg></button>
+    <button id="pinTool" class="tool" type="button" aria-pressed="false" aria-label="Add pin (A)" title="Add pin (A): tap a visible part to pin a comment to it"><svg class="ico"><use href="/style/icons.svg#i-pin"/></svg><span class="k">A</span></button>
+    <button id="measureTool" class="tool" type="button" aria-label="Measure" title="Measure between two pins"><svg class="ico"><use href="/style/icons.svg#i-measure"/></svg></button>
+    <button id="sketchBtn" class="tool" type="button" aria-pressed="false" aria-label="Sketch" title="Draw on the model to point at exactly where you mean, then send it to the agent"><svg class="ico"><use href="/style/icons.svg#i-sketch"/></svg></button>
+    <hr>
+    <button id="fit" class="tool" type="button" aria-label="Fit (F)" title="Fit (F)"><svg class="ico"><use href="/style/icons.svg#i-fit"/></svg><span class="k">F</span></button>
+  </nav>
+
+  <main id="view" class="view" aria-label="Model">
+    <div class="vhead">
+      <button class="vtab" type="button" aria-current="page"><code id="docName"></code></button>
+      <div class="meta"><span id="docParts"></span><span><b id="docTris">0</b> triangles</span><span id="docRebuilt" hidden>rebuilt <b id="docRebuiltAt"></b></span></div>
+      <div class="right">
+        <div class="seg" role="group" aria-label="Up axis"><button id="upZ" type="button" aria-pressed="true">Z-up</button><button id="upY" type="button" aria-pressed="false">Y-up</button></div>
       </div>
-      <div id="mResult" class="mresult"><span class="empty">Pick two pins to measure.</span></div>
     </div>
-    <div id="agentPins" class="agentsec"></div>
-    <!-- Empty, because js/pins.js owns the empty-state message: it appends one
-         when there are no pins and removes it when there are. A copy here as
-         well would be a second element saying the same thing that nothing ever
-         removes, so it would still be claiming there are no pins while pins
-         were listed underneath it. -->
-    <div id="pins"></div>
-    <footer>
-      <div class="rowbtns">
-        <button id="clear">Clear all</button>
-        <button id="submit" class="primary">Submit</button>
-      </div>
-      <div class="sub status" id="status">unsaved</div>
-    </footer>
+    <div id="app" class="canvas"></div>
+  </main>
+
+  <aside id="review" class="inspector" aria-label="Review">
+    <div class="ihead"><h2>Review</h2><span id="reviewCounts"></span></div>
+    <div class="iscroll">
+      <details class="sec" open>
+        <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Parts <span class="c" id="partCount"></span></summary>
+        <div id="parts" class="secbody toggles"></div>
+      </details>
+      <details class="sec" open>
+        <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Your pins <span class="c" id="pinCount"></span><input id="tgUser" class="vis" type="checkbox" checked aria-label="Show your pins"></summary>
+        <!-- Empty, because js/pins.js owns the empty-state message: it appends
+             one when there are no pins and removes it when there are. -->
+        <div id="pins" class="secbody"></div>
+      </details>
+      <details class="sec" open>
+        <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Agent callouts <span class="c" id="calloutCount"></span><input id="tgAgent" class="vis" type="checkbox" checked aria-label="Show agent callouts"></summary>
+        <div id="agentPins" class="secbody"></div>
+      </details>
+      <details id="measureSec" class="sec" open>
+        <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Measure</summary>
+        <div class="secbody">
+          <div class="mrow">
+            <label>A <select id="mA"><option value="">-</option></select></label>
+            <label>B <select id="mB"><option value="">-</option></select></label>
+          </div>
+          <div id="mResult" class="mresult"><span class="empty">Pick two pins to measure.</span></div>
+        </div>
+      </details>
+    </div>
+    <div class="ifoot"><span id="status"></span><button id="clear" class="btn quiet" type="button">Clear all</button><button id="submit" class="btn" type="button">Submit</button></div>
   </aside>
 
-  <aside id="chat">
+  <aside id="chat" aria-label="Agent">
     <header>
-      <h1>Chat</h1>
+      <h1>Agent</h1>
       <span id="agentStatus" class="agentstatus"></span>
-      <button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share">Export</button>
+      <span class="working" role="status"><span class="bar" aria-hidden="true"></span>Working <b id="chatWorkingTime"></b></span>
+      <span class="spacer"></span>
+      <button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share"><svg class="ico ico--sm"><use href="/style/icons.svg#i-export"/></svg>Export</button>
     </header>
     <div id="chatBanner" class="chatbanner" hidden>
       <span id="chatBannerText"></span>
       <button id="chatBannerClose" type="button" aria-label="Dismiss">×</button>
     </div>
-    <div class="chathint">Approval cards appear here for actions outside this project folder, over the network, or that write files; a plain command confined to this folder runs without asking.</div>
     <div id="chatLog"></div>
-    <div id="chatPending"></div>
-    <div id="chatComposer">
-      <div id="chatModelRow" class="chatmodelrow">
-        <label for="chatModelInput">Model</label>
-        <input id="chatModelInput" type="text" placeholder="backend default"
-               title="Switch the model for this conversation, live, with no restart"
-               autocomplete="off" spellcheck="false">
-      </div>
-      <div id="chatAttachStrip" class="attachstrip" hidden></div>
-      <div id="chatComposerRow">
-        <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-        <button id="chatAttachBtn" type="button" class="attachbtn" title="Attach an image (or paste or drop one into the message box)">📎</button>
-        <button id="chatSketchBtn" type="button" class="attachbtn" title="Draw on the model to point at exactly where you mean">✏️</button>
-        <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
-        <div class="chatbtns">
-          <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
-          <button id="chatSend" type="button" class="primary">Send</button>
+    <div class="side">
+      <div class="chathint">Approval cards appear here for actions outside this project folder, over the network, or that write files. A plain command confined to this folder runs without asking.</div>
+      <div id="chatPending"></div>
+      <div id="chatComposer">
+        <div id="chatModelRow" class="chatmodelrow">
+          <label for="chatModelInput">Model</label>
+          <input id="chatModelInput" type="text" placeholder="backend default"
+                 title="Switch the model for this conversation, live, with no restart"
+                 autocomplete="off" spellcheck="false">
+        </div>
+        <div id="chatAttachStrip" class="attachstrip" hidden></div>
+        <div id="chatComposerRow">
+          <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+          <button id="chatAttachBtn" type="button" class="attachbtn" aria-label="Attach an image" title="Attach an image (or paste or drop one into the message box)"><svg class="ico"><use href="/style/icons.svg#i-attach"/></svg></button>
+          <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
+          <div class="chatbtns">
+            <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
+            <button id="chatSend" type="button" class="primary">Send</button>
+          </div>
         </div>
       </div>
     </div>
   </aside>
+
+  <footer class="statusbar">
+    <span id="connIndicator" class="conn"></span>
+    <span>Agent <b id="sbAgent"></b></span>
+    <span id="sbWorking" hidden>Working <b id="sbWorkingTime"></b></span>
+    <button id="approvalAlert" class="alert" type="button" title="Go to the pending approval" hidden><svg class="ico"><use href="/style/icons.svg#i-alert"/></svg><span id="approvalAlertText"></span></button>
+    <span id="sbPin" class="push"></span>
+    <span id="sbMode"></span>
+    <span id="sbAxis"></span>
+  </footer>
 </div>
 
 <div id="settingsModal" class="modal" hidden></div>
