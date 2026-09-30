@@ -27,7 +27,7 @@ from .http.routes_mcp import register_mcp_routes
 from .http.routes_settings import register_settings_routes
 from .http.routes_viewer import VIEWER_HTML, register_routes
 from .http.ws import host_is_allowed, ping_forever, refusal, register_ws
-from .session.base import AgentModelChanged, AgentStatus, CalloutsChanged, ModelsChanged
+from .session.base import AgentModelChanged, CalloutsChanged, ModelsChanged
 from .session.events import EventLog
 from .viewers import ViewerBus, ViewerRegistry
 
@@ -467,23 +467,19 @@ def _event_publisher(registry, event_log, session_info=None):
     is a hole in the history.
 
     ``session_info``, when given, is the same mutable dict ``register_ws``'s
-    ``_greet`` reads fresh on every ``hello`` (``http/ws.py``), and two events
-    here update it in place before they reach the log. ``AgentModelChanged``
-    means a live ``set_model`` actually took effect, and ``AgentStatus`` means
-    the agent finished starting (or failed to). Without this, a browser tab
-    connecting later only recovers either value while the event that
-    announced it is still inside the replay ring buffer; once evicted, a fresh
-    ``hello`` would fall back to the CLI-configured starting model and to the
-    status as it stood when the app was built, which reads as a working agent
-    permanently "Connecting".
+    ``_greet`` reads fresh on every ``hello`` (``http/ws.py``): an
+    ``AgentModelChanged`` here means a live ``set_model`` actually took
+    effect, so ``session_info["model"]`` is updated in place before the event
+    reaches the log. Without this, a browser tab connecting after the switch
+    only recovers the running model while the event that announced it is
+    still inside the replay ring buffer; once evicted, a fresh ``hello``
+    would otherwise fall back to permanently showing the CLI-configured
+    starting model instead of what the session is actually running.
     """
 
     def publish(event):
-        if session_info is not None:
-            if isinstance(event, AgentModelChanged):
-                session_info["model"] = event.model
-            elif isinstance(event, AgentStatus):
-                session_info["agent"] = event.status
+        if session_info is not None and isinstance(event, AgentModelChanged):
+            session_info["model"] = event.model
         seq = event_log.append(event)
         frame = protocol.build_event(seq, event.to_wire())
         asyncio.ensure_future(registry.broadcast(frame))
