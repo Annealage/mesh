@@ -77,7 +77,9 @@ export function onPaletteChange(fn) {
   listeners.add(fn);
 }
 
-matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+// scheme.js fires this for the OS scheme changing and for the human's own
+// choice; a forced scheme never reaches matchMedia.
+document.documentElement.addEventListener("schemechange", () => {
   const pal = palette();
   listeners.forEach((fn) => fn(pal));
 });
