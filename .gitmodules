@@ -1,3 +1,6 @@
 [submodule "lib/agent"]
 	path = lib/agent
 	url = https://github.com/Annealage/agent.git
+[submodule "lib/style"]
+	path = lib/style
+	url = https://github.com/Annealage/style.git

@@ -9,6 +9,9 @@ Registers, against one served directory:
                                   resolved through the static asset index
                                   (the agent layer's own front end is served
                                   separately, under /agent/static/)
+    GET  /style/<path:rel>        the shared brand styling (tokens, theme,
+                                  fonts, icons, marks), resolved through its
+                                  own static asset index over STYLE_DIR
     GET  /manifest                model listing, rescanned at most once per
                                   INDEX_CACHE_TTL (annealage_agent/http/static.py) seconds
     GET  /model/<path:rel>        model bytes, resolved through the manifest
@@ -60,6 +63,17 @@ from .. import paths
 _RECORD_FILE_MODE = 0o644
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+# The shared brand styling, the lib/style submodule. A wheel carries the files
+# it ships as annealage_mesh/style (hatch_build.py); a checkout has no such
+# directory and serves the submodule where it sits, so an edit there shows up
+# on the next request without a copy step in between.
+_PACKAGED_STYLE_DIR = Path(__file__).resolve().parent.parent / "style"
+STYLE_DIR = (
+    _PACKAGED_STYLE_DIR
+    if _PACKAGED_STYLE_DIR.is_dir()
+    else Path(__file__).resolve().parents[3] / "lib" / "style"
+)
 # Exists for the CLI's own startup check, so a missing packaged viewer.html
 # is reported before a socket is even opened. It is not a route input: the
 # index route resolves "viewer.html" through the static asset index like
@@ -145,6 +159,7 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     # then stay invisible until something else happened to change.
     app.mesh_invalidate_model_index = invalidate_index
     serve_static = static_tree(STATIC_DIR)
+    serve_style = static_tree(STYLE_DIR)
 
     @app.get("/")
     @app.get("/index.html")
@@ -159,6 +174,10 @@ def register_routes(app, serve_dir, *, token=None, allowed_origins=(), require_t
     @app.get("/static/<path:rel>")
     async def static_asset(req, rel):
         return await serve_static(req, unquote(rel), rel)
+
+    @app.get("/style/<path:rel>")
+    async def style_asset(req, rel):
+        return await serve_style(req, unquote(rel), rel)
 
     @app.get("/manifest")
     async def manifest(req):
