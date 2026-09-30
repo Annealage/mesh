@@ -94,7 +94,7 @@ initSketch({ container: appEl, captureView: scene3d.captureView,
 wsApi = initWs({
   onEvent: {
     review_changed: () => pinsApi.refetchCallouts(),
-    models_changed: () => modelsApi.refetchModels(),
+    models_changed: () => modelsApi.modelsChanged(),
   },
   onLive: () => {
     pinsApi.stopCalloutsPoll();

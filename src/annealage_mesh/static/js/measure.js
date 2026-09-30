@@ -13,6 +13,7 @@
 import * as THREE from "three";
 import { store } from "./store.js";
 import { disposeSprite, makeTagSprite } from "./sprites.js";
+import { onPaletteChange, palette } from "./palette.js";
 
 export function initMeasure({ scene, markerRadius }) {
   const mA = document.getElementById("mA");
@@ -22,6 +23,7 @@ export function initMeasure({ scene, markerRadius }) {
   scene.add(measureGroup);
   let measureLine = null;
   let measureLabel = null;
+  let pal = palette();
 
   function round(v, d = 2) {
     const f = Math.pow(10, d);
@@ -68,13 +70,13 @@ export function initMeasure({ scene, markerRadius }) {
       '<div class="len">' + round(dist) + " mm</div>";
 
     const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)]);
-    const mat = new THREE.LineDashedMaterial({ color: 0xffd24a, dashSize: 3, gapSize: 2, depthTest: false });
+    const mat = new THREE.LineDashedMaterial({ color: pal.measure, dashSize: 3, gapSize: 2, depthTest: false });
     measureLine = new THREE.Line(geo, mat);
     measureLine.computeLineDistances();
     measureGroup.add(measureLine);
 
     const rad = markerRadius();
-    measureLabel = makeTagSprite(round(dist) + " mm", "#ffd24a");
+    measureLabel = makeTagSprite(round(dist) + " mm", pal.measure, pal.view);
     measureLabel.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2 + rad * 1.5);
     measureLabel.scale.set(rad * 3 * measureLabel.userData.aspect, rad * 3, 1);
     measureGroup.add(measureLabel);
@@ -116,6 +118,12 @@ export function initMeasure({ scene, markerRadius }) {
       store.setMeasure(validA, validB);
     }
   }
+
+  onPaletteChange((next) => {
+    pal = next;
+    const state = store.getState();
+    updateMeasure(measurables(state), state.measure.a, state.measure.b);
+  });
 
   mA.addEventListener("change", () => store.setMeasure(mA.value, mB.value));
   mB.addEventListener("change", () => store.setMeasure(mA.value, mB.value));
