@@ -1,4 +1,13 @@
 :root { color-scheme: dark; --bar: 48px; --side-w: 340px; --chat-w: 360px; }
+/* The 3D view's colours, read by js/palette.js. Dark only, matching the rest
+   of this sheet; the brand tokens override these per colour scheme. */
+:root {
+  --view: #121717; --mv-grid: #1b2222; --mv-grid-2: #263030;
+  --pin: #e6edf3; --on-pin: #121717; --pin-selected: #5cb5ab;
+  --callout: #2f8f86; --on-callout: #ffffff; --measure: #5599b8;
+  --mv-part-1: #7c868d; --mv-part-2: #6f8fa6; --mv-part-3: #a08c6e; --mv-part-4: #8a7fa6;
+  --mv-part-5: #6fa08a; --mv-part-6: #a67f7f; --mv-part-7: #9aa06f; --mv-part-8: #7fa0a6;
+}
 html, body { margin: 0; height: 100%; overflow: hidden; background: #14161a; font: 13px/1.4 system-ui, sans-serif; color: #d6d8dc; }
 * { -webkit-tap-highlight-color: transparent; }
 
@@ -84,6 +93,12 @@ body { display: flex; flex-direction: column; }
    fills exactly the same content box three-scene.js's own ResizeObserver
    sizes the renderer's canvas from. */
 #app { flex: 1; min-width: 0; position: relative; }
+.doctab {
+  position: absolute; top: 8px; left: 8px; z-index: 1; pointer-events: none;
+  display: flex; gap: 12px; padding: 4px 10px; border-radius: 4px;
+  background: rgba(20,23,28,.85); color: #9aa; font-size: 12px; white-space: nowrap;
+}
+.doctab .docname { color: #d6d8dc; font-weight: 600; }
 
 #side {
   flex: 0 0 var(--side-w); min-width: 0;

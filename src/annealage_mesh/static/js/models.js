@@ -22,10 +22,7 @@ import * as THREE from "three";
 import { STLLoader } from "./vendor/STLLoader.js";
 import { showError, toast } from "agent/ui.js";
 import { store } from "./store.js";
-
-// Distinct colors auto-assigned to models in manifest order (cycled if
-// there are more models than colors).
-const PALETTE = [0xe86b34, 0xb2b6c0, 0xe8a030, 0x3aa0e8, 0x8890a0, 0x35c7e0, 0xcf5ce8, 0x7ee87a];
+import { onPaletteChange, palette, partColor } from "./palette.js";
 
 /**
  * @param scene     THREE.Scene loaded meshes are added to
@@ -59,15 +56,12 @@ export function initModels({ scene, fitView, meshes }) {
   // alphabetically first would otherwise shift every other part's colour, and
   // the colours are what the parts list, the callout dots and the pins all
   // identify a part by.
-  const colorFor = new Map();
-  let nextColor = 0;
+  const slotFor = new Map();
+  let pal = palette();
 
-  function colorOf(rel) {
-    if (!colorFor.has(rel)) {
-      colorFor.set(rel, PALETTE[nextColor % PALETTE.length]);
-      nextColor += 1;
-    }
-    return colorFor.get(rel);
+  function slotOf(rel) {
+    if (!slotFor.has(rel)) slotFor.set(rel, slotFor.size);
+    return slotFor.get(rel);
   }
 
   function loadPart(model, { fit = false } = {}) {
@@ -76,7 +70,7 @@ export function initModels({ scene, fitView, meshes }) {
       (geo) => {
         geo.computeVertexNormals();
         const mat = new THREE.MeshStandardMaterial({
-          color: model.color,
+          color: partColor(pal, model.slot),
           metalness: 0.15,
           roughness: 0.6,
           // opaque: transparent + depthWrite-off mis-sorts internal faces
@@ -97,6 +91,7 @@ export function initModels({ scene, fitView, meshes }) {
         // card, neither of which three.js reclaims on its own.
         disposeMesh(model.rel);
         meshes[model.rel] = mesh;
+        store.setTriangles(model.rel, geo.index ? geo.index.count / 3 : geo.attributes.position.count / 3);
         applyVisibility(model.rel);
         scene.add(mesh);
         loadedCount += 1;
@@ -117,6 +112,7 @@ export function initModels({ scene, fitView, meshes }) {
     if (previous.geometry) previous.geometry.dispose();
     if (previous.material) previous.material.dispose();
     delete meshes[rel];
+    store.setTriangles(rel, null);
   }
 
   store.subscribe("visibility", () => {
@@ -139,12 +135,12 @@ export function initModels({ scene, fitView, meshes }) {
     cb.addEventListener("change", () => store.setVisibility(m.rel, cb.checked));
     const sw = document.createElement("span");
     sw.className = "sw";
-    sw.style.background = "#" + m.color.toString(16).padStart(6, "0");
+    sw.style.background = partColor(pal, m.slot);
     const txt = document.createElement("span");
     txt.textContent = m.label;
     txt.title = m.rel;
     lab.append(cb, sw, txt);
-    return { lab, cb };
+    return { lab, cb, sw, slot: m.slot };
   }
 
   function renderParts(state) {
@@ -169,7 +165,32 @@ export function initModels({ scene, fitView, meshes }) {
     }
   }
   store.subscribe("models", renderParts);
+
+  onPaletteChange((next) => {
+    pal = next;
+    for (const [rel, row] of partRows) {
+      const colour = partColor(pal, row.slot);
+      row.sw.style.background = colour;
+      if (meshes[rel]) meshes[rel].material.color.set(colour);
+    }
+  });
   store.subscribe("visibility", renderParts);
+
+  // --- The view's document tab: the served folder, the triangle total of the
+  // parts on show, and when this page last saw a model rebuilt. ---
+  const docName = document.getElementById("docName");
+  const docTris = document.getElementById("docTris");
+  const docRebuilt = document.getElementById("docRebuilt");
+  const hhmm = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+
+  function renderDocTab(state) {
+    let total = 0;
+    for (const rel in state.triangles) if (state.visibility[rel]) total += state.triangles[rel];
+    docTris.textContent = total.toLocaleString() + " triangles";
+    docRebuilt.hidden = state.rebuiltAt == null;
+    if (state.rebuiltAt != null) docRebuilt.textContent = "Rebuilt " + hhmm.format(state.rebuiltAt);
+  }
+  ["triangles", "visibility", "rebuiltAt"].forEach((k) => store.subscribe(k, renderDocTab));
 
   function updateTitle(models, dir) {
     // Heading shows exactly what's being reviewed: the file's absolute path
@@ -227,14 +248,18 @@ export function initModels({ scene, fitView, meshes }) {
         if (first) showError("No STLs found in the served directory.");
         return;
       }
-      const withColor = models.map((m) => ({ ...m, color: colorOf(m.rel) }));
+      const withSlot = models.map((m) => ({ ...m, slot: slotOf(m.rel) }));
       const listed = new Set(models.map((m) => m.rel));
       Object.keys(meshes).forEach((rel) => {
         if (!listed.has(rel)) disposeMesh(rel);
       });
-      store.setModels(withColor);
+      store.setModels(withSlot);
       updateTitle(models, j.dir);
-      withColor.forEach((m) => loadPart(m, { fit: first }));
+      if (j.dir) {
+        docName.textContent = j.dir.split(/[\\/]/).filter(Boolean).pop() || j.dir;
+        docName.title = j.dir;
+      }
+      withSlot.forEach((m) => loadPart(m, { fit: first }));
     } catch (e) {
       showError("Failed to load /manifest: " + e.message);
     }
@@ -258,5 +283,14 @@ export function initModels({ scene, fitView, meshes }) {
   // refetchCallouts: as the `models_changed` handler in `onEvent`, and in
   // `onLive`, once on every hello, since a reconnect may have missed the push
   // that happened while the socket was down.
-  return { refetchModels: () => loadManifest() };
+  // `modelsChanged` is the `models_changed` handler and is the only thing
+  // that stamps `rebuiltAt`: a reconnect's refetch reloads the same files and
+  // is not a rebuild.
+  return {
+    refetchModels: () => loadManifest(),
+    modelsChanged: () => {
+      store.setRebuiltAt(Date.now());
+      return loadManifest();
+    },
+  };
 }

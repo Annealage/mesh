@@ -28,10 +28,8 @@ import { toast } from "agent/ui.js";
 import { isNarrow } from "agent/layout.js";
 import { store } from "./store.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
+import { onPaletteChange, palette } from "./palette.js";
 
-const USER_COLOR = 0xe86b34;
-const USER_SEL = 0xffd24a;
-const AGENT_COLOR = 0x35c7e0;
 const TAP_SLOP = 8; // px; below this a pointerup counts as a tap, not an orbit drag
 
 /**
@@ -173,7 +171,16 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   }
 
   // ---- reconcile user-pin markers against state.pins ----
-  store.subscribe("pins", (state) => {
+  let pal = palette();
+
+  function disposeUserMarker(obj) {
+    markerGroup.remove(obj.marker, obj.sprite);
+    obj.marker.geometry.dispose();
+    obj.marker.material.dispose();
+    disposeSprite(obj.sprite);
+  }
+
+  function renderPins(state) {
     const seen = new Set();
     state.pins.forEach((p) => {
       seen.add(p.id);
@@ -181,11 +188,11 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const rad = markerRadius();
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(rad, 16, 12),
-        new THREE.MeshBasicMaterial({ color: USER_COLOR, depthTest: true }),
+        new THREE.MeshBasicMaterial({ color: p.id === state.selectedPinId ? pal.pinSelected : pal.pin, depthTest: true }),
       );
       marker.position.set(p.point[0], p.point[1], p.point[2]);
       markerGroup.add(marker);
-      const sprite = makeLabelSprite(p.id, "#e86b34");
+      const sprite = makeLabelSprite(p.id, pal.pin, pal.onPin);
       sprite.position.set(p.point[0], p.point[1], p.point[2] + rad * 2.2);
       sprite.scale.set(rad * 3, rad * 3, 1);
       markerGroup.add(sprite);
@@ -193,17 +200,15 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     });
     for (const [id, obj] of userSide) {
       if (seen.has(id)) continue;
-      markerGroup.remove(obj.marker, obj.sprite);
-      obj.marker.geometry.dispose();
-      obj.marker.material.dispose();
-      disposeSprite(obj.sprite);
+      disposeUserMarker(obj);
       userSide.delete(id);
     }
     renderPinList(state);
-  });
+  }
+  store.subscribe("pins", renderPins);
 
   store.subscribe("selectedPinId", (state) => {
-    userSide.forEach((obj, id) => obj.marker.material.color.set(id === state.selectedPinId ? USER_SEL : USER_COLOR));
+    userSide.forEach((obj, id) => obj.marker.material.color.set(id === state.selectedPinId ? pal.pinSelected : pal.pin));
     const p = state.pins.find((x) => x.id === state.selectedPinId);
     if (p) {
       controls.target.set(p.point[0], p.point[1], p.point[2]);
@@ -363,7 +368,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     agentSide.length = 0;
   }
 
-  store.subscribe("callouts", (state) => {
+  function renderCallouts(state) {
     clearAgentMarkers();
     const rad = markerRadius();
     state.callouts.forEach((a, i) => {
@@ -371,11 +376,11 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const num = a.id != null ? a.id : i + 1;
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(rad, 16, 12),
-        new THREE.MeshBasicMaterial({ color: AGENT_COLOR, depthTest: true }),
+        new THREE.MeshBasicMaterial({ color: pal.callout, depthTest: true }),
       );
       marker.position.set(p[0], p[1], p[2]);
       agentGroup.add(marker);
-      const sprite = makeLabelSprite(num, "#35c7e0");
+      const sprite = makeLabelSprite(num, pal.callout, pal.onCallout);
       sprite.position.set(p[0], p[1], p[2] + rad * 2.2);
       sprite.scale.set(rad * 3, rad * 3, 1);
       agentGroup.add(sprite);
@@ -410,6 +415,18 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       });
       agentPinsDiv.appendChild(el);
     });
+  }
+  store.subscribe("callouts", renderCallouts);
+
+  // Markers bake their colours into materials and sprite textures, so a
+  // colour-scheme change rebuilds them from the current state.
+  onPaletteChange((next) => {
+    pal = next;
+    userSide.forEach(disposeUserMarker);
+    userSide.clear();
+    const state = store.getState();
+    renderPins(state);
+    renderCallouts(state);
   });
 
   // ws.js pushes a review_changed event over the socket when it is live

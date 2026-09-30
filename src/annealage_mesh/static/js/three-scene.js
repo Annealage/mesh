@@ -17,6 +17,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "./vendor/OrbitControls.js";
 import { makeLabelSprite } from "./sprites.js";
+import { onPaletteChange, palette } from "./palette.js";
 import { store } from "./store.js";
 
 const AXLEN = 60;
@@ -27,7 +28,8 @@ const AXLEN = 60;
  */
 export function initScene(container, { getMeshes }) {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x14161a);
+  const pal = palette();
+  scene.background = new THREE.Color(pal.view);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 20000);
   camera.up.set(0, 0, 1); // default: Z up
@@ -55,9 +57,21 @@ export function initScene(container, { getMeshes }) {
   fill.position.set(-1, -0.8, 0.4);
   scene.add(fill);
 
-  const grid = new THREE.GridHelper(400, 40, 0x3a3f47, 0x282c32);
-  grid.rotation.x = Math.PI / 2; // grid on XY (z=0)
+  function makeGrid(p) {
+    const g = new THREE.GridHelper(400, 40, p.grid2, p.grid);
+    g.rotation.x = Math.PI / 2; // grid on XY (z=0)
+    return g;
+  }
+  let grid = makeGrid(pal);
   scene.add(grid);
+  onPaletteChange((p) => {
+    scene.background.set(p.view);
+    scene.remove(grid);
+    grid.geometry.dispose();
+    grid.material.dispose();
+    grid = makeGrid(p);
+    scene.add(grid);
+  });
   scene.add(new THREE.AxesHelper(AXLEN)); // X red, Y green, Z blue
   // labelled axis ends; colours match the AxesHelper.
   [
@@ -65,7 +79,7 @@ export function initScene(container, { getMeshes }) {
     ["Y", "#4dd24d", [0, AXLEN + 10, 0]],
     ["Z", "#4d8cff", [0, 0, AXLEN + 10]],
   ].forEach(([t, col, pos]) => {
-    const s = makeLabelSprite(t, col);
+    const s = makeLabelSprite(t, col, "#14161a");
     s.position.set(pos[0], pos[1], pos[2]);
     s.scale.set(14, 14, 1);
     scene.add(s);

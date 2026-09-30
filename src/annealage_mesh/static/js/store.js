@@ -19,8 +19,8 @@
  * `setVisibility`, so a programmatic call moves both.
  *
  * No THREE object is ever a state value. A pin's location is a 3-element
- * number array, not a THREE.Vector3; a model's colour is a hex number, not a
- * THREE.Color. Any THREE object that represents a piece of state, a pin's
+ * number array, not a THREE.Vector3; a model's colour is a palette slot
+ * number, not a THREE.Color. Any THREE object that represents a piece of state, a pin's
  * marker mesh, a loaded model's Mesh, lives in a side table in whichever
  * module created it (pins.js, models.js) and is reconciled against store
  * state by a subscriber; it never becomes a state value itself. That is what
@@ -28,13 +28,18 @@
  * a pointer event does.
  *
  * State shape (this slice's keys):
- *   models        [{name, file, path, rel, label, color}, ...]
- *                 manifest entries as fetched, plus a display `color`
- *                 (a hex number) assigned by models.js from a fixed
- *                 palette. `rel` is the key used everywhere else. Not to be
+ *   models        [{name, file, path, rel, label, slot}, ...]
+ *                 manifest entries as fetched, plus the part-colour `slot`
+ *                 models.js assigns on first sight; js/palette.js maps it
+ *                 to the current scheme's colour. `rel` is the key used everywhere else. Not to be
  *                 confused with `chat.model`, the LLM backend's model.
  *   visibility    {rel: boolean}
  *                 per-part show/hide, keyed by the same `rel` as `models`.
+ *   triangles     {rel: number}
+ *                 triangle count of each part's currently loaded mesh.
+ *   rebuiltAt     number | null
+ *                 epoch ms at which this page last loaded a changed model
+ *                 after the first load; null until something changes.
  *   mode          'nav' | 'annotate'
  *   upAxis        'z' | 'y'
  *   pins          [{id, part, rel, point, normal, faceIndex, label,
@@ -64,6 +69,8 @@ import { defineSlice, store as pageStore } from "agent/store.js";
 const update = defineSlice({
   models: Object.freeze([]),
   visibility: Object.freeze({}),
+  triangles: Object.freeze({}),
+  rebuiltAt: null,
   mode: "nav",
   upAxis: "z",
   pins: Object.freeze([]),
@@ -97,6 +104,19 @@ function setVisibility(rel, on) {
   update(["visibility"], (state) => ({
     visibility: Object.freeze({ ...state.visibility, [rel]: !!on }),
   }));
+}
+
+function setTriangles(rel, count) {
+  update(["triangles"], (state) => {
+    const triangles = { ...state.triangles };
+    if (count == null) delete triangles[rel];
+    else triangles[rel] = count;
+    return { triangles: Object.freeze(triangles) };
+  });
+}
+
+function setRebuiltAt(ms) {
+  update(["rebuiltAt"], () => ({ rebuiltAt: ms }));
 }
 
 function setMode(mode) {
@@ -169,6 +189,8 @@ export const store = Object.freeze({
   ...pageStore,
   setModels,
   setVisibility,
+  setTriangles,
+  setRebuiltAt,
   setMode,
   setUpAxis,
   addPin,

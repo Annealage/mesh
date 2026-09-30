@@ -14,17 +14,18 @@
 
 import * as THREE from "three";
 
-/** A round badge sprite carrying a short label (a pin number, an axis letter). */
-export function makeLabelSprite(text, hexColor) {
+/** A round badge sprite carrying a short label (a pin number, an axis letter),
+ * `text` drawn in `textColor` on a `fill` disc; both are CSS colour strings. */
+export function makeLabelSprite(text, fill, textColor) {
   const c = document.createElement("canvas");
   c.width = 64;
   c.height = 64;
   const ctx = c.getContext("2d");
-  ctx.fillStyle = hexColor;
+  ctx.fillStyle = fill;
   ctx.beginPath();
   ctx.arc(32, 32, 30, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#14161a";
+  ctx.fillStyle = textColor;
   ctx.font = "bold 34px system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
@@ -36,11 +37,12 @@ export function makeLabelSprite(text, hexColor) {
 
 /**
  * A pill-shaped text tag, for longer strings like a measurement readout,
- * distinct from makeLabelSprite's round number badge. `userData.aspect`
- * (width/height of the drawn canvas) lets the caller scale the sprite to a
- * non-square size without distorting the text.
+ * distinct from makeLabelSprite's round number badge: `color` for the text
+ * and outline on a `background` fill. `userData.aspect` (width/height of the
+ * drawn canvas) lets the caller scale the sprite to a non-square size without
+ * distorting the text.
  */
-export function makeTagSprite(text, hexColor) {
+export function makeTagSprite(text, color, background) {
   const font = "bold 40px system-ui, sans-serif";
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = font;
@@ -59,14 +61,14 @@ export function makeTagSprite(text, hexColor) {
     ctx.arcTo(x, y, x + ww, y, r);
     ctx.closePath();
   };
-  ctx.fillStyle = "#14161ae0";
+  ctx.fillStyle = background;
   pill(0);
   ctx.fill();
-  ctx.strokeStyle = hexColor;
+  ctx.strokeStyle = color;
   ctx.lineWidth = 3;
   pill(1.5);
   ctx.stroke();
-  ctx.fillStyle = hexColor;
+  ctx.fillStyle = color;
   ctx.font = font;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
