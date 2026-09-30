@@ -28,7 +28,9 @@ import { initSketch } from "./sketch.js";
 import { initChrome } from "./chrome.js";
 import { stylesReady } from "./palette.js";
 
-await stylesReady;
+// Sprite labels are drawn to a canvas once, so Chivo has to be loaded by
+// then or they keep the fallback face.
+await Promise.all([stylesReady, document.fonts.load("600 34px Chivo").catch(() => {})]);
 
 const appEl = document.getElementById("app");
 

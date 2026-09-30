@@ -32,10 +32,10 @@ export function initMeasure({ scene, markerRadius }) {
 
   function measurables(state) {
     const list = [];
-    state.pins.forEach((p) => list.push({ key: "u" + p.id, label: "U" + p.id + " · " + p.part, point: p.point }));
+    state.pins.forEach((p) => list.push({ key: "u" + p.id, label: "U" + p.id + " " + p.part, point: p.point }));
     state.callouts.forEach((a, i) => {
       const num = a.id != null ? a.id : i + 1;
-      list.push({ key: "a" + num, label: "A" + num + " · " + (a.part || "unknown"), point: a.point || [0, 0, 0] });
+      list.push({ key: "a" + num, label: "A" + num + " " + (a.part || "unknown"), point: a.point || [0, 0, 0] });
     });
     return list;
   }

@@ -26,7 +26,7 @@ export function makeLabelSprite(text, fill, textColor) {
   ctx.arc(32, 32, 30, 0, Math.PI * 2);
   ctx.fill();
   ctx.fillStyle = textColor;
-  ctx.font = "bold 34px system-ui, sans-serif";
+  ctx.font = "600 34px Chivo, system-ui, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(String(text), 32, 34);
@@ -43,7 +43,7 @@ export function makeLabelSprite(text, fill, textColor) {
  * distorting the text.
  */
 export function makeTagSprite(text, color, background) {
-  const font = "bold 40px system-ui, sans-serif";
+  const font = "600 40px Chivo, system-ui, sans-serif";
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = font;
   const w = Math.ceil(probe.measureText(text).width) + 28;
