@@ -11,13 +11,15 @@ requires-python = ">=3.10"
 # The wheel ships the vendored three.js files (MIT, the three.js authors)
 # beside this project's own PolyForm code, so the expression names both. It
 # also ships the agent package (PolyForm, below), whose licence carries its
-# own required notice.
-license = "PolyForm-Noncommercial-1.0.0 AND MIT"
+# own required notice, and the brand styling's Chivo fonts (OFL).
+license = "PolyForm-Noncommercial-1.0.0 AND MIT AND OFL-1.1"
 license-files = [
     "LICENSE",
     "src/annealage_mesh/static/js/vendor/LICENSE",
     "skill/annealage-mesh/LICENSE",
     "lib/agent/LICENSE",
+    "lib/style/LICENSE",
+    "lib/style/fonts/OFL.txt",
 ]
 authors = [
     { name = "Andrew Leech", email = "andrew@alelec.net" },
@@ -146,6 +148,13 @@ include = [
     "/lib/agent/src/annealage_agent",
     "/lib/agent/pyproject.toml",
     "/lib/agent/LICENSE",
+    "/lib/style/tokens.css",
+    "/lib/style/theme.css",
+    "/lib/style/icons.svg",
+    "/lib/style/LICENSE",
+    "/lib/style/fonts",
+    "/lib/style/marks/mesh-layers.svg",
+    "/lib/style/marks/mesh-layers-dark.svg",
     "/README.md",
     "/LICENSE",
     "/LICENSES",
@@ -171,6 +180,7 @@ include = [
 artifacts = [
     "src/annealage_mesh/static/**",
     "lib/agent/src/annealage_agent/static/**",
+    "lib/style/**",
 ]
 
 # annealage-agent is the git submodule lib/agent, and uv installs it from
