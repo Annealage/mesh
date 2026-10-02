@@ -4,7 +4,7 @@ An agentic CAD workbench for 3D-printable parts. A 3D viewer and a chat pane sit
 
 You give it a folder, it scaffolds a parametric CadQuery project and starts a local server. Ask for a part, the agent writes the geometry, and the STL turns up in the viewer within a fraction of a second. Click the face that's wrong, type what's wrong with it, and the agent revises the script. You can pin your problems on the model, the agent can pin its questions right back, and the two of you iterate on a shared surface instead of trading paragraphs about which corner you mean.
 
-![Annealage Mesh on the side-scroll fan duct for a dual V100 radiator: a human's orange pin on a turning vane, the agent's cyan callouts measuring what restricts the airflow, the review panel, and the chat pane with its findings](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-three-pane.png)
+![Annealage Mesh on the side-scroll fan duct for a dual V100 radiator: a human's pin on a turning vane, the agent's numbered callouts measuring what restricts the airflow, the review panel, and the chat pane with its findings](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-three-pane.png)
 
 ## Why
 
@@ -116,7 +116,7 @@ The agent's shell runs sandboxed, so a command that stays inside the project fol
 
 Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the things that leave something behind after you close the page: writing a callout, deleting one, saving a screenshot, and setting a measured value in `dimensions.json`.
 
-![An approval card for a Write of the side scroll's airflow notes, showing the whole file path and contents, with Allow, Always allow and Deny](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-approval.png)
+![Approval cards for the agent setting the vanes' measured blockage in dimensions.json, each showing the key, value and where it came from, with Allow, Always allow and Deny](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-approval.png)
 
 Four things worth knowing about the containment. The sandbox stops writes and network, not reads, so on its own a contained shell could read anything your user can. Mesh refuses a short list of credential paths on top of that (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.gnupg`, `~/.netrc`, `~/.docker/config.json`, `~/.config/gh` and its own `~/.claude/.credentials.json`), for the file tools and for shell commands that name them. Be clear on how far that goes: for the file tools it's exact, symlinks included, but for a shell command it's text matching, so a path built from a variable or a glob gets through. It raises the floor against accidents and direct attempts; it isn't a wall against a determined agent. `git` is deliberately outside the sandbox, because it has to see the real filesystem to work on your repository; that is a large carve-out, since git can be told to run commands through its own config, so a folder whose `.git/config` names one is refused until you accept it (below). And the model can't drop the sandbox for a command by asking, which it does try if you let it.
 

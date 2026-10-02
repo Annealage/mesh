@@ -341,7 +341,7 @@ One server per directory at a time. A second one refuses to start and tells you 
 
 Below about 900 px wide the panes become tabs: Model, Review, Chat. Everything works, including pins and approval cards.
 
-<img src="mesh-phone-chat.png" alt="The narrow layout: Model, Review and Chat as tabs, with an approval card for a Write awaiting a decision" width="380">
+<img src="mesh-phone-chat.png" alt="The narrow layout: Model, Review and Chat as tabs, with approval cards for measured values awaiting a decision" width="380">
 
 
 To reach it from a phone, the simplest safe route is Tailscale:
