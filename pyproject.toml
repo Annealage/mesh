@@ -150,6 +150,7 @@ include = [
     "/lib/agent/LICENSE",
     "/lib/style/tokens.css",
     "/lib/style/theme.css",
+    "/lib/style/scheme.js",
     "/lib/style/icons.svg",
     "/lib/style/LICENSE",
     "/lib/style/fonts",

@@ -53,6 +53,7 @@ STYLE_DIR = os.path.join("lib", "style")
 STYLE_FILES = (
     "tokens.css",
     "theme.css",
+    "scheme.js",
     "icons.svg",
     "LICENSE",
     "fonts",
