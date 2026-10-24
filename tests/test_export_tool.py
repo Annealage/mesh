@@ -2,7 +2,7 @@
 into ``review/``.
 
 The human's Export button, ``POST /session/<sid>/export``, is the agent
-layer's route and is tested in annealage-agent's suite, as are the rendering
+layer's route and is tested in annealage-ember's suite, as are the rendering
 and the containment of the write (its ``tests/test_export.py``). The tool is
 Mesh's: it is write-class, so it is absent from every allow list and reaches
 the broker (asserted in ``tests/test_tools.py``); what is asserted here is
@@ -13,9 +13,9 @@ can act on, when there is no session to export or its arguments are wrong.
 import json
 
 import pytest
-from annealage_agent import files, sessions
-from annealage_agent.session import events
-from annealage_agent.session.base import TextDelta, ToolUse
+from annealage_ember import files, sessions
+from annealage_ember.session import events
+from annealage_ember.session.base import TextDelta, ToolUse
 
 from annealage_mesh.tools import registry
 

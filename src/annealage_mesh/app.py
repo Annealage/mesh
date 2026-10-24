@@ -1,7 +1,7 @@
 """Mesh's application: the agent layer's app plus the viewer, and the watcher
 that tells the page when its models change.
 
-``create_app`` builds the agent layer's app (``annealage_agent/app.py``) for one served
+``create_app`` builds the agent layer's app (``annealage_ember/app.py``) for one served
 directory with Mesh's pieces plugged in: the viewer routes
 (``http/routes_viewer.py``), Mesh's tool server, Mesh's review store
 (``review.py``, the two published comment files) and the viewer page whose
@@ -18,8 +18,8 @@ import os
 import pathlib
 import time
 
-from annealage_agent import app as agent_app
-from annealage_agent import net, protocol
+from annealage_ember import app as agent_app
+from annealage_ember import net, protocol
 
 from . import (
     paths,

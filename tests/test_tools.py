@@ -2,7 +2,7 @@
 
 The tool server's own mechanisms (how a grading derives what is pre-allowed
 and what the pause switch refuses, the refusal of an unclassified tool, and
-the mapping of a viewer call's four failures) are tested in annealage-agent's
+the mapping of a viewer call's four failures) are tested in annealage-ember's
 suite against a toy product. What is pinned here is Mesh's use of them, and
 Mesh's handlers.
 
@@ -35,8 +35,8 @@ import os
 import struct
 
 import pytest
-from annealage_agent import files
-from annealage_agent.tools import namespaced
+from annealage_ember import files
+from annealage_ember.tools import namespaced
 
 from annealage_mesh import paths
 from annealage_mesh.tools import registry
@@ -196,7 +196,7 @@ async def test_every_classified_tool_exists_and_every_built_tool_is_classified(p
 async def test_the_pre_allowed_names_are_exactly_what_the_session_pre_allows(project):
     """The two lists are one list, and this is the seam where a divergence
     would show up as a pre-allowed name matching nothing (fact 1): the tool
-    server's ``pre_allowed`` is what annealage-agent's ``launch.py`` hands the Claude
+    server's ``pre_allowed`` is what annealage-ember's ``launch.py`` hands the Claude
     session as its allow list, namespaced under the server's own name."""
     tools = registry.MeshTools(FakeBus(), project)
     assert tools.pre_allowed == tuple(namespaced("mesh", name) for name in EXPECTED_PRE_ALLOWED)

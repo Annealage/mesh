@@ -29,9 +29,9 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from annealage_agent import backends, diagnostics, launch, lock, net, sessions
-from annealage_agent import settings as settings_module
-from annealage_agent.http.routes_login import LoginNonces
+from annealage_ember import backends, diagnostics, launch, lock, net, sessions
+from annealage_ember import settings as settings_module
+from annealage_ember.http.routes_login import LoginNonces
 
 from . import (
     __version__,
@@ -288,7 +288,7 @@ class _SdkRequirements:
     """
 
     def __getattr__(self, name):
-        from annealage_agent.session import sdk
+        from annealage_ember.session import sdk
 
         return getattr(sdk, name)
 
@@ -882,7 +882,7 @@ def main(argv=None):
         # session-start hook running, and by the time a session exists that has
         # already happened. Viewer-only mode starts no agent CLI, so nothing in
         # the directory is ever read as configuration and the gate is moot.
-        from annealage_agent.session import workspace_trust
+        from annealage_ember.session import workspace_trust
 
         trusted_digest = workspace_trust.config_digest(serve_dir)
         if trusted_digest != workspace_trust.EMPTY_DIGEST:
@@ -962,12 +962,12 @@ def main(argv=None):
 
     # The browser this run opens is launched with its URL on a command line,
     # readable through ps, so that URL carries a single-use login nonce rather
-    # than the token (annealage_agent/http/routes_login.py). The banner keeps printing
+    # than the token (annealage_ember/http/routes_login.py). The banner keeps printing
     # the reusable #t= link for a second tab or another device.
     login = LoginNonces()
     # The second per-run secret: the only credential /mcp accepts, handed to
     # the Codex stdio bridge in place of the browser token above, which only
-    # the human's browser ever holds (annealage_agent/http/routes_mcp.py says why).
+    # the human's browser ever holds (annealage_ember/http/routes_mcp.py says why).
     agent_token = net.generate_token()
 
     # Held so on_ready can report the posture the session actually got, rather
@@ -983,7 +983,7 @@ def main(argv=None):
         browser through, which is why this is a factory: the session must not
         exist before either of the things it uses.
 
-        The backend switch itself is the agent layer's (``annealage_agent/launch.py``),
+        The backend switch itself is the agent layer's (``annealage_ember/launch.py``),
         which imports each backend's session module only inside its own
         branch, so viewer-only mode, and anything that only wants the CLI's
         argument parsing, never pays for importing an agent SDK.

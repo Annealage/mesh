@@ -9,7 +9,7 @@ visible through a route's response. ``tests/test_routes_viewer.py`` covers
 the same contracts again through microdot's ``TestClient``, proving the
 routes actually wire this module's results through to a client rather than
 only that the module itself is correct. The agent layer's static scan and file
-creation (``annealage_agent.files``) are tested in annealage-agent's suite.
+creation (``annealage_ember.files``) are tested in annealage-ember's suite.
 """
 
 import os

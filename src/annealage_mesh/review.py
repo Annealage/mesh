@@ -1,6 +1,6 @@
 """Mesh's review store: the two published files behind the shared review model.
 
-The agent layer's review model (``annealage_agent.review``) is what Mesh's
+The agent layer's review model (``annealage_ember.review``) is what Mesh's
 review tools, ``GET /review`` and the ``review_changed`` push are built on.
 Mesh does not keep that model in the agent layer's own file format, because it
 already has one that is published: the README and the MIT skill document two
@@ -43,8 +43,8 @@ How the two map onto ``Comment``, both ways:
 
 import json
 
-from annealage_agent import files
-from annealage_agent.review import (
+from annealage_ember import files
+from annealage_ember.review import (
     HUMAN,
     MODEL,
     AnchorSpace,

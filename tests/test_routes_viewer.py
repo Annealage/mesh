@@ -22,9 +22,9 @@ import os
 from pathlib import Path
 
 import pytest
-from annealage_agent import files
-from annealage_agent.app import MAX_REQUEST_BODY
-from annealage_agent.http import static as agent_static
+from annealage_ember import files
+from annealage_ember.app import MAX_REQUEST_BODY
+from annealage_ember.http import static as agent_static
 from conftest import TEST_AUTHORITY, TEST_HOST, make_test_client
 from microdot import Request
 
@@ -1019,7 +1019,7 @@ def _agent_client(served_dir, token=SUBMIT_TOKEN):
     The session is created for real rather than named, because the app opens
     that session's event log on construction.
     """
-    from annealage_agent import sessions
+    from annealage_ember import sessions
 
     return make_test_client(
         create_app(

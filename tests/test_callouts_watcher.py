@@ -14,9 +14,9 @@ import asyncio
 import json
 
 import pytest
-from annealage_agent import sessions
-from annealage_agent.review import ReviewWatcher
-from annealage_agent.session.fake import FakeSession
+from annealage_ember import sessions
+from annealage_ember.review import ReviewWatcher
+from annealage_ember.session.fake import FakeSession
 from conftest import TEST_HOST
 
 from annealage_mesh import paths

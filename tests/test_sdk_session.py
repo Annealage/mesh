@@ -1,7 +1,7 @@
 """Mesh's own tools reaching a Claude session's allow list.
 
 How ``SdkSession`` drives the real ``ClaudeSDKClient``, and how ``launch.py``
-hands a product's tool server to it, is ``annealage_agent``'s own suite,
+hands a product's tool server to it, is ``annealage_ember``'s own suite,
 exercised there against its toy product. What stays here is the one fact that
 suite cannot state: that the list Mesh's own tools arrive at the session with
 is exactly the read- and view-grade Mesh tools, and none of the five that
@@ -10,8 +10,8 @@ leave something on disk.
 
 from types import SimpleNamespace
 
-from annealage_agent import launch, sessions
-from annealage_agent import settings as settings_module
+from annealage_ember import launch, sessions
+from annealage_ember import settings as settings_module
 
 from annealage_mesh.tools.registry import MeshTools
 

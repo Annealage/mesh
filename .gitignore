@@ -15,7 +15,7 @@ downloads/
 eggs/
 .eggs/
 lib/
-# ...except this repository's own: lib/agent, the annealage-agent submodule
+# ...except this repository's own: lib/ember, the annealage-ember submodule
 !/lib/
 lib64/
 parts/

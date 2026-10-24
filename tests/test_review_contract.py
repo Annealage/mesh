@@ -20,8 +20,8 @@ import json
 from pathlib import Path
 
 import pytest
-from annealage_agent.review import ReviewWatcher
-from annealage_agent.tools import namespaced
+from annealage_ember.review import ReviewWatcher
+from annealage_ember.tools import namespaced
 from conftest import TEST_HOST, make_test_client
 
 from annealage_mesh import paths, review

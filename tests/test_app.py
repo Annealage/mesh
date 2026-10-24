@@ -9,7 +9,7 @@ script by hash rather than allowing inline script by category.
 """
 
 import pytest
-from annealage_agent import app as agent_app
+from annealage_ember import app as agent_app
 
 from annealage_mesh.http.routes_viewer import VIEWER_HTML
 

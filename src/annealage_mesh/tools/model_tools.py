@@ -15,8 +15,8 @@ models watcher already use.
 import asyncio
 import os
 
-from annealage_agent import files
-from annealage_agent.tools import fail, ok
+from annealage_ember import files
+from annealage_ember.tools import fail, ok
 from claude_agent_sdk import tool
 
 from .. import paths, stl

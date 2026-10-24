@@ -7,7 +7,7 @@ on:
   # commit whose suite was never run.
   workflow_call:
 
-# annealage-agent is the git submodule lib/agent, which uv installs from
+# annealage-ember is the git submodule lib/ember, which uv installs from
 # (pyproject.toml's [tool.uv.sources]), so every job that resolves Mesh's
 # dependencies checks submodules out. The agent repository is public.
 jobs:
@@ -28,7 +28,7 @@ jobs:
           # The version comes from the git tag (hatch-vcs), and the default
           # shallow checkout fetches none, which would build every install in
           # this job as a 0.0.0 fallback. The same goes for the agent's own
-          # version in lib/agent, so the submodule is fetched whole too.
+          # version in lib/ember, so the submodule is fetched whole too.
           fetch-depth: 0
           submodules: true
 
@@ -47,7 +47,7 @@ jobs:
           # that is never present.
           cache-dependency-glob: |
             pyproject.toml
-            lib/agent/pyproject.toml
+            lib/ember/pyproject.toml
 
       - name: install omp-rpc
         # Not a pyproject.toml extra: it is not on PyPI, and a direct git
@@ -74,7 +74,7 @@ jobs:
       # The Python suite covers no JavaScript at all, so a syntax error in a
       # module under static/js/ leaves it entirely green while the viewer
       # fails to boot. This is two seconds and catches exactly that. The chat
-      # pane's modules are annealage-agent's, and its own CI checks them.
+      # pane's modules are annealage-ember's, and its own CI checks them.
       - name: every browser module parses
         run: |
           for f in src/annealage_mesh/static/js/*.js \
@@ -133,7 +133,7 @@ jobs:
           # that is never present.
           cache-dependency-glob: |
             pyproject.toml
-            lib/agent/pyproject.toml
+            lib/ember/pyproject.toml
 
       - name: install chromium
         run: uv run --extra dev --extra e2e playwright install --with-deps chromium

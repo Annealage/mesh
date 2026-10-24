@@ -1,8 +1,8 @@
 """Tests for Mesh's ``doctor`` command against the agent layer's diagnostics
-collector (``annealage_agent.diagnostics``).
+collector (``annealage_ember.diagnostics``).
 
 The collector itself, and ``GET /settings`` shipping what it collects, are
-tested in annealage-agent's own suite. What stays here is Mesh's report: the
+tested in annealage-ember's own suite. What stays here is Mesh's report: the
 lines ``doctor`` prints from those facts, and that ``doctor`` and Mesh's
 ``GET /settings`` resolve the same project's settings into the same facts.
 
@@ -16,7 +16,7 @@ import json
 import os
 
 import pytest
-from annealage_agent import diagnostics, settings
+from annealage_ember import diagnostics, settings
 from conftest import TEST_HOST, make_test_client
 
 from annealage_mesh import cli

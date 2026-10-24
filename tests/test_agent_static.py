@@ -9,7 +9,7 @@ is Mesh's viewer modules on one side.
 """
 
 import pytest
-from annealage_agent.http import static as agent_static
+from annealage_ember.http import static as agent_static
 from conftest import TEST_HOST, make_test_client
 
 from annealage_mesh.app import DEFAULT_PORT, create_app

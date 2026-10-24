@@ -13,7 +13,7 @@ Registers, against one served directory:
                                   fonts, icons, marks), resolved through its
                                   own static asset index over STYLE_DIR
     GET  /manifest                model listing, rescanned at most once per
-                                  INDEX_CACHE_TTL (annealage_agent/http/static.py) seconds
+                                  INDEX_CACHE_TTL (annealage_ember/http/static.py) seconds
     GET  /model/<path:rel>        model bytes, resolved through the manifest
                                   index; the key the recursive scan makes
                                   unique, so this is the only route every
@@ -38,7 +38,7 @@ Files this module reads but never writes:
 Deliberately absent: any route that serves a file under the served
 directory that the manifest scan did not list. The one route that does serve
 unindexed files, ``/asset`` for the images/ subtree, is the agent layer's
-(``annealage_agent/http/routes_chat.py``), because uploads and captures write there.
+(``annealage_ember/http/routes_chat.py``), because uploads and captures write there.
 The viewer's own assets come only from this package's static/ directory,
 resolved through the static asset index, never from the served directory.
 """
@@ -51,10 +51,10 @@ import sys
 from pathlib import Path
 from urllib.parse import unquote
 
-from annealage_agent import files
-from annealage_agent.http import CHUNK_SIZE, Response
-from annealage_agent.http.static import make_index_cache, serve_indexed, static_tree
-from annealage_agent.http.ws import _origin_is_allowed, _token_is_allowed, refusal
+from annealage_ember import files
+from annealage_ember.http import CHUNK_SIZE, Response
+from annealage_ember.http.static import make_index_cache, serve_indexed, static_tree
+from annealage_ember.http.ws import _origin_is_allowed, _token_is_allowed, refusal
 
 from .. import paths
 

@@ -5,23 +5,23 @@ Annealage Mesh publishes to PyPI via GitHub Actions trusted publishing
 release per version.
 
 **The agent package ships inside the wheel, and always will.** Mesh's agent
-side is the separate `annealage-agent` package, which the Annealage products
+side is the separate `annealage-ember` package, which the Annealage products
 take as a git submodule and never from an index, and a published wheel can't
 depend on a path. So a Mesh wheel carries it: `hatch_build.py` copies
-`annealage_agent` from the `lib/agent` submodule, at the commit its gitlink
+`annealage_ember` from the `lib/ember` submodule, at the commit its gitlink
 pins, into the wheel beside `annealage_mesh`, and `pyproject.toml` declares
 the agent's runtime dependencies as Mesh's own. The published metadata names
-no `annealage-agent`. The build refuses to run with `lib/agent` empty, or
+no `annealage-ember`. The build refuses to run with `lib/ember` empty, or
 while `pyproject.toml` lacks one of the agent's dependencies or its codex
-extra's (`tools/bump-agent.sh` lists them after a bump). A release therefore
-ships whatever agent commit `lib/agent` pins: bump it first
-(`tools/bump-agent.sh`, CONTRIBUTING.md) if the release should carry newer
+extra's (`tools/bump-ember.sh` lists them after a bump). A release therefore
+ships whatever agent commit `lib/ember` pins: bump it first
+(`tools/bump-ember.sh`, CONTRIBUTING.md) if the release should carry newer
 agent work, and push that agent commit to GitHub before tagging, since the
 publish workflow checks the submodule out from there.
 
-The installed wheel puts a top-level `annealage_agent` package into the
+The installed wheel puts a top-level `annealage_ember` package into the
 environment with no distribution of its own. Installed beside another copy (a
-second product bundling the agent the same way, or `annealage-agent` itself),
+second product bundling the agent the same way, or `annealage-ember` itself),
 whichever installs last overwrites the other's files, and uninstalling either
 removes them for both. `uvx` and `uv tool install` give each tool its own
 environment, which avoids it.
@@ -63,7 +63,7 @@ checking by hand when the packaging itself has changed:
     # silently dropped them before (see the artifacts note in pyproject.toml)
     unzip -l dist/*.whl | grep -c static/
     # the agent package is in the wheel, and its metadata doesn't require it
-    unzip -l dist/*.whl | grep -c annealage_agent/
+    unzip -l dist/*.whl | grep -c annealage_ember/
     unzip -p dist/*.whl '*.dist-info/METADATA' | grep '^Requires-Dist: annealage'   # prints nothing
 
 The version in those filenames will be a dev version (`1.0.1.dev34`) unless you

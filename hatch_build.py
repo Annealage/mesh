@@ -1,27 +1,27 @@
 """Bundle the agent package and the shared styling into Mesh's wheel.
 
-annealage-agent is not published on its own, and a published wheel cannot
+annealage-ember is not published on its own, and a published wheel cannot
 depend on a path, so a Mesh wheel carries the agent itself: the
-``annealage_agent`` package from the ``lib/agent`` submodule, at the commit its
+``annealage_ember`` package from the ``lib/ember`` submodule, at the commit its
 gitlink pins, as a second top-level package beside ``annealage_mesh``. Its
 runtime dependencies are declared in Mesh's own ``dependencies``
-(pyproject.toml), and Mesh's published metadata names no annealage-agent at
+(pyproject.toml), and Mesh's published metadata names no annealage-ember at
 all.
 
 That copy of the agent's dependencies is checked here, since nothing else
 would notice it falling behind (a checkout installs the agent editable, with
 its own dependencies): a standard wheel refuses to build unless Mesh declares
-every requirement in ``lib/agent/pyproject.toml``'s ``dependencies`` and its
-``codex`` extra, spelled the same. ``tools/bump-agent.sh`` runs the same check
-(``python hatch_build.py``) when it moves ``lib/agent``.
+every requirement in ``lib/ember/pyproject.toml``'s ``dependencies`` and its
+``codex`` extra, spelled the same. ``tools/bump-ember.sh`` runs the same check
+(``python hatch_build.py``) when it moves ``lib/ember``.
 
 Only a standard wheel bundles the agent. An editable install (a development
 checkout) gets it from the ``agent`` dependency group instead, installed
-editable from ``lib/agent``; a copy in site-packages would shadow that and go
-stale on the next change to ``lib/agent``.
+editable from ``lib/ember``; a copy in site-packages would shadow that and go
+stale on the next change to ``lib/ember``.
 
-The sdist carries ``lib/agent/src/annealage_agent`` and
-``lib/agent/pyproject.toml`` (its ``include`` list), so a wheel built from it,
+The sdist carries ``lib/ember/src/annealage_ember`` and
+``lib/ember/pyproject.toml`` (its ``include`` list), so a wheel built from it,
 which is what ``uv build`` does, finds both here too.
 
 The brand styling, the ``lib/style`` submodule, goes in the same way: the
@@ -43,8 +43,8 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
-AGENT_DIR = os.path.join("lib", "agent")
-AGENT_PACKAGE = os.path.join(AGENT_DIR, "src", "annealage_agent")
+AGENT_DIR = os.path.join("lib", "ember")
+AGENT_PACKAGE = os.path.join(AGENT_DIR, "src", "annealage_ember")
 AGENT_PYPROJECT = os.path.join(AGENT_DIR, "pyproject.toml")
 
 STYLE_DIR = os.path.join("lib", "style")
@@ -71,7 +71,7 @@ def _normal(requirement):
 
 
 def missing_agent_requirements(root, dependencies, codex):
-    """What ``lib/agent/pyproject.toml`` requires that Mesh doesn't declare,
+    """What ``lib/ember/pyproject.toml`` requires that Mesh doesn't declare,
     one ``"<requirement> (<where>)"`` line each: its dependencies against
     ``dependencies``, its codex extra against ``codex``."""
     with open(os.path.join(root, AGENT_PYPROJECT), "rb") as fh:
@@ -95,7 +95,7 @@ class BundleAgentHook(BuildHookInterface):
         if not os.path.isfile(os.path.join(source, "__init__.py")):
             raise FileNotFoundError(
                 "%s is missing, so the wheel would ship without the agent package: "
-                "run `git submodule update --init lib/agent` first" % AGENT_PACKAGE
+                "run `git submodule update --init lib/ember` first" % AGENT_PACKAGE
             )
         core = self.metadata.core
         missing = missing_agent_requirements(
@@ -103,11 +103,11 @@ class BundleAgentHook(BuildHookInterface):
         )
         if missing:
             raise ValueError(
-                "the bundled agent (lib/agent) requires what Mesh's pyproject.toml does not "
+                "the bundled agent (lib/ember) requires what Mesh's pyproject.toml does not "
                 "declare, so the wheel would install without it; copy these into Mesh's "
                 "dependencies or codex extra:\n  %s" % "\n  ".join(missing)
             )
-        build_data["force_include"][source] = "annealage_agent"
+        build_data["force_include"][source] = "annealage_ember"
         for rel in STYLE_FILES:
             path = os.path.join(self.root, STYLE_DIR, rel)
             if not os.path.exists(path):
@@ -121,7 +121,7 @@ class BundleAgentHook(BuildHookInterface):
 
 
 if __name__ == "__main__":
-    # tools/bump-agent.sh: the same check against pyproject.toml as it stands.
+    # tools/bump-ember.sh: the same check against pyproject.toml as it stands.
     # Exit 3 when something is missing, so a failure to run at all is told apart.
     here = os.path.dirname(os.path.abspath(__file__))
     with open(os.path.join(here, "pyproject.toml"), "rb") as fh:

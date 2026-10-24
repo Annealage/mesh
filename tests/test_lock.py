@@ -2,9 +2,9 @@
 that stops a second agent-mode instance from ever running against one project
 directory.
 
-The lock itself (``annealage_agent/lock.py``: exclusive creation, stale-pid
+The lock itself (``annealage_ember/lock.py``: exclusive creation, stale-pid
 reclaim, corrupt records, the creation race) is tested in the
-``annealage-agent`` package's own suite. These tests drive the actual
+``annealage-ember`` package's own suite. These tests drive the actual
 ``cli.main`` entry point so the assertion lands on what a human running a
 second instance actually sees (the exit code, the message, whether a server
 started) rather than on an internal call having returned the right exception
@@ -15,7 +15,7 @@ import json
 import os
 
 import pytest
-from annealage_agent import lock, net
+from annealage_ember import lock, net
 
 from annealage_mesh import cli
 
@@ -67,7 +67,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     one test that drives a real agent-mode start would be refused before it ever
     reached the lock, on any machine lacking them, a stock CI runner included.
     """
-    from annealage_agent.session import sdk
+    from annealage_ember.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 

@@ -28,7 +28,7 @@ jobs:
           # shallow checkout fetches no tags at all: without this the release
           # would build and upload as the 0.0.0 fallback version.
           fetch-depth: 0
-          # The wheel bundles the agent package from the lib/agent submodule
+          # The wheel bundles the agent package from the lib/ember submodule
           # (hatch_build.py), and refuses to build without it.
           submodules: true
       - uses: astral-sh/setup-uv@v10.1.0

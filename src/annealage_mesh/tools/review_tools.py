@@ -2,7 +2,7 @@
 write a record of the conversation out.
 
 Four of them are the agent layer's shared review tools
-(``annealage_agent.review.tools``) over ``MeshFilesStore`` (``review.py``),
+(``annealage_ember.review.tools``) over ``MeshFilesStore`` (``review.py``),
 configured below so the model sees exactly the surface Mesh has always had:
 ``list_comments`` for the human's submitted pins and ``list_callouts`` for the
 callouts, ``add_callout`` taking a ``comment`` and a face ``label``,
@@ -28,7 +28,7 @@ the file.
 **A callout write is read-modify-write, and the file may have another
 writer.** The contract keeps working for a separately running agent, so if one
 is also writing this file, one of the two writes can lose the other's callout.
-Writers in this process are serialised (``annealage_agent.review.file_lock``)
+Writers in this process are serialised (``annealage_ember.review.file_lock``)
 and the write itself is atomic, so a reader never sees a half-written list,
 but nothing here can merge two independent processes' authors and it does not
 pretend to.
@@ -43,10 +43,10 @@ import functools
 import os
 import time
 
-from annealage_agent import files
-from annealage_agent.review import tools as shared_review
-from annealage_agent.session import events
-from annealage_agent.tools import fail, ok
+from annealage_ember import files
+from annealage_ember.review import tools as shared_review
+from annealage_ember.session import events
+from annealage_ember.tools import fail, ok
 from claude_agent_sdk import tool
 
 from .. import paths

@@ -6,7 +6,7 @@ event (``product.py``), which is what refuses a kind that would collide with
 one the chat pane or the transcript export already interprets.
 
 The other push the page reacts to, that the callouts changed, is the agent
-layer's generic ``review_changed`` (``annealage_agent.review``), published by
+layer's generic ``review_changed`` (``annealage_ember.review``), published by
 its review watcher over Mesh's review store (``review.py``); it replaced
 Mesh's own ``callouts_changed`` when the review model moved into the agent
 layer, and the page handles it exactly as it handled that.
@@ -17,7 +17,7 @@ from __future__ import annotations
 import dataclasses
 from typing import ClassVar, Optional
 
-from annealage_agent.session.base import AgentEvent
+from annealage_ember.session.base import AgentEvent
 
 
 @dataclasses.dataclass(frozen=True)

@@ -8,10 +8,10 @@ symlinked directory aliasing a real one), so that shape is built once here
 rather than inline in every test that needs it.
 
 Importing ``annealage_mesh.product`` installs Mesh as this process's product
-(``annealage_agent/product.py``), which every agent-layer module reads its
+(``annealage_ember/product.py``), which every agent-layer module reads its
 identity from; it is imported here so a test module that imports only
 agent-layer modules still runs as Mesh. The agent layer's own tests, which
-run as other products, live in annealage-agent's suite.
+run as other products, live in annealage-ember's suite.
 """
 
 import pytest
@@ -70,9 +70,9 @@ def one_backend_installed(monkeypatch):
     With no backend in any setting, agent mode picks from what is installed,
     and asks when there is more than one. A test that let the real PATH
     decide would pass on a machine with one CLI and fail on a CI runner with
-    none; annealage-agent's suite covers the choosing itself.
+    none; annealage-ember's suite covers the choosing itself.
     """
-    from annealage_agent import backends
+    from annealage_ember import backends
 
     monkeypatch.setattr(backends, "detect", lambda **_kw: ("claude",))
 

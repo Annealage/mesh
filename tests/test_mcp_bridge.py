@@ -2,13 +2,13 @@
 (``planning/tickets/phase3_codex-tool-mcp-bridge.md``, D5).
 
 ``/mcp`` itself, the stdio proxy and the agent layer's own browser routes are
-tested in annealage-agent's suite. What is Mesh's is ``/submit``
+tested in annealage-ember's suite. What is Mesh's is ``/submit``
 (``http/routes_viewer.py``), the one route Mesh adds that takes the browser
 token, which must refuse the agent token just as the agent layer's routes do.
 """
 
 import pytest
-from annealage_agent.session.fake import FakeSession
+from annealage_ember.session.fake import FakeSession
 from conftest import make_test_client
 
 from annealage_mesh import app as app_module
@@ -23,7 +23,7 @@ def _agent_app(project):
     """An agent-mode Mesh app with both tokens set, a real ``MeshTools`` and a
     ``FakeSession``, so its routes are mounted exactly as a real run mounts
     them."""
-    from annealage_agent import sessions as sessions_module
+    from annealage_ember import sessions as sessions_module
 
     return app_module.create_app(
         project,

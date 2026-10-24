@@ -2,14 +2,14 @@
 ``--save-default``.
 
 How a backend is detected and chosen is the agent layer's
-(``annealage_agent.backends``), tested in annealage-agent's own suite. What
+(``annealage_ember.backends``), tested in annealage-ember's own suite. What
 stays here is Mesh's command line: its exit status and message when it cannot
 choose, ``--save-default`` writing the user file a later run reads, the prompt
 reached through a real terminal, and ``view`` refusing the flag.
 """
 
 import pytest
-from annealage_agent import backends, settings
+from annealage_ember import backends, settings
 
 from annealage_mesh import cli
 
@@ -28,7 +28,7 @@ def _answers(*replies):
 @pytest.fixture
 def served(monkeypatch, tmp_path):
     """Agent mode up to ``app.run``, which records the settings it was given."""
-    from annealage_agent.session import sdk
+    from annealage_ember.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
     runs = []

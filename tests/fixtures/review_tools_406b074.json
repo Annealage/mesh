@@ -199,11 +199,11 @@
   },
   "add_empty_comment": {
     "is_error": true,
-    "text": "comment must say what you mean about that point; a callout with no comment is a marker the human cannot interpret"
+    "text": "comment must say what you mean about that point; a callout with no comment is a marker the product owner cannot interpret"
   },
   "add_no_comment": {
     "is_error": true,
-    "text": "comment must say what you mean about that point; a callout with no comment is a marker the human cannot interpret"
+    "text": "comment must say what you mean about that point; a callout with no comment is a marker the product owner cannot interpret"
   },
   "add_unparseable": {
     "is_error": true,

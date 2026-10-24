@@ -6,11 +6,11 @@ by someone running ``annealage-mesh``: agent mode refuses such a directory
 (exit 2, naming the files and both ways forward), ``--trust-project-config``
 records acceptance and starts, and viewer-only mode needs no decision. What
 the digest distinguishes, the trust record and the refusal text are tested
-in the ``annealage-agent`` package's own suite.
+in the ``annealage-ember`` package's own suite.
 """
 
 import pytest
-from annealage_agent.session import workspace_trust as wt
+from annealage_ember.session import workspace_trust as wt
 
 from annealage_mesh import cli
 
@@ -20,7 +20,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     """Agent mode refuses to start without the sandbox binaries; this file is
     about the trust gate, which sits behind that refusal, so the requirement is
     reported satisfied rather than depending on what the host has installed."""
-    from annealage_agent.session import sdk
+    from annealage_ember.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 

@@ -26,7 +26,7 @@ Or keep it around as a tool:
     # or
     pipx install annealage-mesh
 
-To run unreleased work instead, clone this repository with its submodule ([annealage-agent](#the-agent-package), at `lib/agent`) and run from the checkout:
+To run unreleased work instead, clone this repository with its submodule ([annealage-ember](#the-agent-package), at `lib/ember`) and run from the checkout:
 
     git clone --recurse-submodules https://github.com/Annealage/mesh.git
     cd mesh && uv run annealage-mesh ./path/to/part
@@ -37,11 +37,11 @@ On Linux you'll also want `bubblewrap` and `socat`:
 
 That's what keeps the agent's shell contained, and agent mode won't start without them rather than quietly running an uncontained one. macOS has its own sandbox built in so there's nothing to install there. If you'd rather not bother, `annealage-mesh view` gives you the viewer without an agent session and needs neither.
 
-Python 3.10+. The chat pane, the agent backends, the permission cards and the rest of the agent side come from `annealage-agent` (below), which ships inside Mesh's wheel, and its small runtime dependencies are Mesh's: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find your settings file, and [tomli](https://github.com/hukkin/tomli) to read it on 3.10 (3.11+ has `tomllib` built in). three.js 0.160.0 is vendored and served locally, so the viewer needs no network access at all. Agent backends have their own dependencies (below).
+Python 3.10+. The chat pane, the agent backends, the permission cards and the rest of the agent side come from `annealage-ember` (below), which ships inside Mesh's wheel, and its small runtime dependencies are Mesh's: [microdot](https://github.com/miguelgrinberg/microdot) for the server, [platformdirs](https://github.com/tox-dev/platformdirs) to find your settings file, and [tomli](https://github.com/hukkin/tomli) to read it on 3.10 (3.11+ has `tomllib` built in). three.js 0.160.0 is vendored and served locally, so the viewer needs no network access at all. Agent backends have their own dependencies (below).
 
 ### The agent package
 
-Everything agent-side (the chat pane and its front end, the Claude, Codex and omp sessions, the permission broker, workspace trust, secret-path protection, `/ws`, `/mcp`, settings) is the separate `annealage-agent` package, shared by the Annealage products; Mesh supplies its viewer, its tools and its settings on top. It isn't published on its own, and won't be: this repository carries it as the git submodule `lib/agent`, which uv installs from in a checkout (`[tool.uv.sources]` in `pyproject.toml`), and Mesh's wheel bundles it, the commit `lib/agent` pins, as a second top-level package, `annealage_agent`. So `annealage-mesh` installs no separate `annealage-agent`; don't install it into an environment that already has another copy of `annealage_agent` (another product bundling it, or `annealage-agent` itself), since whichever installs last overwrites the other's files.
+Everything agent-side (the chat pane and its front end, the Claude, Codex and omp sessions, the permission broker, workspace trust, secret-path protection, `/ws`, `/mcp`, settings) is the separate `annealage-ember` package, shared by the Annealage products; Mesh supplies its viewer, its tools and its settings on top. It isn't published on its own, and won't be: this repository carries it as the git submodule `lib/ember`, which uv installs from in a checkout (`[tool.uv.sources]` in `pyproject.toml`), and Mesh's wheel bundles it, the commit `lib/ember` pins, as a second top-level package, `annealage_ember`. So `annealage-mesh` installs no separate `annealage-ember`; don't install it into an environment that already has another copy of `annealage_ember` (another product bundling it, or `annealage-ember` itself), since whichever installs last overwrites the other's files.
 
 ### Agent backends
 

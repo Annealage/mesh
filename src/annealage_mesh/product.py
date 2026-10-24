@@ -1,6 +1,6 @@
 """Mesh's description of itself to the agent layer, installed on import.
 
-``annealage_agent/product.py`` defines the contract and what each field drives; this is
+``annealage_ember/product.py`` defines the contract and what each field drives; this is
 Mesh's answer to it. Importing this module installs ``MESH`` as the product
 this process runs as, which is why every Mesh entry point (``cli.py``,
 ``app.py``) imports it before touching the agent layer, and why
@@ -8,9 +8,9 @@ this process runs as, which is why every Mesh entry point (``cli.py``,
 in which those imports happen does not matter.
 """
 
-from annealage_agent import product as agent_product
-from annealage_agent.protocol import FrameSpec, object_error
-from annealage_agent.settings import USER, VIEWER_SECTION, Key
+from annealage_ember import product as agent_product
+from annealage_ember.protocol import FrameSpec, object_error
+from annealage_ember.settings import USER, VIEWER_SECTION, Key
 
 from . import __version__
 from .events import ModelsChanged
@@ -42,7 +42,7 @@ def _check_state(frame):
 
 #: The page's report of its own view: camera, visibility, selection and mode.
 #: The server keeps none of it; receiving one counts as interaction with that
-#: tab (``annealage_agent/http/ws.py``).
+#: tab (``annealage_ember/http/ws.py``).
 STATE_FRAME = FrameSpec({"state"}, {"state"}, _check_state)
 
 

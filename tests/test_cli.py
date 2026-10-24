@@ -16,7 +16,7 @@ are things people run against a directory that already has a server on it.
 """
 
 import pytest
-from annealage_agent import lock, sessions, settings
+from annealage_ember import lock, sessions, settings
 
 from annealage_mesh import cli
 
@@ -31,7 +31,7 @@ def sandbox_requirement_satisfied(monkeypatch):
     asserted in ``tests/test_session_flags.py``; every test here is about the
     command surface instead, so the requirement is satisfied for all of them
     rather than each one passing or failing on what the host has installed."""
-    from annealage_agent.session import sdk
+    from annealage_ember.session import sdk
 
     monkeypatch.setattr(sdk, "missing_sandbox_dependencies", lambda: ())
 
@@ -284,7 +284,7 @@ def test_codex_is_given_the_agent_token_and_never_the_browser_token(tmp_path, no
     session = seen["session"]
     assert seen["token"] == "browser-secret"
     assert seen["agent_token"] not in (None, "", "browser-secret")
-    assert session._mcp_env() == {"ANNEALAGE_AGENT_TOKEN": seen["agent_token"]}
+    assert session._mcp_env() == {"ANNEALAGE_EMBER_TOKEN": seen["agent_token"]}
     overrides = "\n".join(session._mcp_config_overrides())
     assert "browser-secret" not in overrides
     assert seen["agent_token"] not in overrides

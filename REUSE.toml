@@ -5,7 +5,7 @@ version = 1
 # the licence of any path, including files that cannot carry an inline SPDX
 # header (images, JSON, lockfiles, LICENSE itself).
 #
-# Not covered here: lib/agent is a git submodule (annealage-agent, a separate
+# Not covered here: lib/ember is a git submodule (annealage-ember, a separate
 # repository that `reuse lint` skips), PolyForm Noncommercial 1.0.0 like this
 # one, with a REUSE.toml of its own.
 
