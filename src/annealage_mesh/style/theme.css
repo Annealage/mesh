@@ -367,6 +367,9 @@ a.state:hover { text-decoration-color: var(--ink); }
 .menu .danger { color: var(--danger); }
 .menu :is(button, a):is(:disabled, [aria-disabled=true]), .menu :is(button, a):is(:disabled, [aria-disabled=true]):hover { background: none; color: var(--ink-3); cursor: default; }
 .menu hr { height: 1px; margin: 4px -4px; border: 0; background: var(--rule); }
+/* A menu opened where the pointer is (a right-click): no .menuwrap, the product sets
+   left and top from script, and it shows while it is in the page. <span class="menu at" role="menu"> */
+.menu.at { position: fixed; top: auto; right: auto; display: block; }
 .menu .menu-note { display: block; padding: 6px 8px 4px; color: var(--ink-3); font-size: var(--fs-small); }
 details.more { position: relative; }
 details.more > summary { list-style: none; }
@@ -395,16 +398,32 @@ summary { cursor: pointer; }
    Names are paths from the project root, so they are mono data; a folder's
    chevron is its summary's, and a file's name lines up with a folder's. Indent
    guides are hairlines. A detail that belongs to a file (its hash) goes in the
-   name's title, not on the row. */
+   name's title, not on the row. A file the agent changed carries a .lamp.warn at
+   the row's end (margin-left:auto). */
 .tree, .tree ul { list-style: none; margin: 0; padding: 0; }
 .tree ul { margin-left: 8px; padding-left: 11px; border-left: 1px solid var(--rule); }
 .tree summary, .tree .file { display: flex; align-items: center; gap: 8px; height: 28px; }
+/* --tree-in is how far the whole tree is inset (a left inspector sets it so the names
+   start on the --gutter line); --out is how far a row's hover and current wash reaches
+   back to the pane's edge, so the wash is the pane's width at any depth (to five levels). */
+.tree { --tree-in: 0px; --out: var(--tree-in); padding-left: var(--tree-in); }
+.tree ul { --out: calc(var(--tree-in) + 20px); }
+.tree ul ul { --out: calc(var(--tree-in) + 40px); }
+.tree ul ul ul { --out: calc(var(--tree-in) + 60px); }
+.tree ul ul ul ul { --out: calc(var(--tree-in) + 80px); }
+.wb[data-insp=left] .inspector .tree { --tree-in: 20px; }
 .tree summary { list-style: none; }
 .tree summary::-webkit-details-marker { display: none; }
 .tree summary::before { content: ""; width: 5px; height: 5px; margin: 0 4px 0 3px; flex: none; border: solid var(--ink-3); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); }
 .tree details[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
 .tree .file { padding-left: 20px; }
-.tree :is(summary, .file):hover { background: var(--hover); }
+.tree :is(summary, .file) { position: relative; isolation: isolate; }
+.tree :is(summary, .file)::after { content: ""; position: absolute; z-index: -1; inset: 0 0 0 calc(-1 * var(--out)); pointer-events: none; }
+.tree :is(summary, .file):hover::after { background: var(--hover); }
+/* The open file in the editor: the temper wash, no side rule. [data-open] is a file with a tab; it reads one weight up. */
+.tree :is(summary, .file)[aria-current]::after { background: var(--temper-wash); }
+.tree .file[data-open] { font-weight: 500; }
+.tree .file > .lamp { margin-left: auto; margin-right: 12px; }
 .tree .hint { font-size: var(--fs-small); white-space: nowrap; }
 .tree .hint .mono { color: var(--ink); }
 
@@ -576,13 +595,38 @@ body:not(.panel-open) .inspector { display: none; }
 .wb[data-layout=drawing] :is(#chat, .console) { display: none; }
 .wb[data-layout=agent] { grid-template-columns: 0 0 0 minmax(0, 1fr); }
 .wb[data-layout=agent] :is(.rail, .view, .inspector) { display: none; }
+/* The inspector on the left, for a product whose first thing is a tree (Canvas's
+   files): .wb[data-insp=left] has no rail and its grid is inspector, view, agent
+   pane. The inspector's head and its .tree start on the --gutter line, as the
+   product name above does. With the inspector closed the first half's head takes
+   the --gutter instead. A window-wide .vhead, if there is one, spans all three. */
+.wb[data-insp=left] {
+  grid-template-columns: var(--insp-col) minmax(0, 1fr) var(--chat-col);
+  grid-template-areas:
+    "title  title title"
+    "insp   view  chat"
+    "status status status";
+}
+.wb[data-insp=left]:has(> .vhead) {
+  grid-template-areas:
+    "title  title title"
+    "tabs   tabs  tabs"
+    "insp   view  chat"
+    "status status status";
+}
+.wb[data-insp=left][data-layout=agent] { grid-template-columns: 0 0 minmax(0, 1fr); }
+.wb[data-insp=left] .view { border-left: 0; }
+.wb[data-insp=left] .inspector > .ihead { padding-left: var(--gutter); }
 #tabbar { display: none; }
-/* The drag handles frame.js inserts before the inspector and the agent pane: a
-   7px grab strip centred on the hairline at the pane's left edge. Only the
-   hairline shows, in the temper on hover, focus and while dragging. */
+/* The drag handles frame.js inserts next to the inspector, the agent pane and
+   (with a split view) on the seam between its halves: a 7px grab strip centred
+   on the hairline at the pane's left edge (the left inspector's right edge).
+   Only the hairline shows, in the temper on hover, focus and while dragging. */
 .colgrip { position: relative; z-index: 6; justify-self: start; width: 7px; margin-left: -4px; cursor: col-resize; touch-action: none; }
 .colgrip[data-grip=insp] { grid-area: insp; }
 .colgrip[data-grip=chat] { grid-area: chat; }
+.wb[data-insp=left] .colgrip[data-grip=insp] { justify-self: end; margin: 0 -3px 0 0; }
+.colgrip[data-grip=split] { position: absolute; inset-block: 0; left: var(--cut-at, 50%); margin: 0 0 0 -3px; }
 .colgrip::before { content: ""; position: absolute; inset: 0 3px; }
 .colgrip:is(:hover, [data-dragging])::before, .colgrip:focus-visible::before { background: var(--temper-text); }
 .colgrip:focus-visible::before { inset: 0 2px 0 3px; }
@@ -732,6 +776,16 @@ body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
 .vtab.second:hover { color: var(--ink); }
 .vtab.second[aria-current] { color: var(--ink); font-weight: 600; }
 .vtab code, .vtab .n { color: var(--ink-3); font-size: 11.5px; font-weight: 400; }
+/* A file tab, the document tab of a product that edits files. The tab is a div so it
+   can hold two buttons: the name (mono, it is the user's own file name), an unsaved
+   mark and a close button. .dirty is a square warn lamp, hollow while it is .saving.
+   <div class="vtab" aria-current="page"><button class="vname mono" type="button">thermostat.py</button>
+     <span class="dirty" role="img" aria-label="Unsaved changes" title="Unsaved changes"></span>
+     <button class="btn icon sm x" type="button" aria-label="Close thermostat.py" title="Close"><svg class="ico ico--sm">x</svg></button></div> */
+.vtab > .vname { padding: 0; border: 0; background: none; color: inherit; cursor: pointer; }
+.vtab .dirty { width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--warn); }
+.vtab .dirty.saving { background: none; box-shadow: inset 0 0 0 1.5px var(--warn); }
+.vtab .x { margin-right: -6px; }
 .vsep { align-self: center; width: 1px; height: 16px; flex: none; background: var(--rule); }
 .vhead .meta { display: flex; align-items: center; gap: 12px; margin-left: auto; font-size: var(--fs-small); color: var(--ink-2); white-space: nowrap; }
 .vhead .meta > span { display: inline-flex; align-items: center; gap: 6px; }
@@ -802,6 +856,41 @@ body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
 .vpanel { min-width: 0; min-height: 0; overflow: hidden auto; scrollbar-width: thin; background: var(--ground); border-right: 1px solid var(--rule); }
 .stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
 .canvas:not(.split) > .stage { position: absolute; inset: 0; }
+/* A view split in two work halves with a handle between them (Canvas: the editor and
+   the screen):
+   <div class="canvas split even"><section class="half">…</section><section class="half">…</section></div>
+   frame.js puts div.colgrip[data-grip=split] on the seam and writes the share the user
+   chose as --split-user (a percentage); --split is the product's default, half and
+   half. Each half is a column: a .vhead (a pane head, --h-pane tall so it lines up with
+   .ihead and the agent header), the work (a .stage, or a .src that fills the half), and
+   .subtabs on the bottom edge. A half is a pane of its own on a phone: a tab target. */
+.canvas.split.even { --cut-at: var(--split-user, var(--split, 50%)); grid-template-columns: var(--cut-at) minmax(0, 1fr); }
+.half { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.half ~ .half { border-left: 1px solid var(--rule); }
+.half > .vhead { height: var(--h-pane); padding-left: 12px; }
+body:not(.panel-open) .wb[data-insp=left] .half:first-child > .vhead { padding-left: var(--gutter); }
+.half > .stage { flex: 1; }
+.half > :is(pre, ol).src { flex: 1; border-block: 0; }
+.half[data-preview] .previewbar :is(b, span) { white-space: nowrap; }
+/* Between 900 and 1280px the tree and the agent, both open, leave the view under 620px, too narrow
+   for two halves side by side, so the halves stack (editor over screen) and the handle goes. With
+   either column closed there is room and they stay side by side. Between 900 and 1200px the left
+   layout's command field also narrows, to leave the title bar's controls room, and under 1000px it is its icon. */
+@media (min-width: 901px) and (max-width: 1280px) {
+  body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .canvas.split.even { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
+  body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .half ~ .half { border-left: 0; border-top: 1px solid var(--rule); }
+  body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .colgrip[data-grip=split] { display: none; }
+}
+@media (min-width: 901px) and (max-width: 1200px) {
+  .wb[data-insp=left] .titlebar .cmd { width: 150px; }
+  .wb[data-insp=left] .titlebar .cmd kbd { display: none; }
+}
+/* Under 1000px the left layout's command field is its icon, as on a phone, so the bar's controls fit. */
+@media (min-width: 901px) and (max-width: 1000px) {
+  .wb[data-insp=left] .titlebar .cmd { width: var(--ctl); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--ink-2); }
+  .wb[data-insp=left] .titlebar .cmd:hover { background: var(--hover); color: var(--ink); }
+  .wb[data-insp=left] .titlebar .cmd > :is(span, kbd) { display: none; }
+}
 .stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
 /* A layer list: .layergroup headings, then label.layerrow each holding a
@@ -870,7 +959,17 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
 .hpin[aria-pressed=true] .mk { --mk-edge: var(--pin-selected); --mk-fill: var(--pin-selected); color: var(--on-temper); }
 .hpin[aria-pressed=true]::before { inset: -5px; background: color-mix(in srgb, var(--pin-selected) 26%, transparent); clip-path: polygon(0 0, calc(100% - 7.9px) 0, 100% 7.9px, 100% 100%, 0 100%); }
 .hpin[aria-pressed=true]::after { background: var(--pin-selected); }
+/* A pin on a capture, which is not paper: .hpin.cap gives the marker a wider paper edge so a
+   dark screen does not swallow the ink. */
+.hpin.cap::before { inset: -3px; clip-path: polygon(0 0, calc(100% - 7.4px) 0, 100% 7.4px, 100% 100%, 0 100%); }
 .hpin:focus-visible { outline: 2px solid var(--paper-ink); outline-offset: 3px; }
+/* A rectangle drawn on a capture, numbered by an .hpin at its top-left corner. It is
+   paper-light with a paper-ink edge outside it, so it reads on any screen, and the
+   selected one takes the temper: <button class="hbox" aria-label="Rectangle 3"></button>
+   positioned and sized by script, aria-pressed=true when selected. */
+.hbox { position: absolute; z-index: 1; padding: 0; background: none; border: 1.5px solid var(--paper); outline: 1px solid var(--paper-ink); }
+.hbox[aria-pressed=true] { border-color: var(--pin-selected); }
+.hbox:focus-visible { outline: 2px solid var(--paper-ink); outline-offset: 2px; }
 /* A floating comment composer over a drawing, positioned by script:
    form.composer > .where, textarea, .acts. A popover, so it has an edge and the menu shadow. */
 .composer {
@@ -896,6 +995,7 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
    aria-controls and .ipane children switched with the hidden attribute. */
 .inspector { grid-area: insp; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--rule); }
 .wb[data-console=none] .inspector, .wb[data-layout=drawing] .inspector { border-right: 0; }
+.wb[data-insp=left] .inspector { border-right: 1px solid var(--rule); }
 .ihead { display: flex; align-items: center; gap: 8px; height: var(--h-pane); padding: 0 6px 0 12px; flex: none; border-bottom: 1px solid var(--rule); white-space: nowrap; }
 .ihead h2 { font: 600 var(--fs-ui)/1 var(--sans); }
 .ihead > span { color: var(--ink-3); font-size: var(--fs-small); }
@@ -1010,14 +1110,16 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
 .wb[data-preview] .is-preview ~ .ev::before { border-left-style: dashed; }
 
 /* Previewing an earlier state: a bar over the view and a temper frame round
-   the drawing. The page sets data-preview on .wb and shows [data-then] overlays.
+   the drawing. The page sets data-preview on .wb and shows [data-then] overlays;
+   a split view's half can preview on its own (data-preview on the .half: the bar
+   heads that half and the frame goes round its .stage).
    <div class="previewbar"><svg class="ico">restore</svg><b>Previewing turn 2</b><span>…</span><button class="btn">Back to now</button></div> */
 .previewbar { display: none; }
-.wb[data-preview] .previewbar { display: flex; align-items: center; gap: 10px; flex: none; min-height: var(--h-row); padding: 0 6px 0 12px; background: var(--temper-wash); border-bottom: 1px solid var(--rule); }
+.wb[data-preview] .previewbar, .half[data-preview] .previewbar { display: flex; align-items: center; gap: 10px; flex: none; min-height: var(--h-row); padding: 0 6px 0 12px; background: var(--temper-wash); border-bottom: 1px solid var(--rule); }
 .previewbar b { font-weight: 600; }
 .previewbar span { color: var(--ink-2); }
 .previewbar .btn:first-of-type { margin-left: auto; }
-.wb[data-preview] .canvas::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; outline: 2px solid var(--temper-text); outline-offset: -2px; }
+.wb[data-preview] .canvas::after, .half[data-preview] .stage::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; outline: 2px solid var(--temper-text); outline-offset: -2px; }
 [data-then], .statusbar .pv { display: none; }
 .wb[data-preview] [data-then] { display: block; }
 .wb[data-preview] .statusbar .pv { display: inline-flex; color: var(--ink); font-weight: 600; }
@@ -1025,7 +1127,8 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
 /* -------------------------------------------------------------- status bar */
 /* <footer class="statusbar"><span class="conn" data-state="live">Live</span><span>Agent <b>Ready</b></span>
      <button class="alert">Approval needed: Write</button><span class="push">Build <span class="ok">ok</span> <b>14:32</b></span><span>Cost <b>$0.41</b></span></footer>
-   Labels in the sans, values (<b>) in mono. .push starts the right-hand group. */
+   Labels in the sans, values (<b>) in mono. .push starts the right-hand group.
+   At 900px and below only .conn and .alert remain. */
 .statusbar {
   grid-area: status;
   display: flex; align-items: center; gap: 16px; min-width: 0; height: var(--h-status); padding: 0 12px;
@@ -1750,12 +1853,18 @@ html .pj-modal {
    display:none. So every pane is laid out in the one main area here and shown
    by default. */
 @media (max-width: 900px) {
-  .wb, .wb:has(> .vhead), .wb[data-rail=none], .wb[data-layout] {
+  .wb, .wb:has(> .vhead), .wb[data-rail=none], .wb[data-layout], .wb[data-insp=left], .wb[data-insp=left]:has(> .vhead), .wb[data-insp=left][data-layout=agent] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--h-bar) 40px auto minmax(0, 1fr);
-    grid-template-areas: "title" "panes" "tabs" "main";
+    grid-template-rows: var(--h-bar) 40px auto minmax(0, 1fr) auto;
+    grid-template-areas: "title" "panes" "tabs" "main" "status";
   }
-  .wb > .statusbar, #panelBtn, .colgrip { display: none; }
+  #panelBtn, .colgrip { display: none; }
+  /* The status bar stays, compact: the connection and the approval alert (which
+     frame.js turns into a jump to the Agent tab), so a pending approval is
+     reachable from any pane. Everything else in it is dropped. */
+  .wb > .statusbar > :not(.conn, .alert) { display: none; }
+  .wb > .statusbar { gap: 12px; }
+  .wb > .statusbar .alert { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .titlebar:has(> .tb-left) { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   .titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(0, 1fr) auto auto; }
   .tb-left { min-width: 0; }
@@ -1810,6 +1919,15 @@ html .pj-modal {
   /* A view's side panel goes above the drawing, clear of the floating tools. */
   .canvas.split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .vpanel { max-height: 38vh; border-right: 0; border-bottom: 1px solid var(--rule); }
+  /* A split view's halves are panes of their own: the tab bar shows one, and the view
+     itself goes when none of its halves is the one showing. */
+  .canvas.split.even { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+  .half ~ .half { border-left: 0; border-top: 0; }
+  .half[data-preview] .previewbar { flex-wrap: wrap; gap: 0 10px; padding-block: 4px; }
+  .wb[data-insp=left] .inspector .ihead [data-panel-close] { display: none; }
+  .view:has(.half):not(:has(.half:not([style*="none"]))) { display: none; }
+  .wb[data-insp=left] .inspector > .ihead, body:not(.panel-open) .wb[data-insp=left] .half:first-child > .vhead { padding-left: 12px; }
+  .wb[data-insp=left] .inspector .tree { --tree-in: 9px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

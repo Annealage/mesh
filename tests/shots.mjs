@@ -238,6 +238,7 @@ export default {
     wide('m5-palette-disabled', { state: paletteDisabled }),
     wide('m5-title-odd', {}), // run against a server on a folder with a hostile 120-character name
     narrow('m5-title-odd-phone'), // same server
+    narrow('m7-phone-approval', { state: approval }), // the compact status bar carries the approval alert on the Model tab
     narrow('mesh-phone-model'),
     narrow('mesh-phone-review', { state: both(content, tab('review')), conform: PHONE_TAB }),
     narrow('mesh-phone-agent', { state: tab('chat'), conform: PHONE_TAB }),

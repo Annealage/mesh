@@ -1,7 +1,7 @@
 {
   "source": "Annealage/style",
-  "commit": "2444116af5cc44805081141061e6dab715460a8f",
-  "date": "2026-11-11T15:32:22Z",
+  "commit": "98a6d1ebdfa3baaee05c67b66e94557e7a93e779",
+  "date": "2026-11-11T23:17:28Z",
   "files": [
     {"path": "LICENSE", "sha256": "4995bfb4b800b9875a1ffff0e92aa434d3db57622552363ac3b5c689216cedc4"},
     {"path": "confirm.js", "sha256": "acfdb07001538f336727b6a9943a3cc5fcc3332f30a24bb195b6aed46b87cb25"},
@@ -17,13 +17,13 @@
     {"path": "fonts/red-hat-mono-latin-500-normal.woff2", "sha256": "f0c8d8a580be4e8b26344c5205726cdd86233a11533c8125ffaf7eb5b7ebc294"},
     {"path": "fonts/red-hat-mono-latin-ext-400-normal.woff2", "sha256": "cbf640bdfc086ce930458ec1ff3eef9782eb9a7af3789931e41f373a1421e4cf"},
     {"path": "fonts/red-hat-mono-latin-ext-500-normal.woff2", "sha256": "d9cf2afa866bacdca269439d326294e3de19ab1416d0baf719175a4953da67ab"},
-    {"path": "frame.js", "sha256": "8a269edfe74e0000f8da7bac705d0de66b5a84bfacd848e76d8ce6b69479d538"},
-    {"path": "icons.svg", "sha256": "b75ae8bcf529920375b53361a45a5b315f1a492ea4201ce3c80a26a5502a4072"},
+    {"path": "frame.js", "sha256": "f9c03c121bd8c488fee1e8c359a70c92a4dcc5e62e575c2c1cf5baa30fc36b08"},
+    {"path": "icons.svg", "sha256": "d2f99c8411decb5566c5edec86eaee2d63f65f6abe135ecb828d2d5abb2f201d"},
     {"path": "marks/mesh-layers-dark.svg", "sha256": "e78d0ab09facafe46115708a51300f81cc8fd3c0f03c45522bf9cefba5adfca7"},
     {"path": "marks/mesh-layers.svg", "sha256": "db7a3aea7db88105489d9a9322453c306df52d1053667f943cdee4fb066f8144"},
     {"path": "palette.js", "sha256": "467fab69e358e67d9688bff37481b780590df1d8adc38e79ef0b2e6d413aec52"},
     {"path": "scheme.js", "sha256": "418c12f063026626486f74e2b0b825874ed870920d3af18596e8a8074fa4c652"},
-    {"path": "theme.css", "sha256": "bf93397b24363cf47a9c5d0e1d2578a01fa8e1befb0546ea7ed00869e073e227"},
+    {"path": "theme.css", "sha256": "1020aa332abb381787250cf12863849997fa93fe009a8dcd12cd31392dd4d987"},
     {"path": "tokens.css", "sha256": "644355831674515c23d46a652b322c849922ebec4388320d1a57bbedb5bc4373"}
   ]
 }

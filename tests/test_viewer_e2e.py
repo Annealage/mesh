@@ -2925,14 +2925,11 @@ def test_approval_alert_focuses_the_allow_button(browser, chat_server, viewport)
         )
         card = "div.permcard[data-request-id='pr_77']"
         page.wait_for_selector(card, state="attached")
-        if viewport["width"] > 900:
-            page.wait_for_selector("#approvalAlert", state="visible")
-            page.click("#approvalAlert")
-        else:
-            # The theme hides the status bar on a phone; the alert's own click
-            # handler still has to bring the Agent tab forward.
-            page.wait_for_function("() => !document.getElementById('approvalAlert').hidden")
-            page.evaluate("() => document.getElementById('approvalAlert').click()")
+        # The compact phone status bar keeps the connection lamp and the alert,
+        # so a person on the Model tab can see the approval and tap it.
+        page.wait_for_selector("#approvalAlert", state="visible")
+        assert page.is_visible("#connIndicator")
+        page.click("#approvalAlert")
         page.wait_for_selector(card, state="visible")
         focused = "() => document.activeElement.closest('.pactions') !== null"
         page.wait_for_function(focused)
