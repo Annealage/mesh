@@ -87,8 +87,8 @@ async def test_tool_refuses_when_there_is_no_session_to_export(served_dir):
 @pytest.mark.parametrize(
     "args,fragment",
     [
-        ({"format": "md"}, "format must be one of"),
-        ({"include": "all"}, "include must be one of"),
+        ({"format": "md"}, "allowed values markdown, jsonl"),
+        ({"include": "all"}, "allowed values text, full"),
     ],
 )
 async def test_tool_argument_refusals_name_the_allowed_values(project, args, fragment):

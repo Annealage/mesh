@@ -127,6 +127,20 @@ def _comments(project):
 # --- what the model is told the tools are ---------------------------------------
 
 
+def _plain(schema):
+    """A tool schema as the model reads it, without what ember's normalising
+    adds: the generated ``title`` keys and an empty ``required``."""
+    if isinstance(schema, dict):
+        return {
+            key: _plain(value)
+            for key, value in schema.items()
+            if key != "title" and not (key == "required" and value == [])
+        }
+    if isinstance(schema, list):
+        return [_plain(item) for item in schema]
+    return schema
+
+
 async def test_the_review_tools_are_described_to_the_model_as_before(project):
     tools = _tools(project)
     assert [t.name for t in tools.tools] == FIXTURE["order"]
@@ -135,12 +149,10 @@ async def test_the_review_tools_are_described_to_the_model_as_before(project):
         if tool_def.name not in REVIEW_TOOLS:
             continue
         before = FIXTURE["meta"][tool_def.name]
-        declared = tool_def.input_schema
-        if any(isinstance(v, type) for v in declared.values()):
-            declared = {k: v.__name__ for k, v in declared.items()}
+        declared = _plain(tool_def.input_schema)
         assert tool_def.description == before["description"], tool_def.name
-        assert json.dumps(declared) == json.dumps(before["input_schema"]), tool_def.name
-        assert json.dumps(table[tool_def.name].schema) == json.dumps(before["json_schema"])
+        assert declared == _plain(before["json_schema"]), tool_def.name
+        assert _plain(table[tool_def.name].schema) == _plain(before["json_schema"])
 
 
 async def test_the_grades_are_as_before_and_nothing_resolves(project):
@@ -212,7 +224,7 @@ async def test_add_and_delete_write_the_published_shape_as_before(project):
 
     _callouts(project).write_text(json.dumps(SKILL_CALLOUTS, indent=2) + "\n")
     second = await handlers["add_callout"](
-        {"point": ["0", 0, 1e3], "comment": "new", "part": "  ", "label": 5}
+        {"point": [0, 0, 1e3], "comment": "new", "part": "  ", "label": "  "}
     )
     assert _seen(second) == _expected("add_to_skill", project)
     assert _callouts(project).read_text() == _expected("add_to_skill_file", project)
@@ -220,27 +232,42 @@ async def test_add_and_delete_write_the_published_shape_as_before(project):
     deleted = await handlers["delete_callout"]({"id": 1})
     assert _seen(deleted) == _expected("delete_1", project)
     assert _callouts(project).read_text() == _expected("delete_1_file", project)
-    for args, name in (
-        ({"id": 9}, "delete_missing"),
-        ({"id": True}, "delete_bool"),
-        ({"id": "2"}, "delete_str"),
-    ):
-        assert _seen(await handlers["delete_callout"](args)) == _expected(name, project)
+    assert _seen(await handlers["delete_callout"]({"id": 9})) == _expected(
+        "delete_missing", project
+    )
+    for bad in (True, "2"):
+        seen = _seen(await handlers["delete_callout"]({"id": bad}))
+        assert seen["is_error"] is True
+        assert json.loads(seen["text"])["code"] == "invalid_input"
 
 
+# Ember checks a call against the tool's declared schema before the handler
+# runs, so a wrong type, a missing field or a point of the wrong length is now
+# refused there, as an ``invalid_input`` result naming the field, where Mesh's
+# handler used to word it. What the handler still words itself is a value that
+# is well typed and still refused.
 @pytest.mark.parametrize(
-    "args, name",
+    "args, field",
     [
-        ({"point": [1, 2], "comment": "x"}, "add_bad_point_len"),
-        ({"point": "1,2,3", "comment": "x"}, "add_bad_point_type"),
-        ({"point": [1, "a", 3], "comment": "x"}, "add_bad_point_values"),
-        ({"comment": "x"}, "add_no_point"),
-        ({"point": [1, 2, 3], "comment": "  "}, "add_empty_comment"),
-        ({"point": [1, 2, 3]}, "add_no_comment"),
+        ({"point": [1, 2], "comment": "x"}, "point"),
+        ({"point": "1,2,3", "comment": "x"}, "point"),
+        ({"point": [1, "a", 3], "comment": "x"}, "point"),
+        ({"comment": "x"}, "point"),
+        ({"point": [1, 2, 3]}, "comment"),
     ],
 )
-async def test_a_bad_callout_is_refused_as_before(project, args, name):
-    assert _seen(await _handlers(project)["add_callout"](args)) == _expected(name, project)
+async def test_a_malformed_callout_is_refused_by_its_schema(project, args, field):
+    seen = _seen(await _handlers(project)["add_callout"](args))
+    assert seen["is_error"] is True
+    refusal = json.loads(seen["text"])
+    assert refusal["code"] == "invalid_input"
+    assert field in json.dumps(refusal["issues"])
+    assert not _callouts(project).exists()
+
+
+async def test_a_blank_comment_is_refused_as_before(project):
+    refused = await _handlers(project)["add_callout"]({"point": [1, 2, 3], "comment": "  "})
+    assert _seen(refused) == _expected("add_empty_comment", project)
     assert not _callouts(project).exists()
 
 

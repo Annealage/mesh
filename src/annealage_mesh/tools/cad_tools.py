@@ -164,7 +164,14 @@ def build(serve_dir):
         "the single source of truth for all measured values that the model "
         "script reads.  Actions: 'read' (full file), 'get' (one key by "
         "dotted path), 'list' (all leaf keys with values).",
-        {"action": str, "key": str},
+        {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string"},
+                "key": {"type": "string"},
+            },
+            "required": ["action"],
+        },
     )
     async def mesh_dimensions(args):
         action = args.get("action", "")
@@ -205,7 +212,15 @@ def build(serve_dir):
         "key is a dotted path (e.g. 'radiator.ear_height_y'), "
         "value is JSON-encoded (e.g. '78.38'), and note is an optional "
         "provenance note (e.g. 'caliper across ears, photo IMG_0142').",
-        {"key": str, "value": str, "note": str},
+        {
+            "type": "object",
+            "properties": {
+                "key": {"type": "string"},
+                "value": {"type": "string"},
+                "note": {"type": "string"},
+            },
+            "required": ["key", "value"],
+        },
     )
     async def mesh_dimensions_set(args):
         key = args.get("key", "")
