@@ -20,7 +20,7 @@
  * naming that code. Codes are for the model to act on: `unknown_model` means
  * "list the models again", `no_models_loaded` means "wait or generate one".
  *
- * The topbar pause control that gates these methods is the agent layer's
+ * The title bar pause control that gates these methods is the agent layer's
  * (`agent/pause.js`): pausing is a property of the tool grades on the server,
  * not of anything this table does.
  */

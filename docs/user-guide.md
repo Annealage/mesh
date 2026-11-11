@@ -83,11 +83,13 @@ For omp, two more settings cover an OpenAI-compatible endpoint omp doesn't alrea
 
 ## The three panes
 
-**The model**, on the left, is the 3D view. Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan. `Fit` reframes everything visible; `Z-up` switches which axis is up, for models exported from a Y-up tool; `Pause` stops the agent changing anything in the view, and is covered under [Pausing the agent's view control](#pausing-the-agents-view-control).
+**The model**, in the middle of the page, is the 3D view. Drag to orbit, scroll or pinch to zoom, right-drag or two fingers to pan. The tool rail down its left edge holds Navigate, Add pin (A), Measure, Sketch and Fit (F); Fit reframes everything visible. The `Z-up` / `Y-up` switch above the view says which axis is up, for models exported from a Y-up tool, and the corner of the view repeats it with the unit. `Pause`, in the title bar, stops the agent changing anything in the view, and is covered under [Pausing the agent's view control](#pausing-the-agents-view-control).
 
-**Review**, in the middle, lists the parts, your pins, the agent's callouts, and the measure controls. Every `.stl` under the served directory appears under **Parts** with a colour and a visibility checkbox, including ones generated after the page was opened. A part keeps its colour for the life of the page, so a newly generated part does not recolour the others. Hiding a part also stops you pinning it, since you can only pin what you can see.
+**Review** lists the parts, your pins, the agent's callouts, and the measure controls. Every `.stl` under the served directory appears under **Parts** with a colour and a visibility checkbox, including ones generated after the page was opened. A part keeps its colour for the life of the page, so a newly generated part does not recolour the others. Hiding a part also stops you pinning it, since you can only pin what you can see. The review panel button in the title bar shows or hides it.
 
-**Chat**, on the right, is the agent. It shows a status pill (Connecting, Ready, Unavailable), the transcript, tool cards you can expand, approval cards, and the composer.
+**Agent**, on the right, is the agent. It shows a status pill (Connecting, Ready, Unavailable), the transcript, tool cards you can expand, approval cards, and the composer.
+
+Around them, the title bar has a command field (Ctrl K) that runs any of this by name, three layout icons that give the room to the model, both panes or the agent, a colours icon, and Settings. The page follows your system's light or dark setting until you pick one with the colours icon. The status bar along the bottom shows the connection, what the agent is doing, the selected pin, the active tool and the up axis. When the agent is waiting on you it says so there too, with the name of the tool it wants to use, and clicking it takes you to the approval card.
 
 Agent health never affects the viewer. If the agent cannot start, or dies mid-session, the model, the pins and Submit keep working and the chat pane tells you what happened and what to do.
 
@@ -196,7 +198,7 @@ Submit writes every pin to `mesh-comments.json` in the served directory and appe
 
 **Measure** takes any two placed pins, yours or the agent's, and reports ΔX, ΔY, ΔZ and the direct distance, drawn as a line in the view. This is the quickest way to answer "how far is this boss from that wall" without going back to the CAD.
 
-Pins are yours and editable; callouts from the agent are read-only, and the two toggles at the top of the Review panel show or hide each set.
+Pins are yours and editable, and show as solid markers; callouts from the agent are read-only, drawn as outlined markers labelled A1, A2 and so on. The two checkboxes beside the headings in the review panel show or hide each set.
 
 ## Working with the agent
 
@@ -220,7 +222,7 @@ Sometimes the thing you want to point at is easier shown than described, and it 
 
 Three ways to attach an image, all doing the same thing:
 
-- The paperclip in the composer opens a file picker.
+- The paperclip icon in the composer opens a file picker.
 - Paste an image into the message box. A screenshot straight off the clipboard works.
 - Drag an image file anywhere onto the chat pane and drop it.
 
@@ -228,7 +230,7 @@ PNG, JPEG and WEBP, up to 8 MB. Each one uploads as soon as you attach it and ap
 
 Attached files are written into `images/` in the served folder under a name Mesh chooses, and they stay there after the message is sent. They are meant to be committed, the same as the agent's own screenshots.
 
-**Sketch** is the same idea aimed at the model itself. Hit it and the 3D view freezes under a drawing layer: circle the wall that is too thin, cross out the boss you want gone, arrow at the face that should be flat. Undo removes the last stroke, Clear starts over, Escape leaves without attaching. **Attach** flattens your strokes onto the view exactly as you see it and attaches that as a picture, so the agent sees the part and your marks in one image.
+**Sketch** is the same idea aimed at the model itself. Pick it on the tool rail and the 3D view freezes under a drawing layer: circle the wall that is too thin, cross out the boss you want gone, arrow at the face that should be flat. Undo removes the last stroke, Clear starts over, Escape leaves without attaching. **Attach** flattens your strokes onto the view exactly as you see it and attaches that as a picture, so the agent sees the part and your marks in one image.
 
 Two things worth knowing about sketching. The camera is held still while you draw, because a stroke only means anything against the view it was drawn on. For the same reason, if the view does move between your first stroke and Attach, either because you resized the window or because the agent moved the camera, Attach refuses and says so rather than sending marks that point at the wrong geometry; your strokes are kept, so you can put the view back and attach then. Hit `Pause` first if you want to be certain the agent leaves the view alone while you work.
 
@@ -236,7 +238,7 @@ A sketch is a picture, not coordinates. If you need the agent to have exact mode
 
 ## Settings, and where a value came from
 
-The settings button at the right of the title bar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode, backend), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
+The settings icon at the right of the title bar opens Settings. Four sections: Server (host, port, whether a browser opens), Agent (model, effort, permission mode, backend), Viewer (which axis is up, whether tool cards start closed) and a read-only Diagnostics block.
 
 Every field says where its current value came from, because there are four places it could be and knowing which one is the difference between fixing it in a second and hunting for it. Highest wins:
 
@@ -257,7 +259,7 @@ Two things are never written to a config file, whatever you do: the per-run toke
 
 Nothing conversational is written to a shareable file unless you ask. The event log under `.mesh/sessions/<id>/` is what scrollback, reconnects and `-c` all read, and it stays gitignored because it churns with every token.
 
-"Export" in the chat header writes the conversation to `review/transcript-<timestamp>.md` and tells you the path. `review/` is created the first time you export and not before. Two exports in the same second do not overwrite each other.
+Export, under More in the agent pane's header, writes the conversation to `review/transcript-<timestamp>.md` and tells you the path. `review/` is created the first time you export and not before. Two exports in the same second do not overwrite each other.
 
 The agent has the same ability as a tool, and unlike its viewer tools this one asks first, because an exported transcript can carry whatever was said about the hardware, absolute paths and what each turn cost. Your own button asks nobody: you pressed it.
 
@@ -285,7 +287,7 @@ The agent has tools for the viewer itself, not just for the folder, so "show me 
 
 **Writing**, which leaves something behind after you close the page, and always asks: add or delete a callout, and save a screenshot into `images/`.
 
-The screenshot one is worth knowing about, because it changes what the agent can answer. It gets the actual pixels of your view, so "does this fillet look right to you" is a question it can look at rather than infer from the source. Ask it to frame something first if the answer depends on the angle.
+The screenshot one is worth knowing about, because it changes what the agent can answer. It gets the actual pixels of your view, so "does this fillet look right to you" is a question it can look at rather than infer from the source. The picture follows your colour scheme, so a light page gives it a light background. Ask it to frame something first if the answer depends on the angle.
 
 A tool that needs the browser fails immediately if no page is open, with a message telling the agent to ask you to open the URL, rather than hanging until it times out.
 
@@ -339,9 +341,9 @@ One server per directory at a time. A second one refuses to start and tells you 
 
 ## Reviewing from a phone
 
-Below about 900 px wide the panes become tabs: Model, Review, Chat. Everything works, including pins and approval cards.
+Below about 900 px wide the panes become tabs: Model, Review, Agent. Everything works, including pins and approval cards. The tool rail floats along the bottom of the Model tab.
 
-<img src="mesh-phone-chat.png" alt="The narrow layout: Model, Review and Chat as tabs, with approval cards for measured values awaiting a decision" width="380">
+<img src="mesh-phone-chat.png" alt="The narrow layout: Model, Review and Agent as tabs, with the Agent tab open on an approval card awaiting a decision" width="380">
 
 
 To reach it from a phone, the simplest safe route is Tailscale:

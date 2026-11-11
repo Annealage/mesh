@@ -76,7 +76,7 @@ PAUSED_MESSAGE = (
     "editing a pin comment and do not want the model moving underneath them. "
     "Every read-only mesh tool still works, so keep looking if that helps; "
     "otherwise say what you were about to do and ask them to press Paused in "
-    "the viewer's topbar when they are ready."
+    "the viewer's title bar when they are ready."
 )
 
 

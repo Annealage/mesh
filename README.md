@@ -4,7 +4,7 @@ An agentic CAD workbench for 3D-printable parts. A 3D viewer and a chat pane sit
 
 You give it a folder, it scaffolds a parametric CadQuery project and starts a local server. Ask for a part, the agent writes the geometry, and the STL turns up in the viewer within a fraction of a second. Click the face that's wrong, type what's wrong with it, and the agent revises the script. You can pin your problems on the model, the agent can pin its questions right back, and the two of you iterate on a shared surface instead of trading paragraphs about which corner you mean.
 
-![Annealage Mesh on the side-scroll fan duct for a dual V100 radiator: a human's pin on a turning vane, the agent's numbered callouts measuring what restricts the airflow, the review panel, and the chat pane with its findings](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-three-pane.png)
+![Annealage Mesh in the light scheme on a fan shroud: the model with two of your pins, one of the agent's callouts and the distance between them, the review panel listing them, and the agent pane beside it](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-three-pane.png)
 
 ## Why
 
@@ -68,17 +68,18 @@ Four subcommands for when you want less than all of that:
 
 If a folder of yours is actually called `view`, `init` or `doctor`, spell it `./view` and it's read as the directory. Running inside an existing agent session? The bare form detects it and flips to viewer-only so you don't end up with an agent inside an agent.
 
-- Drag to orbit, scroll or pinch to zoom, right-drag or two-finger to pan.
-- Flip to "Add pin" mode, click the model to drop a pin, type a comment against it in the panel.
+- Drag to orbit, scroll or pinch to zoom, right-drag or two-finger to pan. Fit (F) on the tool rail reframes the view, and the Z-up switch above it flips the up axis for models exported from a Y-up tool.
+- Pick Add pin on the tool rail (or press A), click the model to drop a pin, type a comment against it in the review panel.
 - Hit Submit. Your pins get written to `mesh-comments.json` in the served folder, which is what the agent reads.
 - Type in the chat pane to put the agent to work in that folder. Interrupt stops a turn mid-flight, each turn shows what it cost.
 - The agent works the viewer too, not just the folder. It can move the camera, hide and show parts, screenshot what's on screen and pin its own callouts, so "show me the underside of that boss" is something it does rather than tells you to do.
 - Hit Pause in the title bar and everything that changes the view gets refused until you hit it again. Line up a shot or type a comment without it moving underneath you. It can still read while paused.
-- Need a distance between two features? Pick any two placed pins (yours or the agent's) in the Measure panel for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view.
-- Attach a picture to a message with the paperclip, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
-- Pick the Sketch tool on the left rail to draw straight on the 3D view, circle the wall that's wrong, send that as the picture. Quicker than a pin when the shape of the problem is the point.
-- Export in the chat header writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask for a record of what you decided.
-- The settings button at the top right opens Settings: port, host, model, backend, effort, a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, same facts `doctor` prints.
+- Need a distance between two features? Pick any two placed pins (yours or the agent's) in the review panel's Measure section for ΔX/ΔY/ΔZ and the direct distance, drawn as a line in the view and read out in the corner of it.
+- Attach a picture to a message with the paperclip icon, a paste, or a drag and drop: a photo of the printed part, a slicer screenshot, a reference drawing.
+- Pick the Sketch tool on the tool rail to draw straight on the 3D view, circle the wall that's wrong, send that as the picture. Quicker than a pin when the shape of the problem is the point.
+- Export, under More in the agent pane's header, writes the conversation into `review/` as markdown you can commit. The agent can do it too, with your approval, when you ask for a record of what you decided.
+- The settings icon at the top right opens Settings: port, host, model, backend, effort, a couple of viewer preferences, each shown with where its value came from (a flag, this project's config, your own settings, or the built-in default) so you know which file to edit. Anything that needs a restart says so rather than pretending to apply. There's a Diagnostics block in there too, same facts `doctor` prints.
+- The page follows your system's light or dark setting, and the colours icon next to Settings pins one or the other. The three layout icons in the title bar choose which pane gets the room: the model, both, or the agent.
 
 It works on a phone too, the three panes become tabs and navigation is all touch (one finger orbits, two fingers pan and zoom). `--host tailscale` binds your tailnet address instead of loopback, which is what I use to look at a part on my phone while the agent iterates on the desktop.
 
@@ -104,7 +105,7 @@ The helpers are CadQuery-specific, but the viewer itself just watches for STL ou
 - `model.py` - the parametric CadQuery script. `uv run model.py` writes STEP and STL into `models/`.
 - `cad/` - helper scripts: `robust_solids.py`, `section_probe.py`, `export_watertight.py`, `pin_to_model.py`.
 - `mesh-comments.json` - your pins and comments, written on submit (also appended to `mesh-comments.log`).
-- `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (teal, read-only). This is how an agent points back at the model.
+- `mesh-callouts.json` - callouts to show in the viewer. Write pins here and they appear live (outlined, read-only, numbered A1, A2). This is how an agent points back at the model.
 - `images/` - pictures you attached, sketches you drew, screenshots the agent saved. Meant to be committed.
 - `.mesh/` - session event logs, this project's config, allow-always decisions, and a lock file so two servers can't fight over one folder. Gitignored except `config.toml`, which is shareable and holds no secret.
 - `review/` - exported transcripts. Created the first time you export one, not before.
@@ -116,7 +117,7 @@ The agent's shell runs sandboxed, so a command that stays inside the project fol
 
 Its viewer tools split by what a mistake would cost. Reading anything, and driving the view itself, never asks: it can move the camera and hide parts freely, because you're looking at the screen while it happens and a card per camera move would just get clicked without reading. Pause is the control for that, not a prompt. What does ask is the things that leave something behind after you close the page: writing a callout, deleting one, saving a screenshot, and setting a measured value in `dimensions.json`.
 
-![Approval cards for the agent setting the vanes' measured blockage in dimensions.json, each showing the key, value and where it came from, with Allow, Always allow and Deny](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-approval.png)
+![An approval card in the agent pane asking to let the agent write cad/guard.py, with Allow, Always allow and Deny, and the same request raised in the status bar](https://raw.githubusercontent.com/Annealage/mesh/main/docs/mesh-approval.png)
 
 Four things worth knowing about the containment. The sandbox stops writes and network, not reads, so on its own a contained shell could read anything your user can. Mesh refuses a short list of credential paths on top of that (`~/.ssh`, `~/.aws`, `~/.config/gcloud`, `~/.kube`, `~/.gnupg`, `~/.netrc`, `~/.docker/config.json`, `~/.config/gh` and its own `~/.claude/.credentials.json`), for the file tools and for shell commands that name them. Be clear on how far that goes: for the file tools it's exact, symlinks included, but for a shell command it's text matching, so a path built from a variable or a glob gets through. It raises the floor against accidents and direct attempts; it isn't a wall against a determined agent. `git` is deliberately outside the sandbox, because it has to see the real filesystem to work on your repository; that is a large carve-out, since git can be told to run commands through its own config, so a folder whose `.git/config` names one is refused until you accept it (below). And the model can't drop the sandbox for a command by asking, which it does try if you let it.
 

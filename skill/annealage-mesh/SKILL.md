@@ -195,10 +195,12 @@ Keep a **focused build** that regenerates only the part you're iterating on. The
 
 1. Regenerate the STL → the viewer picks it up automatically.
 2. Tell the human what changed and what to look at.
-3. Human switches to "Add pin" mode, clicks the model, types a comment, hits Submit.
+3. Human picks the Add pin tool, clicks the model, types a comment, hits Submit.
 4. Read `mesh-comments.json` for pin locations + comments.
 5. Map pin coordinates from the **export frame** back to **model coordinates** before acting (see the coordinate bridge section below).
 6. Revise the model and repeat.
+
+The viewer screenshot you take shows the human's view as they see it, in their colour scheme: a light page gives a light background, a dark page a dark one. In the view, pins are solid numbered markers and your callouts are outlined markers labelled A1, A2.
 
 ## The coordinate bridge
 
