@@ -14,19 +14,47 @@
 
 import * as THREE from "three";
 
-/** A round badge sprite carrying a short label (a pin number, an axis letter),
- * `text` drawn in `textColor` on a `fill` disc; both are CSS colour strings. */
-export function makeLabelSprite(text, fill, textColor) {
+const MONO = "'Red Hat Mono', ui-monospace, monospace";
+
+/**
+ * A chamfered plate marker sprite carrying a short label (a pin number, an
+ * axis letter): one corner cut at 45 degrees, as the library's pin plates.
+ * `fill`, `edge` and `ink` are CSS colour strings; `edge` is optional, `ring`
+ * (optional) draws a larger chamfered outline around the plate.
+ */
+export function makeLabelSprite(text, { fill, edge, ink, ring }) {
   const c = document.createElement("canvas");
   c.width = 64;
   c.height = 64;
   const ctx = c.getContext("2d");
+  // Geometry from the library's reference: plate M-10-10H5L10-5V10H-10Z,
+  // ring M-14-14H7L14-7V14H-14Z, scaled 2x about the canvas centre.
+  const path = (h, cut) => {
+    ctx.beginPath();
+    ctx.moveTo(32 - h, 32 - h);
+    ctx.lineTo(32 + h - cut, 32 - h);
+    ctx.lineTo(32 + h, 32 - h + cut);
+    ctx.lineTo(32 + h, 32 + h);
+    ctx.lineTo(32 - h, 32 + h);
+    ctx.closePath();
+  };
+  ctx.lineJoin = "miter";
+  path(20, 10);
   ctx.fillStyle = fill;
-  ctx.beginPath();
-  ctx.arc(32, 32, 30, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = textColor;
-  ctx.font = "600 34px Chivo, system-ui, sans-serif";
+  if (edge) {
+    ctx.strokeStyle = edge;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+  if (ring) {
+    path(28, 14);
+    ctx.strokeStyle = ring;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+  ctx.fillStyle = ink;
+  ctx.font = "500 28px " + MONO;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(String(text), 32, 34);
@@ -36,14 +64,13 @@ export function makeLabelSprite(text, fill, textColor) {
 }
 
 /**
- * A pill-shaped text tag, for longer strings like a measurement readout,
- * distinct from makeLabelSprite's round number badge: `color` for the text
- * and outline on a `background` fill. `userData.aspect` (width/height of the
- * drawn canvas) lets the caller scale the sprite to a non-square size without
- * distorting the text.
+ * A plain text tag, for longer strings like a measurement readout: mono
+ * `ink` text on a `background` rectangle with no outline or radius.
+ * `userData.aspect` (width/height of the drawn canvas) lets the caller scale
+ * the sprite to a non-square size without distorting the text.
  */
-export function makeTagSprite(text, color, background) {
-  const font = "600 40px Chivo, system-ui, sans-serif";
+export function makeTagSprite(text, ink, background) {
+  const font = "500 40px " + MONO;
   const probe = document.createElement("canvas").getContext("2d");
   probe.font = font;
   const w = Math.ceil(probe.measureText(text).width) + 28;
@@ -51,24 +78,9 @@ export function makeTagSprite(text, color, background) {
   c.width = w;
   c.height = 64;
   const ctx = c.getContext("2d");
-  const pill = (inset) => {
-    const r = 14 - inset, x = inset, y = inset, ww = w - inset * 2, hh = 64 - inset * 2;
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + ww, y, x + ww, y + hh, r);
-    ctx.arcTo(x + ww, y + hh, x, y + hh, r);
-    ctx.arcTo(x, y + hh, x, y, r);
-    ctx.arcTo(x, y, x + ww, y, r);
-    ctx.closePath();
-  };
   ctx.fillStyle = background;
-  pill(0);
-  ctx.fill();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 3;
-  pill(1.5);
-  ctx.stroke();
-  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, w, 64);
+  ctx.fillStyle = ink;
   ctx.font = font;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";

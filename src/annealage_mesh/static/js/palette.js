@@ -54,14 +54,18 @@ export function palette() {
   const parts = [];
   for (let i = 1; i <= PART_SLOTS; i++) parts.push(read("--mv-part-" + i));
   return {
-    view: read("--view"),
+    well: read("--well"),
     grid: read("--mv-grid"),
     grid2: read("--mv-grid-2"),
     pin: read("--pin"),
     onPin: read("--on-pin"),
     pinSelected: read("--pin-selected"),
-    callout: read("--callout"),
-    onCallout: read("--on-callout"),
+    onTemper: read("--on-temper"),
+    axisX: read("--mv-axis-x"),
+    axisY: read("--mv-axis-y"),
+    axisZ: read("--mv-axis-z"),
+    sketch: read("--sketch"),
+    sketchHalo: read("--sketch-halo"),
     measure: read("--measure"),
     parts,
   };

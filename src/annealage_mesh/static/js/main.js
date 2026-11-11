@@ -28,9 +28,9 @@ import { initSketch } from "./sketch.js";
 import { initChrome } from "./chrome.js";
 import { stylesReady } from "./palette.js";
 
-// Sprite labels are drawn to a canvas once, so Chivo has to be loaded by
-// then or they keep the fallback face.
-await Promise.all([stylesReady, document.fonts.load("600 34px Chivo").catch(() => {})]);
+// Sprite labels are drawn to a canvas once, so the mono face has to be loaded
+// by then or they keep the fallback face. A missing font must not stop boot.
+await Promise.all([stylesReady, document.fonts.load("500 34px 'Red Hat Mono'").catch(() => {})]);
 
 const appEl = document.getElementById("app");
 

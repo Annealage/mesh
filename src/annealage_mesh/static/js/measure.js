@@ -76,7 +76,7 @@ export function initMeasure({ scene, markerRadius }) {
     measureGroup.add(measureLine);
 
     const rad = markerRadius();
-    measureLabel = makeTagSprite(round(dist) + " mm", pal.measure, pal.view);
+    measureLabel = makeTagSprite(round(dist) + " mm", pal.measure, pal.well);
     measureLabel.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2 + rad * 1.5);
     measureLabel.scale.set(rad * 3 * measureLabel.userData.aspect, rad * 3, 1);
     measureGroup.add(measureLabel);

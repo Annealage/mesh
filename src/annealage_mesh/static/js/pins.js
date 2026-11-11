@@ -176,6 +176,17 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   // ---- reconcile user-pin markers against state.pins ----
   let pal = palette();
 
+  // Human marker: solid ink plate; the selected one is temper with a ring.
+  function userStyle(selected) {
+    return selected
+      ? { fill: pal.pinSelected, ink: pal.onTemper, ring: pal.pinSelected }
+      : { fill: pal.pin, edge: pal.onPin, ink: pal.onPin };
+  }
+  // Agent marker: a ruled outline on the page ground.
+  function agentStyle() {
+    return { fill: pal.onPin, edge: pal.pin, ink: pal.pin };
+  }
+
   function disposeUserMarker(obj) {
     markerGroup.remove(obj.marker, obj.sprite);
     obj.marker.geometry.dispose();
@@ -195,7 +206,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       );
       marker.position.set(p.point[0], p.point[1], p.point[2]);
       markerGroup.add(marker);
-      const sprite = makeLabelSprite(p.id, pal.pin, pal.onPin);
+      const sprite = makeLabelSprite(p.id, userStyle(p.id === state.selectedPinId));
       sprite.position.set(p.point[0], p.point[1], p.point[2] + rad * 2.2);
       sprite.scale.set(rad * 3, rad * 3, 1);
       markerGroup.add(sprite);
@@ -211,7 +222,18 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   store.subscribe("pins", renderPins);
 
   store.subscribe("selectedPinId", (state) => {
-    userSide.forEach((obj, id) => obj.marker.material.color.set(id === state.selectedPinId ? pal.pinSelected : pal.pin));
+    userSide.forEach((obj, id) => {
+      const sel = id === state.selectedPinId;
+      obj.marker.material.color.set(sel ? pal.pinSelected : pal.pin);
+      // The sprite's texture bakes the colours, so a selection change swaps it.
+      const old = obj.sprite;
+      obj.sprite = makeLabelSprite(id, userStyle(sel));
+      obj.sprite.position.copy(old.position);
+      obj.sprite.scale.copy(old.scale);
+      markerGroup.remove(old);
+      disposeSprite(old);
+      markerGroup.add(obj.sprite);
+    });
     const p = state.pins.find((x) => x.id === state.selectedPinId);
     if (p) {
       controls.target.set(p.point[0], p.point[1], p.point[2]);
@@ -404,11 +426,11 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const num = a.id != null ? a.id : i + 1;
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(rad, 16, 12),
-        new THREE.MeshBasicMaterial({ color: pal.callout, depthTest: true }),
+        new THREE.MeshBasicMaterial({ color: pal.pin, depthTest: true }),
       );
       marker.position.set(p[0], p[1], p[2]);
       agentGroup.add(marker);
-      const sprite = makeLabelSprite(num, pal.callout, pal.onCallout);
+      const sprite = makeLabelSprite(num, agentStyle());
       sprite.position.set(p[0], p[1], p[2] + rad * 2.2);
       sprite.scale.set(rad * 3, rad * 3, 1);
       agentGroup.add(sprite);

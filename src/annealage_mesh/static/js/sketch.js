@@ -40,16 +40,15 @@
 
 import { uploadImage } from "agent/uploads.js";
 import { toast } from "agent/ui.js";
+import { palette } from "./palette.js";
 import { activateTab } from "agent/layout.js";
 import { MAX_CAPTURE_CHARS, MAX_CAPTURE_WIDTH } from "./commands.js";
 
-// Fixed here because there is no settings layer yet to carry a colour or
-// width choice (a later settings pane owns this). #35c7e0 is the same cyan
-// already used for agent callouts and the "live" connection state, and
-// reads clearly against both a light-coloured model and this viewer's dark
-// background.
-const STROKE_COLOR = "#35c7e0";
-const STROKE_WIDTH = 3; // CSS pixels in the overlay; scaled for the composite
+// The stroke is --sketch with a --sketch-halo casing drawn first and wider,
+// so it reads on every part colour in both schemes. Both are one value in
+// both schemes because the stroke is baked into the image the agent reads.
+const STROKE_WIDTH = 3;
+const HALO_EXTRA = 2; // CSS pixels in the overlay; scaled for the composite
 
 export function initSketch({ container, captureView, cameraState }) {
   const sketchBtn = document.getElementById("sketchBtn");
@@ -97,6 +96,19 @@ export function initSketch({ container, captureView, cameraState }) {
     stroke.slice(1).forEach((p) => strokeCtx.lineTo(p.x * w, p.y * h));
     strokeCtx.stroke();
   }
+  // Casing first, then the stroke; colours read when drawn so a scheme change
+  // is picked up.
+  function drawStrokes(c, list, w, h, scale) {
+    const pal = palette();
+    c.lineCap = "round";
+    c.lineJoin = "round";
+    [[pal.sketchHalo, STROKE_WIDTH + HALO_EXTRA], [pal.sketch, STROKE_WIDTH]].forEach(([colour, width]) => {
+      c.strokeStyle = colour;
+      c.lineWidth = width * scale;
+      list.forEach((stroke) => strokePath(c, stroke, w, h));
+    });
+  }
+
 
   function allStrokes() {
     return current && current.length > 1 ? [...strokes, current] : strokes;
@@ -105,11 +117,7 @@ export function initSketch({ container, captureView, cameraState }) {
   function redraw() {
     const w = overlay.clientWidth, h = overlay.clientHeight;
     ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = STROKE_COLOR;
-    ctx.lineWidth = STROKE_WIDTH;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    allStrokes().forEach((stroke) => strokePath(ctx, stroke, w, h));
+    drawStrokes(ctx, allStrokes(), w, h, 1);
   }
 
   // The overlay's backing store tracks devicePixelRatio, like the renderer's
@@ -306,11 +314,7 @@ export function initSketch({ container, captureView, cameraState }) {
     // stroke's apparent thickness the same in the upload as it was on
     // screen, even though the two canvases rarely share a pixel size.
     const scale = overlayWidth ? canvas.width / overlayWidth : 1;
-    cctx.strokeStyle = STROKE_COLOR;
-    cctx.lineWidth = STROKE_WIDTH * scale;
-    cctx.lineCap = "round";
-    cctx.lineJoin = "round";
-    finished.forEach((stroke) => strokePath(cctx, stroke, canvas.width, canvas.height));
+    drawStrokes(cctx, finished, canvas.width, canvas.height, scale);
     const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
     if (!blob) {
       toast("Could not build the sketch image.", false);

@@ -650,6 +650,95 @@ def test_click_in_add_pin_mode_creates_a_pin_and_submits_to_disk(browser, mesh_s
         page.close()
 
 
+# 6b. The scene is drawn from library tokens and follows the scheme ----------
+
+_WELL_HEX = """() => {
+  const p = document.createElement("span");
+  document.body.append(p);
+  p.style.color = "var(--well)";
+  const m = getComputedStyle(p).color.match(/\\d+/g).map(Number);
+  p.remove();
+  return m.slice(0, 3).map((v) => v.toString(16).padStart(2, "0")).join("");
+}"""
+
+
+def _scene_counts(page):
+    return page.evaluate(
+        "() => { const i = window.mesh.renderer.info.memory; return [i.textures, i.geometries]; }"
+    )
+
+
+def test_scene_background_is_well_token_in_each_emulated_scheme(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.emulate_media(color_scheme="light")
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        bg = "() => window.mesh.scene.background.getHexString()"
+        light = page.evaluate(bg)
+        assert light == page.evaluate(_WELL_HEX)
+        page.emulate_media(color_scheme="dark")
+        page.wait_for_function(
+            "(l) => window.mesh.scene.background.getHexString() !== l", arg=light
+        )
+        assert page.evaluate(bg) == page.evaluate(_WELL_HEX)
+    finally:
+        page.close()
+
+
+def test_scheme_set_under_os_dark_changes_background_via_schemechange(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.emulate_media(color_scheme="dark")
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        dark = page.evaluate("() => window.mesh.scene.background.getHexString()")
+        page.evaluate("() => window.annealageScheme.set('light')")
+        page.wait_for_function("(d) => window.mesh.scene.background.getHexString() !== d", arg=dark)
+    finally:
+        page.close()
+
+
+def test_scheme_change_does_not_leak_textures_or_geometries(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate(
+            "() => { const s = window.mesh.store;"
+            " s.addPin({ point: [0, 0, 0], part: 'alpha', label: '' });"
+            " s.addPin({ point: [5, 0, 0], part: 'alpha', label: '' });"
+            " s.setCallouts([{ id: 1, part: 'alpha', label: '+Z', point: [0, 5, 0], comment: 'c' }]); }"
+        )
+        page.evaluate("() => window.annealageScheme.set('dark')")
+        page.evaluate("() => window.mesh.renderer.render(window.mesh.scene, window.mesh.camera)")
+        before = _scene_counts(page)
+        for scheme in ("light", "dark", "light", "dark"):
+            page.evaluate("(x) => window.annealageScheme.set(x)", scheme)
+            page.evaluate(
+                "() => window.mesh.renderer.render(window.mesh.scene, window.mesh.camera)"
+            )
+        assert _scene_counts(page) == before
+    finally:
+        page.close()
+
+
+def test_parts_keep_distinct_colours_across_a_scheme_change(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        cols = "() => Object.values(window.mesh.meshes).map((m) => m.material.color.getHexString())"
+        first = page.evaluate(cols)
+        assert len(set(first)) == 2
+        page.evaluate("() => window.annealageScheme.set('light')")
+        page.wait_for_timeout(200)
+        second = page.evaluate(cols)
+        assert len(set(second)) == 2
+    finally:
+        page.close()
+
+
 # 7. The store defers a mutator called from inside a subscriber ---------------
 
 

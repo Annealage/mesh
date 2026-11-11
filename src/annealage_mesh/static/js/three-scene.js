@@ -16,7 +16,7 @@
 
 import * as THREE from "three";
 import { OrbitControls } from "./vendor/OrbitControls.js";
-import { makeLabelSprite } from "./sprites.js";
+import { disposeSprite, makeLabelSprite } from "./sprites.js";
 import { onPaletteChange, palette } from "./palette.js";
 import { store } from "./store.js";
 
@@ -29,7 +29,7 @@ const AXLEN = 60;
 export function initScene(container, { getMeshes }) {
   const scene = new THREE.Scene();
   const pal = palette();
-  scene.background = new THREE.Color(pal.view);
+  scene.background = new THREE.Color(pal.well);
 
   const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 20000);
   camera.up.set(0, 0, 1); // default: Z up
@@ -49,7 +49,8 @@ export function initScene(container, { getMeshes }) {
   controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
   controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN };
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x30343c, 1.1));
+  const hemi = new THREE.HemisphereLight(0xffffff, pal.well, 1.1); // check-ok: light source, not a surface
+  scene.add(hemi);
   const key = new THREE.DirectionalLight(0xffffff, 1.6);
   key.position.set(1, 0.7, 1.4);
   scene.add(key);
@@ -65,24 +66,42 @@ export function initScene(container, { getMeshes }) {
   let grid = makeGrid(pal);
   scene.add(grid);
   onPaletteChange((p) => {
-    scene.background.set(p.view);
+    scene.background.set(p.well);
     scene.remove(grid);
     grid.geometry.dispose();
     grid.material.dispose();
     grid = makeGrid(p);
     scene.add(grid);
   });
-  scene.add(new THREE.AxesHelper(AXLEN)); // X red, Y green, Z blue
-  // labelled axis ends; colours match the AxesHelper.
-  [
-    ["X", "#ff4d4d", [AXLEN + 10, 0, 0]],
-    ["Y", "#4dd24d", [0, AXLEN + 10, 0]],
-    ["Z", "#4d8cff", [0, 0, AXLEN + 10]],
-  ].forEach(([t, col, pos]) => {
-    const s = makeLabelSprite(t, col, "#14161a");
-    s.position.set(pos[0], pos[1], pos[2]);
-    s.scale.set(14, 14, 1);
-    scene.add(s);
+  const axes = new THREE.AxesHelper(AXLEN);
+  axes.setColors(pal.axisX, pal.axisY, pal.axisZ);
+  scene.add(axes);
+  // labelled axis ends, in the axis colours; rebuilt when the scheme changes.
+  const axisLabels = [];
+  function makeAxisLabels(p) {
+    [
+      ["X", p.axisX, [AXLEN + 10, 0, 0]],
+      ["Y", p.axisY, [0, AXLEN + 10, 0]],
+      ["Z", p.axisZ, [0, 0, AXLEN + 10]],
+    ].forEach(([t, col, pos]) => {
+      const s = makeLabelSprite(t, { fill: col, ink: p.well });
+      s.position.set(pos[0], pos[1], pos[2]);
+      s.scale.set(14, 14, 1);
+      scene.add(s);
+      axisLabels.push(s);
+    });
+  }
+  makeAxisLabels(pal);
+  onPaletteChange((p) => {
+    axes.setColors(p.axisX, p.axisY, p.axisZ);
+    axisLabels.forEach((s) => {
+      scene.remove(s);
+      disposeSprite(s);
+    });
+    axisLabels.length = 0;
+    makeAxisLabels(p);
+    // the fill light's ground colour follows the scheme
+    hemi.groundColor.set(p.well);
   });
 
   function visibleBounds() {
