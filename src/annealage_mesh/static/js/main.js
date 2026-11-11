@@ -72,7 +72,7 @@ const chatApi = initChat({
   send,
   agentTitles: {
     unavailable:
-      "The agent is not available right now. The viewer, pins and Submit keep working regardless.",
+      "The agent is not running. Pins and Submit still work.",
   },
 });
 const pauseApi = initPause({ send });
@@ -111,9 +111,8 @@ wsApi = initWs({
   },
   onFallback: pinsApi.startCalloutsPoll,
   connTitles: {
-    live: "Live: callouts update without a reload.",
-    polling:
-      "Live updates are unavailable right now; falling back to checking for callouts every 1.5s.",
+    live: "Live",
+    polling: "Reconnecting. Callouts refresh every few seconds.",
   },
   onHello: chatApi.handleHello,
   onAgentEvent: chatApi.handleEvent,

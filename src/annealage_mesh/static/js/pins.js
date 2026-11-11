@@ -171,7 +171,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     const frame = window.annealageFrame.current;
     const panelVisible = frame.isNarrow() ? frame.activeTab() === "review" : frame.panelOpen();
     if (!panelVisible) {
-      toast("Pin #" + id + " added, open Panel to comment", true);
+      toast("Pin " + id + " added. Open the review panel to comment.", true);
     }
   }
 
@@ -250,7 +250,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   const pinsDiv = document.getElementById("pins");
   const emptyMsg = document.createElement("div");
   emptyMsg.className = "empty";
-  emptyMsg.textContent = "No pins yet, tap “Add pin”, then tap a visible part.";
+  emptyMsg.textContent = "No pins yet. Choose Add pin, then click a part.";
 
   const pinRows = new Map(); // pin id -> { el, num, meta, ta }, one row per pin, never rebuilt
 
@@ -297,7 +297,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     row.meta.replaceWith(fields);
     row.meta = fields;
     fields.addEventListener("click", () => store.selectPin(p.id));
-    row.ta.placeholder = "Comment for pin #" + p.id + "…";
+    row.ta.placeholder = "Comment";
     if (row.ta !== document.activeElement && row.ta.value !== p.comment) {
       row.ta.value = p.comment;
     }
@@ -405,12 +405,13 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const j = await res.json().catch(() => ({}));
       if (res.ok && j.ok) {
         store.setDirty(false);
-        toast("Submitted " + j.count + " annotation" + (j.count === 1 ? "" : "s"), true);
+        toast("Submitted " + j.count + " pin" + (j.count === 1 ? "" : "s"), true);
       } else {
-        toast("Submit failed: " + (j.error || res.status), false);
+        const authRefused = !j.error && (res.status === 401 || res.status === 403);
+        toast("Could not submit: " + (authRefused ? "sign in again" : j.error || "the server refused it"), false);
       }
     } catch (err) {
-      toast("Submit failed: " + err.message, false);
+      toast("Could not submit: " + err.message, false);
     }
   });
 
@@ -458,7 +459,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       const el = document.createElement("div");
       el.className = "row apin";
       const cmt = document.createElement("p");
-      cmt.textContent = a.comment || "(no comment)";
+      cmt.textContent = a.comment || "No comment";
       el.append(marker("agent", "A" + num), buildFields(a.part || "unknown", a.label || "", p), cmt);
       el.addEventListener("click", () => {
         controls.target.set(p[0], p[1], p[2]);

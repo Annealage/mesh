@@ -14,7 +14,7 @@ export function initPaletteCommands() {
   if (!palette) return;
   const frame = () => window.annealageFrame.current;
   const agentUp = () => $("agentStatus").dataset.state !== "unavailable";
-  const noAgent = "The agent is not available";
+  const noAgent = "The agent is not running";
   const scheme = (v) => () => window.annealageScheme.set(v);
 
   palette.register([

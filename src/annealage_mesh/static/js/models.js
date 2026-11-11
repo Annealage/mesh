@@ -107,7 +107,7 @@ export function initModels({ scene, fitView, meshes }) {
         }
       },
       undefined,
-      () => showError("Failed to load " + model.label + ", is it in the served directory?"),
+      () => showError("Could not load " + model.label + "."),
     );
   }
 
@@ -226,8 +226,8 @@ export function initModels({ scene, fitView, meshes }) {
     e.preventDefault();
     navigator.clipboard
       .writeText(shownPath)
-      .then(() => toast("Copied path to clipboard", true))
-      .catch((err) => toast("Copy failed: " + err.message, false));
+      .then(() => toast("Path copied", true))
+      .catch(() => toast("Could not copy the path", false));
   });
 
   /**
@@ -256,7 +256,7 @@ export function initModels({ scene, fitView, meshes }) {
         Object.keys(meshes).forEach(disposeMesh);
         store.setModels([]);
         updateTitle([], j && j.dir);
-        if (first) showError("No STLs found in the served directory.");
+        if (first) showError("No parts in this folder yet.");
         return;
       }
       const withSlot = models.map((m) => ({ ...m, slot: slotOf(m.rel) }));
@@ -268,7 +268,7 @@ export function initModels({ scene, fitView, meshes }) {
       updateTitle(models, j.dir);
       withSlot.forEach((m) => loadPart(m, { fit: first }));
     } catch (e) {
-      showError("Failed to load /manifest: " + e.message);
+      showError("Could not read the folder. Reload to try again.");
     }
   }
 
@@ -282,7 +282,7 @@ export function initModels({ scene, fitView, meshes }) {
   // claim that models were listed when none were.
   setTimeout(() => {
     if (store.getState().models.length > 0 && loadedCount === 0) {
-      showError("No STLs loaded. The manifest listed models but none of them loaded from /model/.");
+      showError("The parts in this folder could not be loaded.");
     }
   }, 4000);
 

@@ -28,7 +28,7 @@
     </div>
     <button class="cmd" type="button" aria-label="Search or run a command"><svg class="ico"><use href="/style/icons.svg#i-search"/></svg><span>Search or run a command</span><kbd>Ctrl K</kbd></button>
     <div class="tb-right">
-      <button id="pauseBtn" class="btn quiet" type="button" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view."><svg class="ico"><use href="/style/icons.svg#i-pause"/></svg><span data-label>Pause</span></button>
+      <button id="pauseBtn" class="btn quiet" type="button" aria-pressed="false" title="Pause the agent's control of this view"><svg class="ico"><use href="/style/icons.svg#i-pause"/></svg><span data-label>Pause</span></button>
       <span class="gap"></span>
       <div class="seg icons" role="group" aria-label="Layout focus">
         <button type="button" aria-pressed="false" data-layout-set="drawing" aria-label="Model" title="Model"><svg class="ico"><use href="/style/icons.svg#i-lay-drawing"/></svg></button>
@@ -38,7 +38,7 @@
       <span class="gap"></span>
       <button id="panelBtn" class="btn icon" type="button" aria-pressed="true" aria-label="Review panel" title="Review panel"><svg class="ico"><use href="/style/icons.svg#i-review"/></svg></button>
       <button class="btn icon" type="button" data-scheme-toggle aria-label="Colours" title="Colours"><svg class="ico"><use href="/style/icons.svg#i-auto"/></svg></button>
-      <button id="settingsBtn" class="btn icon" type="button" aria-label="Settings" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed"><svg class="ico"><use href="/style/icons.svg#i-settings"/></svg></button>
+      <button id="settingsBtn" class="btn icon" type="button" aria-label="Settings" title="Settings"><svg class="ico"><use href="/style/icons.svg#i-settings"/></svg></button>
     </div>
   </header>
 
@@ -53,10 +53,10 @@
   </div>
 
   <nav class="rail" aria-label="Tools">
-    <button id="navTool" class="tool" type="button" aria-pressed="true" aria-label="Navigate" title="Navigate: drag to orbit, pinch to zoom, two fingers to pan"><svg class="ico"><use href="/style/icons.svg#i-select"/></svg></button>
-    <button id="pinTool" class="tool" type="button" aria-pressed="false" aria-label="Add pin (A)" title="Add pin (A): tap a visible part to pin a comment to it"><svg class="ico"><use href="/style/icons.svg#i-pin"/></svg><span class="k">A</span></button>
+    <button id="navTool" class="tool" type="button" aria-pressed="true" aria-label="Navigate" title="Navigate: drag to orbit, scroll to zoom"><svg class="ico"><use href="/style/icons.svg#i-select"/></svg></button>
+    <button id="pinTool" class="tool" type="button" aria-pressed="false" aria-label="Add pin (A)" title="Add pin (A)"><svg class="ico"><use href="/style/icons.svg#i-pin"/></svg><span class="k">A</span></button>
     <button id="measureTool" class="tool" type="button" aria-label="Measure" title="Measure between two pins"><svg class="ico"><use href="/style/icons.svg#i-measure"/></svg></button>
-    <button id="sketchBtn" class="tool" type="button" aria-pressed="false" aria-label="Sketch" title="Draw on the model to point at exactly where you mean, then send it to the agent"><svg class="ico"><use href="/style/icons.svg#i-sketch"/></svg></button>
+    <button id="sketchBtn" class="tool" type="button" aria-pressed="false" aria-label="Sketch" title="Sketch on the model"><svg class="ico"><use href="/style/icons.svg#i-sketch"/></svg></button>
     <hr>
     <button id="fit" class="tool" type="button" aria-label="Fit (F)" title="Fit (F)"><svg class="ico"><use href="/style/icons.svg#i-fit"/></svg><span class="k">F</span></button>
   </nav>
@@ -88,8 +88,8 @@
         <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Measure</summary>
         <div class="secbody">
           <div class="mrow">
-            <label>From <select id="mA" class="input"><option value="">-</option></select></label>
-            <label>To <select id="mB" class="input"><option value="">-</option></select></label>
+            <label>From <select id="mA" class="input"><option value="">None</option></select></label>
+            <label>To <select id="mB" class="input"><option value="">None</option></select></label>
           </div>
           <dl id="mResult" class="fields" hidden></dl>
           <p id="mEmpty" class="empty">Pick two pins to measure.</p>
@@ -106,7 +106,7 @@
       <span id="agentStatus" class="agentstatus"></span>
       <span class="working" role="status"><span class="bar" aria-hidden="true"></span>Working <b id="chatWorkingTime"></b></span>
       <span class="spacer"></span>
-      <details id="chatMore" class="more"><summary class="hdrbtn">More</summary><div class="menu"><button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share">Export</button></div></details>
+      <details id="chatMore" class="more"><summary class="hdrbtn">More</summary><div class="menu"><button id="chatExport" type="button" class="hdrbtn" title="Save this conversation to the review folder">Export</button></div></details>
     </header>
     <div id="chatBanner" class="chatbanner" hidden>
       <span id="chatBannerText"></span>
@@ -114,20 +114,20 @@
     </div>
     <div id="chatLog"></div>
     <div class="side">
-      <div class="chathint">Approval cards appear here for actions outside this project folder, over the network, or that write files. A plain command confined to this folder runs without asking.</div>
+      <div class="chathint">Approval cards appear here for actions outside this project folder, over the network, or that write files.</div>
       <div id="chatPending"></div>
       <div id="chatComposer">
         <div id="chatModelRow" class="chatmodelrow">
           <label for="chatModelInput">Model</label>
-          <input id="chatModelInput" type="text" placeholder="backend default"
-                 title="Switch the model for this conversation, live, with no restart"
+          <input id="chatModelInput" type="text" placeholder="Default"
+                 title="Model for this conversation"
                  autocomplete="off" spellcheck="false">
         </div>
         <div id="chatAttachStrip" class="attachstrip" hidden></div>
         <div id="chatComposerRow">
           <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-          <button id="chatAttachBtn" type="button" class="attachbtn" aria-label="Attach an image" title="Attach an image (or paste or drop one into the message box)"><svg class="ico"><use href="/style/icons.svg#i-attach"/></svg></button>
-          <textarea id="chatInput" data-palette-ignore placeholder="Message the agent…" rows="2"></textarea>
+          <button id="chatAttachBtn" type="button" class="attachbtn" aria-label="Attach an image" title="Attach an image"><svg class="ico"><use href="/style/icons.svg#i-attach"/></svg></button>
+          <textarea id="chatInput" data-palette-ignore placeholder="Message the agent" rows="2"></textarea>
           <div class="chatbtns">
             <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
             <button id="chatSend" type="button" class="primary">Send</button>

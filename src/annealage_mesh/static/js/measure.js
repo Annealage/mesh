@@ -111,7 +111,7 @@ export function initMeasure({ scene, markerRadius }) {
       sel.replaceChildren();
       const none = document.createElement("option");
       none.value = "";
-      none.textContent = "-";
+      none.textContent = "None";
       sel.append(none);
       items.forEach((it) => {
         const opt = document.createElement("option");

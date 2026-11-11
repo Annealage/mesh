@@ -3110,7 +3110,7 @@ def test_measure_fills_the_readout_and_agrees_with_the_tool(browser, chat_server
         )
         page.wait_for_function("() => document.querySelectorAll('#agentPins .apin').length === 1")
         assert page.locator("#mA option").all_inner_texts() == [
-            "-",
+            "None",
             "1 alpha",
             "2 alpha",
             "A2 alpha",

@@ -10,6 +10,11 @@
 
 #app canvas { touch-action: none; display: block; }
 
+/* The folder name is the page title and can be any length: it truncates inside the bar
+   instead of pushing the command field and Pause along. */
+.titlebar .tb-left { min-width: 0; }
+.titlebar .doc strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch; }
+
 /* ---------- sketch overlay (sketch.js) ----------
    Sits above the renderer's own canvas for as long as sketch mode is on: an
    absolutely-positioned sibling appended after that canvas paints above it

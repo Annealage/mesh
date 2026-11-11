@@ -157,11 +157,23 @@ const settings = both(
     await tab.evaluate(`document.querySelectorAll('#settingsModal details').forEach((d) => { d.open = true; })`);
   },
 );
+// m5: the words that need a failure to show. Each calls the same ui helper the real path does with
+// the string the real path uses; the failure itself (a deleted STL, a refused Submit, a moved
+// view) is not staged, which a headless table cannot do between two frames.
+const say = (kind, text, ok) => async (tab) => {
+  await tab.evaluate(`(async () => {
+    const ui = await import('agent/ui.js');
+    ui.${kind}(${JSON.stringify(text)}${ok === undefined ? '' : ', ' + ok});
+  })()`);
+};
+const paletteDisabled = async (tab) => {
+  await tab.evaluate(`window.annealagePalette.open({ query: 'submit' })`);
+};
 const toastAndError = async (tab) => {
   await tab.evaluate(`(async () => {
     const ui = await import('agent/ui.js');
     ui.toast('Submitted 2 pins', true);
-    ui.showError('No STLs found in the served directory.');
+    ui.showError('No parts in this folder yet.');
   })()`);
 };
 
@@ -219,6 +231,13 @@ export default {
     ...review('m4-callouts', longCallouts),
     ...review('m4-submitted', submitted, { mask: ['#toast'] }),
     ...review('m4-clear', clearAll),
+    wide('m5-load-failed', { state: both(content, say('showError', 'Could not load alpha.')) }),
+    wide('m5-pin-toast', { state: both(content, click('#panelBtn'), say('toast', 'Pin 3 added. Open the review panel to comment.', true)), conform: INSPECTOR_CLOSED }),
+    wide('m5-submit-refused', { state: both(content, say('toast', 'Could not submit: sign in again', false)) }),
+    wide('m5-sketch-moved', { state: both(sketch, say('toast', 'The view moved since you started drawing, so the marks no longer line up. Clear and draw again, or put the view back.', false)) }),
+    wide('m5-palette-disabled', { state: paletteDisabled }),
+    wide('m5-title-odd', {}), // run against a server on a folder with a hostile 120-character name
+    narrow('m5-title-odd-phone'), // same server
     narrow('mesh-phone-model'),
     narrow('mesh-phone-review', { state: both(content, tab('review')), conform: PHONE_TAB }),
     narrow('mesh-phone-agent', { state: tab('chat'), conform: PHONE_TAB }),
