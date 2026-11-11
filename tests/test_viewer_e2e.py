@@ -2342,7 +2342,7 @@ def test_drawing_a_sketch_stroke_never_moves_the_camera(browser, chat_server):
 # PNG's per-scanline filtering both leave a drawn line's edge pixels blended
 # with what was under them, so an exact match would only ever find the middle
 # of a thick stroke.
-_STROKE_RGB = (0x35, 0xC7, 0xE0)
+_STROKE_RGB = (0x8F, 0x0A, 0x74)  # --sketch
 _STROKE_TOLERANCE = 24
 
 
