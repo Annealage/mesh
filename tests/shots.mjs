@@ -57,6 +57,67 @@ const part7State = async (tab) => {
     s.selectPin(s.getState().pins[0].id);
   })()`);
 };
+// m4: the review panel's rows. Three parts (the last hidden), two pins with comments (the second
+// selected), one callout, a measurement from pin 1 to the callout.
+const rows = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const models = s.getState().models;
+    models.forEach((m, i) => s.setVisibility(m.rel, i < models.length - 1));
+    s.addPin({ point: [0, 0, 0], part: models[0].label, label: '+Z' });
+    s.addPin({ point: [-5, 3.25, 0], part: models[1].label, label: '-X' });
+    const pins = s.getState().pins;
+    s.setPinComment(pins[0].id, 'Wall is 1.6 mm here, the nut slot needs 2.4 mm.');
+    s.setPinComment(pins[1].id, 'Chamfer this edge.');
+    s.setCallouts([{ id: 2, part: models[0].label, label: '+Z', point: [0, 5, 0], comment: 'Top skin is 1.6 mm.' }]);
+    s.setMeasure('u' + pins[0].id, 'a2');
+    s.selectPin(pins[1].id);
+  })()`);
+};
+// Twelve long-named parts and eight pins, set on the 12-part server.
+const many = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const models = s.getState().models;
+    for (let i = 0; i < 8; i++) {
+      s.addPin({ point: [i * 2.5 - 9, (i % 3) * 3 - 3, 5], part: models[i].label, label: '+Z' });
+    }
+    s.setPinComment(s.getState().pins[0].id, 'First of eight.');
+    s.selectPin(s.getState().pins[3].id);
+  })()`);
+};
+const longCallouts = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const part = s.getState().models[0].label;
+    const long = 'The side wall is only 1.2 mm where the clip seats, which will crack when the clip is pushed in. '.repeat(6).slice(0, 600);
+    s.setCallouts([
+      { id: 1, part, label: '+X', point: [10, 0, 0], comment: long },
+      { id: 2, part, label: '+Z', point: [0, 0, 10] },
+    ]);
+  })()`);
+};
+const submitted = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const part = s.getState().models[0].label;
+    s.addPin({ point: [0, 0, 0], part, label: '+Z' });
+    s.addPin({ point: [5, 0, 0], part, label: '+X' });
+    document.getElementById('submit').click();
+    for (let i = 0; i < 100 && s.getState().dirty; i++) await new Promise((r) => setTimeout(r, 50));
+  })()`);
+};
+const clearAll = both(
+  async (tab) => {
+    await tab.evaluate(`(async () => {
+      const s = window.mesh.store;
+      const part = s.getState().models[0].label;
+      s.addPin({ point: [0, 0, 0], part, label: '+Z' });
+      s.addPin({ point: [5, 0, 0], part, label: '+X' });
+    })()`);
+  },
+  click('#clear'),
+);
 const strokes = async (tab) => {
   await tab.evaluate(`document.querySelector('#sketchBtn').click()`);
   await tab.evaluate(`(() => {
@@ -124,6 +185,12 @@ const wide = (name, extra) => frame(name, { viewports: [[1600, 1000]], ...extra 
 const narrow = (name, extra) => frame(name, { viewports: [[400, 860]], ...extra });
 const tab = (id) => click(`#tabbar [data-tab="${id}"]`);
 
+// A wide shot and its phone twin, which opens the Review tab.
+const review = (name, state, extra = {}) => [
+  wide(name, { state, ...extra }),
+  narrow(name + '-phone', { state: both(state, tab('review')), conform: PHONE_TAB, ...extra }),
+];
+
 export default {
   baseline: '../shots/accepted',
   allow: [
@@ -146,6 +213,12 @@ export default {
     frame('m2-scene', { state: sceneState }),
     frame('m2-sketch', { state: both(sceneState, strokes) }),
     frame('m2-part7', { state: part7State }), // run against a server on a folder of seven STLs
+    ...review('m4-rows', rows),
+    ...review('m4-empty', async () => {}),
+    ...review('m4-many', many), // run against a server on a folder of twelve long-named STLs
+    ...review('m4-callouts', longCallouts),
+    ...review('m4-submitted', submitted, { mask: ['#toast'] }),
+    ...review('m4-clear', clearAll),
     narrow('mesh-phone-model'),
     narrow('mesh-phone-review', { state: both(content, tab('review')), conform: PHONE_TAB }),
     narrow('mesh-phone-agent', { state: tab('chat'), conform: PHONE_TAB }),

@@ -26,23 +26,30 @@
 
 /* ---------- parts list ---------- */
 #parts .sw { width: 10px; height: 10px; border-radius: 1px; flex: none; outline: 1px solid var(--rule-strong); outline-offset: -1px; }
-#parts .hint { margin-left: auto; }
+#parts .check { min-width: 0; }
+#parts .pname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#parts .hint { margin-left: auto; flex: none; }
 
-/* ---------- pins ---------- */
+/* ---------- pins and callouts ----------
+   A part name comes from a file name and can be long: its field takes the
+   row's width at most and ends in an ellipsis. */
+.row .fields > div:first-child { max-width: 100%; }
+.row .fields dd.part { overflow: hidden; text-overflow: ellipsis; }
 #pins .empty { padding: 8px 12px; font-size: 12px; color: var(--ink-2); }
-.row.pin .mk, .row.pin .fields { cursor: pointer; }
 
 /* ---------- measure ---------- */
-#measureSec .mrow { display: flex; gap: 12px; padding: 4px 12px; }
-#measureSec .mrow label { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
-#measureSec select { flex: 1; min-width: 0; }
-#measureSec .mresult { padding: 6px 12px 0; font: 400 12px var(--mono); color: var(--ink-2); }
-#measureSec .mresult .len { margin-top: 4px; color: var(--ink); }
-#measureSec .mresult .empty { font-family: inherit; }
+#measureSec .mrow { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px 10px; padding: 4px 12px; }
+#measureSec .mrow label { display: contents; font-size: 12px; color: var(--ink-2); }
+#measureSec select { min-width: 0; }
+#measureSec .fields { padding: 6px 12px 0; }
+#measureSec .fields[hidden], #measureSec .empty[hidden] { display: none; }
+#measureSec .empty { padding: 6px 12px 0; font-size: 12px; color: var(--ink-2); }
 
 /* ---------- error line on a phone ----------
    The theme floats #err at the top, which at 900px and below is the title bar
    and the tab bar. Keep those reachable: stack it above the toast instead. */
 @media (max-width: 900px) {
+  /* The phone's tool pill sits on the bottom edge of the view; the measured distance moves up. */
+  #measureHud { bottom: auto; top: 6px; }
   html #err { top: auto; bottom: calc(var(--h-status) + 56px); }
 }

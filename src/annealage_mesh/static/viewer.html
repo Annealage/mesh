@@ -46,7 +46,7 @@
 
   <div class="vhead">
     <button class="vtab" type="button" aria-current="page">Model</button>
-    <div class="meta"><span id="docParts"></span><span><b id="docTris">0</b> triangles</span><span id="docRebuilt" hidden>rebuilt <b id="docRebuiltAt"></b></span></div>
+    <div class="meta"><span><b id="docParts"></b> parts</span><span><b id="docTris">0</b> triangles</span><span id="docRebuilt" hidden>rebuilt <b id="docRebuiltAt"></b></span></div>
     <div class="right">
       <div class="seg sm" role="group" aria-label="Up axis"><button id="upZ" type="button" aria-pressed="true">Z-up</button><button id="upY" type="button" aria-pressed="false">Y-up</button></div>
     </div>
@@ -88,13 +88,15 @@
         <summary><svg class="ico ico--sm"><use href="/style/icons.svg#i-chev"/></svg>Measure</summary>
         <div class="secbody">
           <div class="mrow">
-            <label>A <select id="mA"><option value="">-</option></select></label>
-            <label>B <select id="mB"><option value="">-</option></select></label>
+            <label>From <select id="mA" class="input"><option value="">-</option></select></label>
+            <label>To <select id="mB" class="input"><option value="">-</option></select></label>
           </div>
-          <div id="mResult" class="mresult"><span class="empty">Pick two pins to measure.</span></div>
+          <dl id="mResult" class="fields" hidden></dl>
+          <p id="mEmpty" class="empty">Pick two pins to measure.</p>
         </div>
       </details>
     </div>
+    <div id="clearConfirm"></div>
     <div class="ifoot"><span id="status"></span><button id="clear" class="btn quiet" type="button">Clear all</button><button id="submit" class="btn primary" type="button">Submit</button></div>
   </aside>
 

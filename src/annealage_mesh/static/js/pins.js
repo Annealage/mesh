@@ -28,6 +28,8 @@ import { toast } from "agent/ui.js";
 import { store } from "./store.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
 import { onPaletteChange, palette } from "./palette.js";
+import { mm } from "./format.js";
+import { confirmRow } from "/style/confirm.js";
 
 const TAP_SLOP = 8; // px; below this a pointerup counts as a tap, not an orbit drag
 
@@ -59,7 +61,7 @@ function buildFields(partText, labelText, point) {
   };
   field("Part", partText, "part");
   field("Face", labelText || "-");
-  field("At (mm)", point.map((v) => (Math.round(v * 10) / 10).toFixed(1)).join(", "));
+  field("At (mm)", point.map((v) => mm(v)).join(", "));
   return dl;
 }
 
@@ -260,7 +262,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     const num = marker("human", p.id);
     const meta = document.createElement("dl");
     const del = document.createElement("button");
-    del.className = "btn quiet icon x";
+    del.className = "btn icon sm x";
     del.type = "button";
     del.setAttribute("aria-label", "Delete pin " + p.id);
     del.innerHTML = '<svg class="ico ico--sm"><use href="/style/icons.svg#i-x"/></svg>';
@@ -359,14 +361,23 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       return;
     }
     const b = document.createElement("b");
-    b.textContent = p.point.map((v) => round(v, 1)).join(", ");
+    b.textContent = p.point.map((v) => mm(v)).join(", ");
     sbPin.replaceChildren("Pin " + p.id + " at ", b, " mm");
   }
 
-  document.getElementById("clear").addEventListener("click", () => {
+  const clearBtn = document.getElementById("clear");
+  const clearSlot = document.getElementById("clearConfirm");
+  clearBtn.addEventListener("click", async () => {
     const count = store.getState().pins.length;
-    if (count && !confirm("Delete all " + count + " pins?")) return;
-    store.clearPins();
+    if (!count) return;
+    const ok = await confirmRow(clearBtn, {
+      title: "Delete all " + count + " pin" + (count === 1 ? "" : "s"),
+      detail: "They are removed from this review.",
+      action: "Delete pins",
+      danger: true,
+      into: clearSlot,
+    });
+    if (ok) store.clearPins();
   });
 
   document.getElementById("submit").addEventListener("click", async () => {

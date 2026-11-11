@@ -197,14 +197,15 @@ export function initModels({ scene, fitView, meshes }) {
   const docRebuiltAt = document.getElementById("docRebuiltAt");
   const docParts = document.getElementById("docParts");
   const partCount = document.getElementById("partCount");
-  const hhmm = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+  const hhmm = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
   function renderDocTab(state) {
     let total = 0;
     for (const rel in state.triangles) if (state.visibility[rel]) total += state.triangles[rel];
     docTris.textContent = total.toLocaleString();
     const n = state.models.length;
-    docParts.textContent = n + (n === 1 ? " part" : " parts");
+    docParts.textContent = n;
+    docParts.nextSibling.textContent = n === 1 ? " part" : " parts";
     partCount.textContent = n || "";
     docRebuilt.hidden = state.rebuiltAt == null;
     if (state.rebuiltAt != null) docRebuiltAt.textContent = hhmm.format(state.rebuiltAt);

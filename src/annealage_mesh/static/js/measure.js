@@ -14,28 +14,26 @@ import * as THREE from "three";
 import { store } from "./store.js";
 import { disposeSprite, makeTagSprite } from "./sprites.js";
 import { onPaletteChange, palette } from "./palette.js";
+import { mm } from "./format.js";
 
 export function initMeasure({ scene, markerRadius }) {
   const mA = document.getElementById("mA");
   const mB = document.getElementById("mB");
   const mResult = document.getElementById("mResult");
+  const mEmpty = document.getElementById("mEmpty");
+  const hud = document.getElementById("measureHud");
   const measureGroup = new THREE.Group();
   scene.add(measureGroup);
   let measureLine = null;
   let measureLabel = null;
   let pal = palette();
 
-  function round(v, d = 2) {
-    const f = Math.pow(10, d);
-    return Math.round(v * f) / f;
-  }
-
   function measurables(state) {
     const list = [];
-    state.pins.forEach((p) => list.push({ key: "u" + p.id, label: "U" + p.id + " " + p.part, point: p.point }));
+    state.pins.forEach((p) => list.push({ key: "u" + p.id, noun: "pin " + p.id, label: p.id + " " + p.part, point: p.point }));
     state.callouts.forEach((a, i) => {
       const num = a.id != null ? a.id : i + 1;
-      list.push({ key: "a" + num, label: "A" + num + " " + (a.part || "unknown"), point: a.point || [0, 0, 0] });
+      list.push({ key: "a" + num, noun: "callout A" + num, label: "A" + num + " " + (a.part || "unknown"), point: a.point || [0, 0, 0] });
     });
     return list;
   }
@@ -59,15 +57,31 @@ export function initMeasure({ scene, markerRadius }) {
     const b = items.find((it) => it.key === bKey);
     clearLine();
     if (!a || !b || a.key === b.key) {
-      mResult.innerHTML = '<span class="empty">Pick two pins to measure.</span>';
+      hud.textContent = "";
+      mResult.replaceChildren();
+      mResult.hidden = true;
+      mEmpty.hidden = false;
       return;
     }
     const [x0, y0, z0] = a.point, [x1, y1, z1] = b.point;
     const dx = x1 - x0, dy = y1 - y0, dz = z1 - z0;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    mResult.innerHTML =
-      "<div>&Delta;X " + round(dx) + " &middot; &Delta;Y " + round(dy) + " &middot; &Delta;Z " + round(dz) + " mm</div>" +
-      '<div class="len">' + round(dist) + " mm</div>";
+    const text = mm(dist) + " mm";
+    // Every string here is built with textContent: a part name is untrusted.
+    hud.textContent = a.noun.charAt(0).toUpperCase() + a.noun.slice(1) + " to " + b.noun + ": " + text;
+    mResult.replaceChildren(
+      ...[["\u0394X", dx], ["\u0394Y", dy], ["\u0394Z", dz], ["Distance", dist]].map(([name, v]) => {
+        const row = document.createElement("div");
+        const dt = document.createElement("dt");
+        dt.textContent = name;
+        const dd = document.createElement("dd");
+        dd.textContent = mm(v) + " mm";
+        row.append(dt, dd);
+        return row;
+      }),
+    );
+    mResult.hidden = false;
+    mEmpty.hidden = true;
 
     const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)]);
     const mat = new THREE.LineDashedMaterial({ color: pal.measure, dashSize: 3, gapSize: 2, depthTest: false });
@@ -76,7 +90,7 @@ export function initMeasure({ scene, markerRadius }) {
     measureGroup.add(measureLine);
 
     const rad = markerRadius();
-    measureLabel = makeTagSprite(round(dist) + " mm", pal.measure, pal.well);
+    measureLabel = makeTagSprite(text, pal.measure, pal.well);
     measureLabel.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2 + rad * 1.5);
     measureLabel.scale.set(rad * 3 * measureLabel.userData.aspect, rad * 3, 1);
     measureGroup.add(measureLabel);

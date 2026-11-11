@@ -3010,3 +3010,180 @@ def test_command_palette_opens_with_ctrl_k_but_not_in_the_composer(browser, mesh
         assert not page.is_visible(".palette-box")
     finally:
         page.close()
+
+
+# 21. The review panel: rows, counts, measure, Clear all -----------------------
+
+_ADD_TWO_PINS = """() => {
+  const s = window.mesh.store;
+  s.addPin({ point: [0, 0, 0], part: 'alpha', label: '+Z' });
+  s.addPin({ point: [3, 4, 0], part: 'alpha', label: '+X' });
+}"""
+
+
+def test_clear_all_asks_in_the_page_and_deletes_only_on_confirm(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+
+        page.click("#clear")
+        assert page.locator("#clearConfirm .confirm").count() == 0, "no pins, no question"
+
+        page.evaluate(_ADD_TWO_PINS)
+        page.click("#clear")
+        row = page.locator("#clearConfirm .confirm[data-kind=danger]")
+        row.wait_for()
+        assert page.is_disabled("#clear")
+        assert page.evaluate("() => document.activeElement.textContent") == "Cancel"
+        assert "Delete all 2 pins" in row.inner_text()
+
+        page.click("#clearConfirm .confirm >> text=Cancel")
+        page.wait_for_function("() => !document.querySelector('#clearConfirm .confirm')")
+        assert page.evaluate("() => window.mesh.store.getState().pins.length") == 2
+        assert page.evaluate("() => document.activeElement.id") == "clear"
+
+        page.click("#clear")
+        row.wait_for()
+        page.keyboard.press("Escape")
+        page.wait_for_function("() => !document.querySelector('#clearConfirm .confirm')")
+        assert page.evaluate("() => window.mesh.store.getState().pins.length") == 2
+        assert page.evaluate("() => document.activeElement.id") == "clear"
+
+        page.click("#clear")
+        row.wait_for()
+        page.click("#clearConfirm .confirm >> text=Delete pins")
+        page.wait_for_function("() => window.mesh.store.getState().pins.length === 0")
+        assert page.locator("#clearConfirm .confirm").count() == 0
+    finally:
+        page.close()
+
+
+def test_a_callout_part_with_markup_is_text_in_the_row_and_the_measure_option(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate("() => { window.__xss = false; }")
+        payload = '<img src=x onerror="window.__xss = true">'
+        page.evaluate(
+            "(p) => window.mesh.store.setCallouts([{ id: 2, part: p, label: p, "
+            "point: [1, 2, 3], comment: p }])",
+            payload,
+        )
+        page.wait_for_function("() => document.querySelectorAll('#agentPins .apin').length === 1")
+        page.wait_for_timeout(200)
+        assert payload in page.locator("#agentPins .apin").inner_text()
+        option = page.locator("#mA option").nth(1)
+        assert option.text_content() == "A2 " + payload
+        assert page.evaluate("() => document.querySelectorAll('#review img').length") == 0
+        assert page.evaluate("() => window.__xss === true") is False
+    finally:
+        page.close()
+
+
+def test_selecting_a_pin_marks_its_row_and_names_it_in_the_status_bar(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate(_ADD_TWO_PINS)
+        page.evaluate("() => window.mesh.store.selectPin(2)")
+        page.wait_for_selector('#pins .pin[data-id="2"].is-selected')
+        assert page.locator("#pins .pin.is-selected").count() == 1
+        assert page.locator("#sbPin").text_content() == "Pin 2 at 3.0, 4.0, 0.0 mm"
+        assert page.locator("#reviewCounts").inner_text().startswith("2 pins, ")
+    finally:
+        page.close()
+
+
+def test_measure_fills_the_readout_and_agrees_with_the_tool(browser, chat_server):
+    server, _session = chat_server
+    page = browser.new_page()
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        page.evaluate(_ADD_TWO_PINS)
+        page.evaluate(
+            "() => window.mesh.store.setCallouts([{ id: 2, part: 'alpha', label: '+Z', "
+            "point: [0, 0, 12], comment: 'x' }])"
+        )
+        page.wait_for_function("() => document.querySelectorAll('#agentPins .apin').length === 1")
+        assert page.locator("#mA option").all_inner_texts() == [
+            "-",
+            "1 alpha",
+            "2 alpha",
+            "A2 alpha",
+        ]
+        assert page.locator("#measureHud").inner_text() == ""
+        assert page.is_visible("#mEmpty")
+
+        page.select_option("#mA", "u1")
+        page.select_option("#mB", "a2")
+        assert page.locator("#measureHud").inner_text() == "Pin 1 to callout A2: 12.0 mm"
+        assert page.locator("#mResult dd").all_inner_texts() == [
+            "0.0 mm",
+            "0.0 mm",
+            "12.0 mm",
+            "12.0 mm",
+        ]
+        assert page.is_hidden("#mEmpty")
+        assert "·" not in page.locator("#review").inner_text()
+
+        text = _tool_text(_call_tool(server, "measure", {"a": "pin:1", "b": "callout:2"}))
+        assert "12" in text
+
+        page.select_option("#mA", "u2")
+        assert page.locator("#measureHud").inner_text() == "Pin 2 to callout A2: 13.0 mm"
+        page.click('#pins .pin[data-id="2"] .x')
+        page.wait_for_function("() => window.mesh.store.getState().pins.length === 1")
+        assert page.locator("#measureHud").inner_text() == ""
+        assert page.evaluate("() => window.mesh.store.getState().measure.a") == ""
+        assert page.is_visible("#mEmpty")
+    finally:
+        page.close()
+
+
+def test_the_triangle_total_drops_when_a_part_is_hidden(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.wait_for_function(
+            "() => Object.keys(window.mesh.store.getState().triangles).length === 2"
+        )
+        total = page.evaluate("() => document.getElementById('docTris').textContent")
+        page.locator("#parts label").nth(0).locator("input[type=checkbox]").uncheck()
+        page.wait_for_function(
+            "(t) => document.getElementById('docTris').textContent !== t", arg=total
+        )
+        assert int(page.locator("#docTris").inner_text().replace(",", "")) < int(
+            total.replace(",", "")
+        )
+        assert page.locator("#docParts").inner_text() == "2"
+    finally:
+        page.close()
+
+
+def test_typing_a_pin_comment_survives_callouts_changing_underneath(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate(_ADD_TWO_PINS)
+        textarea = page.locator('#pins .pin[data-id="1"] textarea')
+        textarea.click()
+        typed = "0123456789" * 4
+        for i, ch in enumerate(typed):
+            page.keyboard.type(ch)
+            if i % 7 == 0:
+                page.evaluate(
+                    "(n) => window.mesh.store.setCallouts([{ id: 1, part: 'alpha', label: '+Z', "
+                    "point: [0, 0, n], comment: 'c' + n }])",
+                    i,
+                )
+        assert textarea.input_value() == typed
+        assert page.evaluate("() => document.activeElement.tagName") == "TEXTAREA"
+        assert page.evaluate("() => window.mesh.store.getState().pins[0].comment") == typed
+    finally:
+        page.close()
