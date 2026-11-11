@@ -32,6 +32,49 @@ const content = async (tab) => {
     s.setCallouts([{ id: 1, part: 'alpha', label: '+Z', point: [0, 5, 0], comment: 'Top skin is 1.6 mm.' }]);
   })()`);
 };
+// m2: two pins and a callout on real parts, a measurement between the pins, one pin selected.
+const sceneState = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const [a, b] = s.getState().models;
+    s.addPin({ point: [0, 0, 0], part: a.label, label: '+Z' });
+    s.addPin({ point: [5, 0, 0], part: b.label, label: '+X' });
+    s.setCallouts([{ id: 2, part: a.label, label: '+Z', point: [0, 5, 0], comment: 'Top skin is 1.6 mm.' }]);
+    const pins = s.getState().pins;
+    s.setMeasure('u' + pins[0].id, 'u' + pins[1].id);
+    s.selectPin(pins[1].id);
+  })()`);
+};
+// m2: a selected pin on the seventh part colour (teal, close to the temper), set on the 7-part server.
+const part7State = async (tab) => {
+  await tab.evaluate(`(async () => {
+    const s = window.mesh.store;
+    const m = s.getState().models[6];
+    const g = window.mesh.meshes[m.rel].geometry;
+    g.computeBoundingBox();
+    const { min, max } = g.boundingBox;
+    s.addPin({ point: [(min.x + max.x) / 2, (min.y + max.y) / 2, max.z], part: m.label, label: '+Z' });
+    s.selectPin(s.getState().pins[0].id);
+  })()`);
+};
+const strokes = async (tab) => {
+  await tab.evaluate(`document.querySelector('#sketchBtn').click()`);
+  await tab.evaluate(`(() => {
+    const o = document.querySelector('.sketch-overlay');
+    const r = o.getBoundingClientRect();
+    const fire = (type, px, py) => o.dispatchEvent(new PointerEvent(type, {
+      bubbles: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
+      clientX: r.x + r.width * px, clientY: r.y + r.height * py,
+    }));
+    const draw = (pts) => {
+      fire('pointerdown', ...pts[0]);
+      pts.slice(1).forEach((p) => fire('pointermove', ...p));
+      fire('pointerup', ...pts[pts.length - 1]);
+    };
+    draw([[0.3, 0.3], [0.4, 0.25], [0.5, 0.2], [0.6, 0.27], [0.7, 0.35]]);
+    draw([[0.3, 0.7], [0.4, 0.75], [0.5, 0.8], [0.6, 0.72], [0.7, 0.65]]);
+  })()`);
+};
 const approval = async (tab) => {
   await tab.evaluate(`(async () => {
     const { store } = await import('agent/store.js');
@@ -100,6 +143,9 @@ export default {
     wide('mesh-settings', { state: settings }),
     wide('mesh-sketch', { state: sketch }),
     wide('mesh-toast-error', { state: both(content, toastAndError) }),
+    frame('m2-scene', { state: sceneState }),
+    frame('m2-sketch', { state: both(sceneState, strokes) }),
+    frame('m2-part7', { state: part7State }), // run against a server on a folder of seven STLs
     narrow('mesh-phone-model'),
     narrow('mesh-phone-review', { state: both(content, tab('review')), conform: PHONE_TAB }),
     narrow('mesh-phone-agent', { state: tab('chat'), conform: PHONE_TAB }),
