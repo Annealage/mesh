@@ -119,3 +119,39 @@ def test_the_version_is_not_the_unknown_fallback_in_a_normal_install():
     import annealage_mesh
 
     assert annealage_mesh.__version__ != "0.0.0+unknown"
+
+
+def test_wheel_and_sdist_ship_the_vendored_style_and_its_licences(tmp_path):
+    # The brand styling is committed under src/annealage_mesh/style (copied by
+    # tools/vendor-style.sh), not a submodule, so it ships as ordinary package
+    # files. Only what Mesh uses ships: no pages.css, demo, or other marks.
+    sdist_names, wheel_names = _build(tmp_path / "dist")
+    wanted = (
+        "tokens.css",
+        "theme.css",
+        "scheme.js",
+        "frame.js",
+        "palette.js",
+        "confirm.js",
+        "icons.svg",
+        "marks/mesh-layers.svg",
+        "marks/mesh-layers-dark.svg",
+        "fonts/instrument-sans-latin-400-normal.woff2",
+        "fonts/OFL-InstrumentSans.txt",
+        "fonts/OFL-RedHatMono.txt",
+        "LICENSE",
+        "VENDORED.json",
+    )
+    for rel in wanted:
+        assert "annealage_mesh/style/" + rel in wheel_names, rel
+        assert any(n.endswith("src/annealage_mesh/style/" + rel) for n in sdist_names), rel
+    for names in (sdist_names, wheel_names):
+        assert not any("annealage_mesh/style/demo" in n for n in names)
+        assert not any(n.endswith("annealage_mesh/style/pages.css") for n in names)
+        others = [n for n in names if "annealage_mesh/style/marks/" in n and "mesh-layers" not in n]
+        assert not others, others
+    wheel = next((tmp_path / "dist").glob("*.whl"))
+    with zipfile.ZipFile(wheel) as zf:
+        meta = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+        assert "License-Expression: " in zf.read(meta).decode()
+        assert "OFL-1.1" in zf.read(meta).decode()

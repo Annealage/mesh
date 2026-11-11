@@ -64,16 +64,43 @@ async def test_index_serves_viewer_html(client):
         assert '<script type="module" src="/static/js/main.js"></script>' in res.text
 
 
-async def test_the_brand_stylesheets_the_shell_links_are_served(client):
-    # /style/ is served from the lib/style submodule in a checkout (and from
-    # the copy a wheel carries), outside the package's static/ tree, so a
-    # wrong STYLE_DIR would leave the page unstyled while every /static asset
-    # still loaded.
-    for name in ("tokens.css", "theme.css"):
-        res = await client.get("/style/" + name)
-        assert res.status_code == 200, name
-        assert res.headers.get("Content-Type", "").startswith("text/css"), name
-        assert res.body, name
+@pytest.mark.parametrize(
+    "name, content_type",
+    [
+        ("tokens.css", "text/css"),
+        ("theme.css", "text/css"),
+        ("scheme.js", "text/javascript"),
+        ("frame.js", "text/javascript"),
+        ("palette.js", "text/javascript"),
+        ("confirm.js", "text/javascript"),
+        ("icons.svg", "image/svg+xml"),
+        ("marks/mesh-layers.svg", "image/svg+xml"),
+        ("marks/mesh-layers-dark.svg", "image/svg+xml"),
+        ("fonts/instrument-sans-latin-400-normal.woff2", "font/woff2"),
+    ],
+)
+async def test_the_vendored_style_files_are_served(client, name, content_type):
+    # /style/ is served from the vendored src/annealage_mesh/style directory,
+    # outside the package's static/ tree, so a wrong STYLE_DIR would leave the
+    # page unstyled while every /static asset still loaded.
+    res = await client.get("/style/" + name)
+    assert res.status_code == 200, name
+    assert res.headers.get("Content-Type", "").startswith(content_type), name
+    assert res.body, name
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/style/pages.css",
+        "/style/demo/workbench.html",
+        "/style/../pyproject.toml",
+        "/style/%2e%2e/pyproject.toml",
+    ],
+)
+async def test_style_serves_nothing_outside_the_vendored_list(client, path):
+    res = await client.get(path)
+    assert res.status_code == 404, path
 
 
 # --- /manifest ---------------------------------------------------------------

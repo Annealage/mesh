@@ -1,6 +1,3 @@
 [submodule "lib/ember"]
 	path = lib/ember
 	url = https://github.com/Annealage/ember.git
-[submodule "lib/style"]
-	path = lib/style
-	url = https://github.com/Annealage/style.git

@@ -1,0 +1,226 @@
+/* Annealage design tokens: Hairline + plate.
+
+   One continuous surface divided by 1px rules. --ground is every bar, pane and
+   page; --well is the one tonal recess (the drawing's surround, and the small
+   fields readouts sit in); --field is what an input, a menu or the pending
+   approval is made of. There is no separate chrome or panel grey.
+
+   The greys are neutral for every product. That is a decision: a product is
+   told apart by its mark and by its temper on a few small things (the active
+   tab's underline, the selection wash, the selected marker, the focus ring),
+   not by tinted chrome. <html data-product="loom|trace|canvas|mesh|pod"> sets
+   the temper and nothing else. With no data-product the page is platform
+   chrome (sign-in, projects, account) and temper falls back to ink.
+
+   Colours follow the OS through light-dark(). <html data-theme="light|dark">
+   forces one (scheme.js sets it from the user's choice).
+
+   Ember means one thing: the product needs you (a pending approval and the
+   alert that jumps to it). Quench is state only (ok, done, connected).
+   Neither is decoration, and neither is ever a product's accent. */
+
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/instrument-sans-latin-400-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/instrument-sans-latin-ext-400-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 500; font-display: swap; src: url(fonts/instrument-sans-latin-500-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 500; font-display: swap; src: url(fonts/instrument-sans-latin-ext-500-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/instrument-sans-latin-600-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Instrument Sans'; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/instrument-sans-latin-ext-600-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Red Hat Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/red-hat-mono-latin-400-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Red Hat Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/red-hat-mono-latin-ext-400-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Red Hat Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url(fonts/red-hat-mono-latin-500-normal.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'Red Hat Mono'; font-style: normal; font-weight: 500; font-display: swap; src: url(fonts/red-hat-mono-latin-ext-500-normal.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+
+:root {
+  color-scheme: light dark;
+
+  /* Surfaces. Dark is graphite, not black: well, ground and field are each a
+     clear step apart. */
+  --ground: light-dark(#FCFCFB, #16191C);
+  --well: light-dark(#F0F1F0, #0E1012);
+  --field: light-dark(#FFFFFF, #1E2226);
+
+  /* Ink, three levels. Hierarchy comes from weight and ink level, not size.
+     --ink-3 is for third-level data and placeholders on ground, well and
+     field; a washed or pressed surface steps it up to --ink-2 (theme.css
+     does that wherever it paints a wash). */
+  --ink: light-dark(#14171A, #E6EDF3);
+  --ink-2: light-dark(#565D63, #A3ABB2);
+  --ink-3: light-dark(#666D73, #9099A1);
+
+  /* Hairlines, and the edge of an input, a menu or paper. */
+  --rule: light-dark(#E4E6E5, #2B3035);
+  --rule-strong: light-dark(#C9CDCC, #424950);
+
+  /* Translucent, so they work over ground, well and field alike. */
+  --hover: light-dark(rgba(20, 23, 26, 0.05), rgba(230, 237, 243, 0.07));
+  --press: light-dark(rgba(20, 23, 26, 0.09), rgba(230, 237, 243, 0.13));
+
+  --ember: #E8632A;
+  --on-ember: #14171A;
+  --quench: light-dark(#2E6E8E, #5599B8);
+  --danger: light-dark(#B3261E, #F08A80);
+  --warn: light-dark(#8A5A00, #E0A94A);
+
+  /* Paper: a schematic sheet or its thumbnail. It is paper in both schemes, a
+     slight warm off-white in dark, never a veil over the linework. A sheet
+     image multiplies onto --paper-under (white in light, so nothing changes).
+     Marks drawn on paper use --paper-ink, which does not follow the scheme. */
+  --paper: light-dark(#FDFDF9, #F4F3EF);
+  --paper-under: light-dark(#FFFFFF, #F4F3EF);
+  --paper-ink: #14171A;
+
+  /* Findings drawn on a sheet, which is paper in both schemes. */
+  --sheet-danger: #C42B21;
+  --sheet-warn: #B07A0C;
+
+  /* Temper: the product's own colour. --temper fills (a selected marker, the
+     current step) with --on-temper on it. --temper-text is the variant that
+     reads on a surface, so it draws every line and ring: the active tab's
+     underline, the working line, the focus ring. --temper-wash is selection.
+     Platform chrome has no temper, so all of them fall back to ink. */
+  --temper: var(--ink);
+  --on-temper: var(--ground);
+  --temper-text: var(--ink);
+  --temper-wash: var(--hover);
+  --focus: var(--temper-text);
+
+  /* Review markers: the human's pins and the agent's callouts, in the page
+     and in a 3D scene or drawing overlay. --pin-selected marks the selected
+     one, in temper as every other selection is. --measure is the measuring
+     line. */
+  --pin: var(--ink);
+  --on-pin: var(--ground);
+  --pin-selected: var(--temper);
+  --callout: var(--temper);
+  --on-callout: var(--on-temper);
+  --measure: var(--quench);
+
+  /* A 3D scene (Mesh), drawn on --well: the parts, their edges and the floor
+     grid. Each part takes the next slot of the series; slot 1 is the neutral
+     part grey and 2-8 are muted tones at one lightness, none near ember. */
+  --mv-part-1: light-dark(#A4ACB2, #7C868D);
+  --mv-part-2: light-dark(#B29B74, #9E855B);
+  --mv-part-3: light-dark(#84A98B, #6D9574);
+  --mv-part-4: light-dark(#AA94BB, #957EA7);
+  --mv-part-5: light-dark(#7AA5BF, #6190AB);
+  --mv-part-6: light-dark(#BC90A4, #A8798F);
+  --mv-part-7: light-dark(#71ABAA, #579695);
+  --mv-part-8: light-dark(#A0A277, #8B8D5F);
+  --mv-edge: light-dark(#4A5358, #0A0C0E);
+  --mv-grid: light-dark(#E4E6E5, #181B1E);
+  --mv-grid-2: light-dark(#D2D6D5, #252A2E);
+
+  /* The three scene axes, X, Y, Z as red, green, blue (the CAD convention
+     users read without a legend), muted to the part family's range and 3:1 on
+     --well. X is a raspberry, clear of --danger and --ember. Lines only. */
+  --mv-axis-x: light-dark(#A8405C, #E07A93);
+  --mv-axis-y: light-dark(#3A7A4C, #6DBE84);
+  --mv-axis-z: light-dark(#3A62AD, #7C9CEB);
+
+  /* The sketch stroke drawn over a scene (Mesh), baked into the image the
+     agent reads, so it is one value in both schemes. No single colour keeps 3:1
+     on both wells and every part (the best possible is about 2.3:1), so the
+     stroke is a dark magenta, 3:1 or better on the light well and parts, with a
+     white casing that carries the dark ones: every surface has one of the two
+     at 3:1 or better (worst case 3.11:1, the stroke on the light parts 4 and
+     6), and the stroke is 8.5:1 on its casing. The overlay draws the casing
+     wider, under the stroke. tools/contrast.py checks the pair. */
+  --sketch: #8F0A74;
+  --sketch-halo: #FFFFFF;
+
+  /* Source code (.src and Loom's .tok-* classes; Canvas's editor takes the same
+     tokens). Syntax colour is data styling inside a mono block, so it is mostly
+     ink level and weight: keyword 500, definition name 600, comment --ink-3,
+     decorator and builtin --ink-2. Strings and numbers are the only hues, two
+     muted ones (a sage and a mauve) kept clear of every product's temper, of
+     quench and of ember; both are 4.5:1 on ground, field and well. */
+  --syn-keyword: var(--ink);
+  --syn-def: var(--ink);
+  --syn-meta: var(--ink-2);
+  --syn-comment: var(--ink-3);
+  --syn-string: light-dark(#3E6B4B, #86B793);
+  --syn-number: light-dark(#8C4764, #D08FA9);
+  --syn-invalid: var(--danger);
+
+  /* Type. Instrument Sans for the interface, Red Hat Mono for data only (refs,
+     part numbers, coordinates, paths, counts, costs), with tabular numerals. */
+  --sans: 'Instrument Sans', system-ui, sans-serif;
+  --mono: 'Red Hat Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --fs-micro: 11px;
+  --fs-small: 12px;
+  --fs-ui: 13px;
+  --fs-read: 14px;
+  --fs-title: 18px;
+  --fs-figure: 18px;
+  --lh-ui: 18px;
+  --lh-read: 21px;
+  --lh-title: 24px;
+
+  /* Shape. 6px on controls and menus, 0 on panes, 2px on readouts and plate
+     markers. No shadow anywhere except a menu or popover. */
+  --r: 6px;
+  --r-sm: 4px;
+  --r-xs: 2px;
+  --cut: 5px;
+  --shadow-menu: 0 10px 28px light-dark(rgba(20, 23, 26, 0.14), rgba(0, 0, 0, 0.5)),
+    0 1px 3px light-dark(rgba(20, 23, 26, 0.10), rgba(0, 0, 0, 0.45));
+
+  /* Sizes. The mark sits in a --gutter column, so the product name, the first
+     tab, the drawing's edge and a page's content all start on one line. */
+  --ctl: 28px;
+  --ctl-sm: 24px;
+  --h-bar: 40px;
+  --h-tabs: 34px;
+  --h-pane: 36px;
+  --h-row: 36px;
+  --h-status: 24px;
+  --gutter: 40px;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+}
+:root[data-theme=light] { color-scheme: light; }
+:root[data-theme=dark] { color-scheme: dark; }
+
+:root[data-product=loom] {
+  --temper: #3E6FA8;
+  --on-temper: #FFFFFF;
+  --temper-text: light-dark(#335E91, #7EA6D8);
+  --temper-wash: light-dark(rgba(62, 111, 168, 0.10), rgba(126, 166, 216, 0.12));
+}
+
+/* Trace's purple is the temper most likely to read as a generic accent, so it
+   stays on small things: the mark, a marker, a wash. Never a large fill. */
+:root[data-product=trace] {
+  --temper: #7A5C9E;
+  --on-temper: #FFFFFF;
+  --temper-text: light-dark(#6A5387, #AF96CF);
+  --temper-wash: light-dark(rgba(122, 92, 158, 0.09), rgba(175, 150, 207, 0.12));
+}
+
+:root[data-product=mesh] {
+  --temper: #2F8F86;
+  --on-temper: #14171A;
+  --temper-text: light-dark(#22716A, #5CB5AB);
+  --temper-wash: light-dark(rgba(47, 143, 134, 0.10), rgba(92, 181, 171, 0.11));
+}
+
+/* Canvas is light straw (#E6C36A, the mark's colour). Straw is pale on a light
+   page (1.6:1 on ground), so it only fills there; --temper-text is the
+   readable one and draws the lines. */
+:root[data-product=canvas] {
+  --temper: #E6C36A;
+  --on-temper: #14171A;
+  --temper-text: light-dark(#6D540A, #BCA260);
+  --temper-wash: light-dark(rgba(214, 170, 56, 0.16), rgba(230, 195, 106, 0.10));
+}
+
+/* Pod is the bronze of its mark (#B5703A). */
+:root[data-product=pod] {
+  --temper: #B5703A;
+  --on-temper: #14171A;
+  --temper-text: light-dark(#8A4F1F, #D9996A);
+  --temper-wash: light-dark(rgba(181, 112, 58, 0.10), rgba(217, 153, 106, 0.11));
+}

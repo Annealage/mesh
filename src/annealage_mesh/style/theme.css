@@ -1,0 +1,1818 @@
+/* Annealage product UI theme: Hairline + plate.
+
+   One continuous surface divided by hairlines. The title bar, tabs, inspector
+   and agent pane all sit on the page ground; the drawing's surround (the
+   well) is the only tonal recess. Nothing has a box unless it is an input, a
+   menu, or the one thing waiting on the human. Three things come from the
+   marks: a 45° chamfer on markers and on the Allow button (.mk, .hpin,
+   .allow), recessed mono readouts (.val), and square status lamps (.lamp).
+
+   Link order: tokens.css, the agent layer's agent.css, this file, pages.css
+   (only for a page outside the workbench frame), then the product's own
+   stylesheet. Put data-product on <html>.
+
+   It styles two sets of markup:
+   - the page frame, written by each product (.wb and everything in it)
+   - the agent chat and settings window, built by annealage-ember's chat.js
+     and settings.js (#chat, .msg, .toolcard, .permcard, .setpanel, ...),
+     through the ids and classes that layer already uses
+   Things only one product draws (Mesh's scene, Loom's sheet overlays beyond
+   pins) live in that product's own stylesheet.
+
+   Temper is on the active tab's underline, the selection wash, the selected
+   marker, the working line and the focus ring. Ember is the pending
+   approval's Allow button plus the status-bar alert that jumps to it, and
+   nothing else. Each component's markup is in the comment above its rules. */
+
+/* -------------------------------------------------------------------- base */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  font: 400 var(--fs-ui)/var(--lh-ui) var(--sans);
+  color: var(--ink);
+  background: var(--ground);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+h1, h2, h3, h4, p, ol, ul, dl, dd, figure, pre { margin: 0; padding: 0; }
+ol, ul { list-style: none; }
+img { display: block; max-width: 100%; }
+[hidden] { display: none !important; }
+/* Mono is for data: refs, part numbers, coordinates, paths, counts, costs. */
+code, pre, kbd, .mono { font-family: var(--mono); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.grow, .spacer { flex: 1 1 auto; min-width: 0; }
+/* Anything a wash or a pressed tone sits under steps third-level ink up one,
+   so it keeps AA there (tools/contrast.py checks the pairs this leaves). */
+[aria-selected=true], [aria-current], .is-selected, .is-preview, .on { --ink-3: var(--ink-2); }
+
+/* Icons come from icons.svg: <svg class="ico"><use href=".../icons.svg#i-pin"/></svg>.
+   They're 1.5px round-capped, round-joined strokes on a 16px grid. */
+.ico { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linejoin: round; stroke-linecap: round; }
+.ico--sm { width: 14px; height: 14px; }
+
+/* ---------------------------------------------------------------- controls */
+/* A button is text on the ground with a hover tone: <button class="btn">.
+   .quiet is second-level, .primary is solid ink (the one main action of a
+   view), .danger is a destructive text button, .icon is square, .sm is 24px.
+   aria-pressed=true or .on is a held state. No outlined variant: an outline
+   would put a box on every row. */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: var(--ctl); padding: 0 10px; flex: none;
+  border: 0; border-radius: var(--r); background: none; color: var(--ink);
+  font: 500 var(--fs-ui)/1 var(--sans); white-space: nowrap; cursor: pointer;
+}
+.btn:hover { background: var(--hover); }
+.btn:active { background: var(--press); }
+.btn.quiet { color: var(--ink-2); }
+.btn.quiet:hover { color: var(--ink); }
+.btn.icon { width: var(--ctl); padding: 0; color: var(--ink-2); }
+.btn.icon:hover { color: var(--ink); }
+.btn.sm { height: var(--ctl-sm); padding: 0 8px; }
+.btn.sm.icon { width: var(--ctl-sm); padding: 0; }
+.btn.primary { padding: 0 12px; background: var(--ink); color: var(--ground); font-weight: 600; }
+.btn.primary:hover { background: color-mix(in srgb, var(--ink) 86%, var(--ground)); }
+.btn.danger { color: var(--danger); }
+.btn[aria-pressed=true], .btn.on { background: var(--press); color: var(--ink); }
+/* A control that cannot act now is shown disabled, with a title saying why:
+   ink-3 text on no wash (a primary loses its fill), still focusable when it is
+   aria-disabled so the title reads on keyboard focus. Menu items, segments and
+   tabs below follow the same rule. */
+.btn:is(:disabled, [aria-disabled=true]), .btn:is(:disabled, [aria-disabled=true]):is(:hover, :active) { color: var(--ink-3); background: none; cursor: default; }
+.btn.primary:is(:disabled, [aria-disabled=true]), .btn.primary:is(:disabled, [aria-disabled=true]):is(:hover, :active) { background: var(--hover); color: var(--ink-3); }
+.seg > :is(:disabled, [aria-disabled=true]), .seg > :is(:disabled, [aria-disabled=true]):hover { background: none; box-shadow: none; color: var(--ink-3); cursor: default; }
+.vtab:is(:disabled, [aria-disabled=true]), .ptabs button:is(:disabled, [aria-disabled=true]), #tabbar button:is(:disabled, [aria-disabled=true]) { color: var(--ink-3); cursor: default; }
+.vtab:is(:disabled, [aria-disabled=true]):hover { border-bottom-color: transparent; }
+.ptabs button:is(:disabled, [aria-disabled=true]):hover { color: var(--ink-3); }
+/* A button at the end of a row pulls its padding back so its text meets the edge. */
+.btn.edge { margin-right: -10px; }
+
+/* The one ember element: <button class="btn ember">Allow</button> (and chat.js's
+   .pactions button.allow below). It carries the mark's chamfer, one corner cut
+   at 45°. The fill is a clipped pseudo-element, so the focus ring is drawn
+   on the button's own box and cleanly contains the cut. */
+.btn.ember, #chat .pactions button.allow {
+  --cut: 8px;
+  position: relative; isolation: isolate;
+  padding: 0 16px 0 14px; border: 0; border-radius: var(--r-xs);
+  background: none; color: var(--on-ember); font-weight: 600;
+}
+.btn.ember::before, #chat .pactions button.allow::before, .alert::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: var(--r-xs) 0 var(--r-xs) var(--r-xs); background: var(--ember);
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+}
+.btn.ember:hover, #chat .pactions button.allow:hover:not(:disabled) { background: none; }
+.btn.ember:hover::before, #chat .pactions button.allow:hover:not(:disabled)::before { background: color-mix(in srgb, var(--ember) 90%, #000); }
+.btn.ember:focus-visible, #chat .pactions button.allow:focus-visible { outline-offset: 2px; }
+
+/* A text link that is a button: <button class="linkish">choose files</button>. */
+.linkish {
+  padding: 0; border: 0; background: none; font: inherit; font-weight: 500; color: var(--ink);
+  text-align: left; text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px;
+  overflow-wrap: anywhere; cursor: pointer;
+}
+.linkish:hover { text-decoration-color: var(--ink); }
+
+/* The light/dark switch (scheme.js): <button class="btn icon" data-scheme-toggle>
+   holding one <svg class="ico"><use href="icons.svg#i-auto"/></svg>, whose icon
+   scheme.js swaps (i-auto, i-sun, i-moon). The older markup, one
+   <svg data-for="system|light|dark"> each, still works: the one matching the
+   button's data-scheme shows. */
+[data-scheme-toggle] > svg[data-for] { display: none; }
+[data-scheme-toggle][data-scheme=system] > svg[data-for=system],
+[data-scheme-toggle][data-scheme=light] > svg[data-for=light],
+[data-scheme-toggle][data-scheme=dark] > svg[data-for=dark],
+[data-scheme-toggle]:not([data-scheme]) > svg[data-for=system] { display: block; }
+
+kbd {
+  display: inline-block; padding: 0 4px;
+  border: 1px solid var(--rule); border-radius: var(--r-sm);
+  font-size: var(--fs-micro); line-height: 16px; color: var(--ink-3); white-space: nowrap;
+}
+
+/* <input class="input">, also on a <select> or <textarea>. .inputwrap puts an
+   icon inside the left edge: <label class="inputwrap"><svg class="ico">..<input class="input"></label>. */
+.input {
+  height: var(--ctl); padding: 0 8px; min-width: 0;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); color: var(--ink);
+  font: 400 var(--fs-ui)/1 var(--sans);
+}
+textarea.input { height: auto; padding: 5px 8px; line-height: var(--lh-ui); resize: vertical; }
+.input::placeholder, textarea::placeholder { color: var(--ink-3); opacity: 1; }
+.input:disabled { color: var(--ink-3); }
+.inputwrap { position: relative; display: inline-flex; align-items: center; }
+.inputwrap > .ico { position: absolute; left: 8px; color: var(--ink-3); pointer-events: none; }
+.inputwrap > .input { width: 100%; padding-left: 30px; }
+
+/* Checkboxes and radios are drawn the same wherever they are: square or round,
+   solid ink when on. <input type="checkbox" class="switch"> is a toggle.
+   <label class="check"><input type="checkbox">Label <span class="hint">note</span></label> */
+input[type=checkbox], input[type=radio] {
+  appearance: none; -webkit-appearance: none;
+  display: inline-grid; place-content: center; flex: none;
+  width: 14px; height: 14px; margin: 0;
+  border: 1.5px solid var(--ink-3); background: var(--field); cursor: pointer;
+}
+input[type=checkbox] { border-radius: 3px; }
+input[type=radio] { border-radius: 50%; }
+input[type=checkbox]:checked, input[type=checkbox]:indeterminate { background: var(--ink); border-color: var(--ink); }
+input[type=checkbox]:checked::after {
+  content: ""; width: 4px; height: 7px; margin-top: -2px;
+  border: solid var(--ground); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg);
+}
+input[type=checkbox]:indeterminate::after { content: ""; width: 7px; height: 1.5px; background: var(--ground); }
+input[type=radio]:checked { border-color: var(--ink); }
+input[type=radio]:checked::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); }
+input[type=checkbox]:disabled, input[type=radio]:disabled { opacity: 0.5; cursor: default; }
+/* The toggle: 36 x 20. Off is an outlined track with a quiet thumb (ring and thumb
+   in --ink-3, which holds 3:1 on ground, well and field); on is solid ink with a
+   ground thumb. Focus is the global ring; disabled is the 50% above. */
+input[type=checkbox].switch { width: 36px; height: 20px; border: 0; border-radius: 10px; background: var(--field); box-shadow: inset 0 0 0 1.5px var(--ink-3); position: relative; display: inline-block; }
+input[type=checkbox].switch::after { content: ""; position: absolute; top: 4px; left: 4px; width: 12px; height: 12px; margin: 0; border: 0; border-radius: 50%; background: var(--ink-3); transform: none; }
+input[type=checkbox].switch:checked { background: var(--ink); box-shadow: none; }
+input[type=checkbox].switch:checked::after { left: 20px; background: var(--ground); }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.check .hint { margin-left: auto; color: var(--ink-3); }
+input[type=range] { accent-color: var(--ink); }
+
+/* A segmented control: a quiet track, the chosen segment lifts to field tone.
+   <div class="seg" role="group"><button aria-pressed="true">Z-up</button><button aria-pressed="false">Y-up</button></div>
+   aria-pressed, aria-checked or aria-current marks the chosen one. .icons makes each a square. */
+.seg { display: inline-flex; flex: none; height: var(--ctl); padding: 2px; gap: 2px; border-radius: var(--r); background: var(--hover); }
+.seg > button, .seg > a {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-width: 24px; padding: 0 8px;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--ink-2);
+  font: 500 var(--fs-small)/1 var(--sans); white-space: nowrap; cursor: pointer;
+}
+.seg > :hover { color: var(--ink); }
+.seg > [aria-pressed=true], .seg > [aria-checked=true], .seg > [aria-current] { background: var(--field); color: var(--ink); box-shadow: 0 0 0 1px var(--rule-strong); }
+.seg.icons > * { width: 24px; padding: 0; }
+.seg.sm { height: var(--ctl-sm); }
+
+/* Chips: presets, example queries and filters, as small toggles in a wrapping
+   row. aria-pressed=true for a chosen one. Not pills: no border at rest.
+   <div class="chips"><button class="chip" aria-pressed="true">All</button>...</div>
+   A filter that is a link to another URL holds the chosen one with aria-current instead. */
+.chips { display: flex; flex-wrap: wrap; gap: 2px; padding: 2px 12px 6px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 7px;
+  border: 0; border-radius: var(--r-sm); background: none;
+  font: 400 var(--fs-small)/1 var(--sans); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+}
+.chip:hover { color: var(--ink); background: var(--hover); }
+.chip[aria-pressed=true], .chip[aria-current] { background: var(--press); color: var(--ink); font-weight: 500; }
+.chip code, .chip.mono { font: 400 11.5px/1 var(--mono); }
+/* A count: on a tab, a chip or a heading. A quiet mono number, not a badge. */
+.n { font: 400 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-3); }
+/* A small label beside a name, e.g. "view only". Quiet text, not an outlined tag. */
+.tag { font-size: var(--fs-small); font-weight: 400; color: var(--ink-2); white-space: nowrap; }
+
+/* A labelled data grid that wraps: <dl class="fields"><div><dt>Part</dt><dd>clip.stl</dd></div>...</dl> */
+.fields { display: flex; flex-wrap: wrap; gap: 2px 14px; min-width: 0; margin: 0; }
+.fields div { display: grid; gap: 0; min-width: 0; }
+.fields dt { font-size: var(--fs-micro); line-height: 14px; color: var(--ink-2); }
+.fields dd { margin: 0; font: 400 var(--fs-small)/16px var(--mono); white-space: nowrap; }
+
+/* A field list, label column then value column: <dl class="fl"><dt>Title</dt><dd>RP2040 Basic Support</dd><dt>Parts</dt><dd class="mono">25</dd>...</dl>
+   --fl-label sets the label width. .ruled puts a hairline over each row and
+   right-aligns the values (a summary); .cols2 runs two pairs across. */
+.fl { display: grid; grid-template-columns: var(--fl-label, 96px) minmax(0, 1fr); column-gap: 12px; }
+.fl > dt { padding: 3px 0; color: var(--ink-2); }
+.fl > dd { padding: 3px 0; min-width: 0; overflow-wrap: anywhere; }
+.fl.ruled { grid-template-columns: minmax(0, 1fr) auto; column-gap: 0; }
+.fl.ruled > dt, .fl.ruled > dd { padding: 6px 0; border-top: 1px solid var(--rule); }
+.fl.ruled > dd { padding-left: 12px; text-align: right; }
+.fl.cols2 { grid-template-columns: var(--fl-label, 104px) minmax(0, 300px) var(--fl-label, 104px) minmax(0, 1fr); }
+
+/* A field list that holds controls: the label sits at the control's height and
+   the control is the value, with a .hint under it. A choice between options is a
+   .choices row of label.check. --fl-label sets the label width. One column on a phone.
+   <dl class="fl form"><dt><label for="p">Product</label></dt><dd><select id="p" class="input">…</select></dd>
+     <dt>Destination</dt><dd><div class="choices"><label class="check"><input type="radio" name="d" checked>New project</label>…</div><p class="hint">…</p></dd></dl> */
+.fl.form { --fl-label: 140px; row-gap: 8px; align-items: start; }
+.fl.form > dt { padding: 0; line-height: var(--ctl); }
+.fl.form > dd { display: grid; gap: 4px; justify-items: start; padding: 0; }
+.fl.form .input { width: 100%; max-width: 420px; }
+.fl.form .choices { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; min-height: var(--ctl); }
+.fl.form .hint { font-size: var(--fs-small); line-height: 17px; }
+.fl.form .hint:empty { display: none; }
+@media (max-width: 640px) {
+  .fl.form { grid-template-columns: minmax(0, 1fr); row-gap: 0; }
+  .fl.form > dt { line-height: 18px; }
+  .fl.form > dd { margin-bottom: 10px; }
+}
+
+/* ------------------------------------------------ lamps, markers, readouts */
+/* A status lamp: a small square, never a round dot.
+   <span class="lamp ok"></span>  ok (quench), warn, bad (danger), none (hollow), run (hollow ink). No class is neutral. */
+.lamp { display: inline-block; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--ink-3); }
+.lamp.ok { background: var(--quench); }
+.lamp.warn { background: var(--warn); }
+.lamp.bad { background: var(--danger); }
+.lamp.none { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.lamp.run { background: none; box-shadow: inset 0 0 0 1.5px var(--ink); }
+
+/* A state as a lamp and a word: <span class="state" data-kind="good">Covered</span>
+   data-kind=good|busy|gap|bad|pending|waiting. No kind is a neutral solid lamp
+   (idle, not used). Good is quench, busy the temper, gap a warn lamp, bad
+   danger, pending hollow (connecting, queued), waiting solid ink. Never ember. */
+.state { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--ink); }
+.state::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 1px; background: var(--ink-3); }
+.state[data-kind=good]::before { background: var(--quench); }
+.state[data-kind=busy]::before { background: var(--temper-text); }
+.state[data-kind=pending]::before { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.state[data-kind=gap]::before { background: var(--warn); }
+.state[data-kind=bad]::before { background: var(--danger); }
+/* A state that links to its detail: <a class="state" data-kind="good" href>Sent</a> is underlined like any text link. */
+a.state { text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+a.state:hover { text-decoration-color: var(--ink); }
+.state[data-kind=waiting] { font-weight: 600; }
+.state[data-kind=waiting]::before { background: var(--ink); }
+/* An open item's own small mark, e.g. beside "open" on a comment: <span class="state--open">open</span> */
+.state--open { display: inline-flex; align-items: center; gap: 6px; }
+.state--open::before { content: ""; width: 8px; height: 8px; border-radius: 1px; box-shadow: inset 0 0 0 1.5px var(--ink-2); }
+
+/* The plate marker: a square with one corner cut at 45°, the marks' own
+   geometry. A comment's number in a list and on the drawing (.hpin below),
+   and a step's number on a spine.
+   <span class="mk">1</span>            the human's: solid ink (.mk--human is the same)
+   <span class="mk mk--agent">2</span>  the agent's: a ruled outline
+   .sel, or any .mk inside .is-selected or [aria-current], is the selected one, in temper.
+   The severity marks beside a finding are lamps: <span class="mk--sev mk--defect"></span>, .mk--warning. */
+.mk {
+  --mk-edge: var(--pin); --mk-fill: var(--mk-edge);
+  position: relative; isolation: isolate;
+  display: inline-grid; place-items: center; flex: none;
+  width: 18px; height: 18px;
+  color: var(--on-pin); font: 500 var(--fs-micro)/1 var(--mono); font-variant-numeric: tabular-nums;
+}
+.mk::before, .mk::after { content: ""; position: absolute; }
+.mk::before { inset: 0; z-index: -2; background: var(--mk-edge); clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%); }
+.mk::after { inset: 1.5px; z-index: -1; background: var(--mk-fill); clip-path: polygon(0 0, calc(100% - var(--cut) + 0.9px) 0, 100% calc(var(--cut) - 0.9px), 100% 100%, 0 100%); }
+.mk--agent, .mk.open { --mk-fill: var(--ground); color: var(--ink); }
+.mk.sel, .is-selected > .mk, [aria-current] > .mk { --mk-edge: var(--pin-selected); --mk-fill: var(--pin-selected); color: var(--on-temper); }
+.mk.resolved { --mk-edge: var(--ink-3); }
+.mk--sev { display: inline-block; width: 8px; height: 8px; flex: none; margin: 0 5px; border-radius: 1px; background: var(--ink-3); }
+.mk--defect { background: var(--danger); }
+.mk--warning { background: var(--warn); }
+
+/* A readout: a figure that matters, as mono numerals in a slightly recessed
+   field, with a small sentence-case legend beside it.
+   <span class="readout"><span class="val">0</span><span class="lg">errors</span></span>
+   .val.zero quiets a zero; a .lamp may sit inside the .val. Same ink as
+   everything else: no colour, no uppercase. */
+.readout { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.readout .lg { color: var(--ink-2); font-size: var(--fs-small); }
+.val {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 20px; padding: 0 6px; border-radius: var(--r-xs);
+  background: var(--well); box-shadow: inset 0 0 0 1px var(--rule);
+  color: var(--ink); font: 400 var(--fs-small)/1 var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.val.zero { color: var(--ink-2); }
+.val.lg { height: 26px; padding: 0 9px; font-size: var(--fs-ui); font-weight: 500; }
+
+/* A thin progress line. <span class="pline"><i class="p40"></i></span> fills
+   by class (.p10 to .p100 in tens); .indet travels; .steady is full width and
+   breathes (the agent working). */
+.pline { display: block; height: 2px; background: var(--rule); overflow: hidden; }
+.pline > i { display: block; height: 100%; background: var(--temper-text); }
+.pline > .p10 { width: 10%; } .pline > .p20 { width: 20%; } .pline > .p30 { width: 30%; } .pline > .p40 { width: 40%; } .pline > .p50 { width: 50%; }
+.pline > .p60 { width: 60%; } .pline > .p70 { width: 70%; } .pline > .p80 { width: 80%; } .pline > .p90 { width: 90%; } .pline > .p100 { width: 100%; }
+.pline.indet > i { width: 32%; animation: pline-travel 1.8s linear infinite; }
+.pline.steady > i { animation: pline-breathe 1.6s ease-in-out infinite alternate; }
+@keyframes pline-breathe { from { opacity: 1; } to { opacity: 0.6; } }
+@keyframes pline-travel { from { transform: translateX(-100%); } to { transform: translateX(315%); } }
+/* Spend against a ceiling: <progress class="meter" value max>. */
+.meter { width: 64px; height: 4px; border: 0; background: var(--rule); appearance: none; vertical-align: middle; }
+.meter::-webkit-progress-bar { background: var(--rule); }
+.meter::-webkit-progress-value { background: var(--temper-text); }
+.meter::-moz-progress-bar { background: var(--temper-text); }
+
+/* Paper: a schematic sheet or its thumbnail, with a hairline edge. The image
+   multiplies onto the paper tone, so in dark the white warms slightly and the
+   linework is left alone. <div class="paper"><img src="sheet.png" alt=""></div> */
+.paper { position: relative; isolation: isolate; background: var(--paper-under); outline: 1px solid var(--rule-strong); outline-offset: -1px; overflow: hidden; }
+.paper > img { width: 100%; height: 100%; object-fit: cover; mix-blend-mode: multiply; }
+
+/* ------------------------------------------------------ menus, disclosures */
+/* A menu: the one place a shadow is used.
+   <span class="menuwrap"><button class="btn icon" data-menu aria-haspopup="menu">…</button>
+     <span class="menu" role="menu"><button role="menuitem">Open</button><hr><button class="danger">Delete</button></span></span>
+   data-open on the .menuwrap shows it (the page's script toggles that). A
+   <details class="more"> with a summary and a .menu works with no script. */
+.menuwrap { position: relative; display: inline-flex; }
+.menu {
+  position: absolute; top: calc(100% + 4px); right: 0; z-index: 20;
+  display: none; min-width: 200px; padding: 4px; text-align: left;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); box-shadow: var(--shadow-menu);
+}
+.menuwrap[data-open] > .menu, details.more[open] > .menu { display: block; }
+.menuwrap[data-open] > [data-menu] { background: var(--press); color: var(--ink); }
+.menu button, .menu a {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: var(--ctl); padding: 0 8px;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--ink);
+  font: 400 var(--fs-ui)/1 var(--sans); white-space: nowrap; text-align: left; justify-content: flex-start;
+}
+.menu button:hover, .menu a:hover { background: var(--hover); }
+.menu .danger { color: var(--danger); }
+.menu :is(button, a):is(:disabled, [aria-disabled=true]), .menu :is(button, a):is(:disabled, [aria-disabled=true]):hover { background: none; color: var(--ink-3); cursor: default; }
+.menu hr { height: 1px; margin: 4px -4px; border: 0; background: var(--rule); }
+.menu .menu-note { display: block; padding: 6px 8px 4px; color: var(--ink-3); font-size: var(--fs-small); }
+details.more { position: relative; }
+details.more > summary { list-style: none; }
+details.more > summary::-webkit-details-marker { display: none; }
+
+/* A disclosure for what can wait (limits, options): <details class="disc"><summary>Limits</summary><div class="disc-body">...</div></details>
+   .discs stacks several between hairlines. */
+summary { cursor: pointer; }
+.disc > summary { display: flex; align-items: center; gap: 8px; height: 32px; list-style: none; font-weight: 500; }
+.disc > summary::-webkit-details-marker { display: none; }
+.disc > summary::before, :is(#chat, .modal) .toolcard > summary::before, #chat .toolgroup > summary::before, #chat .thinking > summary::before, #chat .turnerror > summary::before, .chatbannerdetail > summary::before {
+  content: ""; width: 5px; height: 5px; margin: 0 4px 0 3px; flex: none;
+  border: solid var(--ink-3); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg);
+}
+.disc[open] > summary::before, :is(#chat, .modal) .toolcard[open] > summary::before, #chat .toolgroup[open] > summary::before, #chat .thinking[open] > summary::before, #chat .turnerror[open] > summary::before, .chatbannerdetail[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+.disc-body { padding: 0 0 12px 20px; color: var(--ink-2); max-width: 720px; }
+.disc-body p + p { margin-top: 6px; }
+.discs { border-top: 1px solid var(--rule); }
+.discs > .disc { border-bottom: 1px solid var(--rule); }
+.discs > .disc > summary { height: var(--h-row); }
+
+/* A file tree: nested lists with a <details> per folder, so it needs no script.
+   <ul class="tree"><li><details open><summary><span class="mono">sheets</span><span class="hint"><span class="mono">3</span> files</span></summary>
+       <ul><li class="file"><span class="mono" title="…">power.kicad_sch</span></li>…</ul></details></li>
+     <li class="file"><span class="mono">circuit.py</span></li></ul>
+   Names are paths from the project root, so they are mono data; a folder's
+   chevron is its summary's, and a file's name lines up with a folder's. Indent
+   guides are hairlines. A detail that belongs to a file (its hash) goes in the
+   name's title, not on the row. */
+.tree, .tree ul { list-style: none; margin: 0; padding: 0; }
+.tree ul { margin-left: 8px; padding-left: 11px; border-left: 1px solid var(--rule); }
+.tree summary, .tree .file { display: flex; align-items: center; gap: 8px; height: 28px; }
+.tree summary { list-style: none; }
+.tree summary::-webkit-details-marker { display: none; }
+.tree summary::before { content: ""; width: 5px; height: 5px; margin: 0 4px 0 3px; flex: none; border: solid var(--ink-3); border-width: 0 1.5px 1.5px 0; transform: rotate(-45deg); }
+.tree details[open] > summary::before { transform: rotate(45deg) translate(-1px, -1px); }
+.tree .file { padding-left: 20px; }
+.tree :is(summary, .file):hover { background: var(--hover); }
+.tree .hint { font-size: var(--fs-small); white-space: nowrap; }
+.tree .hint .mono { color: var(--ink); }
+
+/* -------------------------------------------------------------- panel text */
+/* .empty for "nothing here yet", .hint for guidance, .subhead for a heading
+   (12px/600, with a .c count and an .end group at the right), .metaline for a
+   wrapping line of short facts. */
+.empty { padding: 2px 12px 8px; color: var(--ink-2); }
+.iscroll > .notice, .vpanel > .notice { margin: 0 12px 6px; }
+.hint { color: var(--ink-2); }
+.secbody > .hint { padding: 0 12px 6px; font-size: var(--fs-small); }
+.subhead { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; font: 600 var(--fs-small)/1 var(--sans); color: var(--ink); }
+.subhead .c { font: 400 11.5px/1 var(--mono); color: var(--ink-3); }
+.subhead .note { font-weight: 400; color: var(--ink-3); }
+.subhead .end { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-weight: 400; color: var(--ink-2); }
+.metaline { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: var(--fs-small); color: var(--ink-2); }
+
+/* A notice is a message row with a lamp, not a box: <p class="notice notice--warn">Text</p>
+   --warn for one the user must read, --danger, --ok. An empty one takes no space. */
+.notice { display: grid; grid-template-columns: 8px minmax(0, 1fr); column-gap: 8px; align-items: baseline; padding: 4px 0; color: var(--ink-2); }
+.notice::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--ink-3); transform: translateY(-1px); }
+.notice > * { grid-column: 2; }
+.notice--warn { color: var(--ink); }
+.notice--warn::before { background: var(--warn); }
+.notice--danger { color: var(--ink); }
+.notice--danger::before { background: var(--danger); }
+.notice--ok::before { background: var(--quench); }
+.notice:empty { display: none; }
+.secbody > .notice { margin: 0 12px 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notice ul { margin: 4px 0 0; padding-left: 16px; list-style: disc; }
+/* The toast and the error line, which ui.js writes into the page's #toast and
+   #err (class ok or err on the toast). They float, so they have the menu's
+   edge and shadow, and a lamp like any message: quench for ok, danger for an
+   error. The toast sits above the status bar, the error line at the top. ui.js
+   sets display inline, so the lamp is positioned, not a grid column. */
+html #toast, html #err {
+  position: fixed; z-index: 60; left: var(--s-3); right: var(--s-3); bottom: calc(var(--h-status) + var(--s-3));
+  width: fit-content; max-width: 560px; margin-inline: auto; padding: 8px 12px 8px 30px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); box-shadow: var(--shadow-menu); color: var(--ink);
+  font-size: var(--fs-ui); line-height: var(--lh-ui); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+html #err { top: var(--s-3); bottom: auto; }
+html #toast::before, html #err::before {
+  content: ""; position: absolute; left: 12px; top: 14px; width: 8px; height: 8px; border-radius: 1px; background: var(--ink-3);
+}
+html #toast.ok::before { background: var(--quench); }
+html #toast.err::before, html #err::before { background: var(--danger); }
+html #toast:empty, html #err:empty { display: none; }
+/* A quiet aside under a comment or a finding. */
+.note { font-size: var(--fs-small); color: var(--ink-2); }
+
+/* ------------------------------------------------------------------ tables */
+/* A data table in a panel or page: <table class="dtable">, td.mono or td.num
+   for data, a .state in a cell, tr[aria-current] for the selected row. */
+.dtable { width: 100%; border-collapse: collapse; }
+.dtable th { position: sticky; top: 0; z-index: 1; height: 32px; padding: 0 8px; background: var(--ground); border-bottom: 1px solid var(--rule); font: 500 var(--fs-small)/1 var(--sans); color: var(--ink-2); text-align: left; white-space: nowrap; }
+.dtable td { height: var(--h-row); padding: 4px 8px; border-bottom: 1px solid var(--rule); }
+.dtable td.mono, .dtable td code { overflow-wrap: anywhere; }
+.dtable td.num, .dtable th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.dtable th:first-child, .dtable td:first-child { padding-left: 12px; white-space: nowrap; }
+.dtable th:last-child, .dtable td:last-child { padding-right: 12px; }
+.dtable tr:hover td { background: var(--hover); }
+.dtable tr[aria-current] td { background: var(--temper-wash); }
+.dtable td:has(> .btn) { width: 1%; padding-top: 2px; padding-bottom: 2px; white-space: nowrap; }
+.dtable.flush th:first-child, .dtable.flush td:first-child { padding-left: 0; }
+.dtable.flush th:last-child, .dtable.flush td:last-child { padding-right: 0; }
+
+/* A selectable data table, as a grid so it can stack on a phone:
+   <div class="dt" role="table"> (the product gives it its columns: .dt.parts { --cols: 14px 12px 126px ... })
+     <div class="dt-bulk" role="toolbar"><input type="checkbox"><strong>3 selected</strong><button class="btn">…</button><span class="grow"></span><button class="btn quiet">Clear</button></div>
+     <div class="dt-head" role="row"><span></span><span>MPN</span>...</div>
+     <div class="dt-row" role="row" aria-selected="true"> cells: <input type="checkbox">, <button class="exp" aria-expanded="false">, spans, <span class="dt-act">…</span></div>
+     <div class="dt-detail">a <dl class="fl cols2">, under a row with .is-open</div></div>
+   Cell roles for the phone layout: .dt-main (the name), .dt-sub, .dt-state and
+   .dt-act; everything else is dropped there. .num right-aligns. .more is a "+5" count. */
+.dt { --dt-pad-l: 12px; --dt-pad-r: 12px; border-top: 1px solid var(--rule); }
+.dt-head, .dt-row {
+  display: grid; grid-template-columns: var(--cols); column-gap: 12px; align-items: center;
+  padding-inline: var(--dt-pad-l) var(--dt-pad-r); border-bottom: 1px solid var(--rule);
+}
+.dt-head { height: 32px; color: var(--ink-2); font: 500 var(--fs-small)/1 var(--sans); white-space: nowrap; }
+.dt-row { min-height: var(--h-row); }
+.dt-row:hover { background: var(--hover); }
+.dt-row[aria-selected=true] { background: var(--temper-wash); }
+.dt-row.is-open { border-bottom-color: transparent; }
+.dt .num { text-align: right; }
+.dt-main { min-width: 0; color: var(--ink); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-row > .mono, .dt-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dt-state { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.dt .more { margin-left: 2px; padding: 1px 4px; border-radius: var(--r-sm); background: var(--hover); color: var(--ink-2); font-size: var(--fs-micro); }
+.dt-act { display: flex; align-items: center; justify-content: flex-end; gap: 2px; white-space: nowrap; }
+.dt-detail { padding: 0 var(--dt-pad-r) 14px calc(var(--dt-pad-l) + 50px); border-bottom: 1px solid var(--rule); }
+.dt-detail > .subhead { height: 24px; padding: 0; color: var(--ink-2); font-weight: 500; }
+.dt-bulk {
+  display: flex; align-items: center; gap: 2px; height: var(--h-row);
+  padding-inline: var(--dt-pad-l) var(--dt-pad-r); border-bottom: 1px solid var(--rule);
+  background: var(--temper-wash); white-space: nowrap;
+}
+.dt-bulk strong { margin: 0 8px 0 34px; font-weight: 600; }
+/* The row's expander: a chevron that turns. */
+.exp { display: grid; place-items: center; width: 16px; height: 24px; margin-left: -2px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; }
+.exp::before { content: ""; width: 5px; height: 5px; border: solid var(--ink-3); border-width: 0 1.5px 1.5px 0; transform: translateX(-1px) rotate(-45deg); }
+.exp[aria-expanded=true]::before { transform: translateY(-1px) rotate(45deg); border-color: var(--ink); }
+.exp:hover::before { border-color: var(--ink); }
+@media (max-width: 640px) {
+  .dt-head { display: none; }
+  .dt-row { grid-template-columns: 14px minmax(0, 1fr) auto; grid-template-areas: "check main act" "check sub act" "check state state"; column-gap: 10px; row-gap: 1px; padding-block: 8px 9px; }
+  .dt-row > * { display: none; }
+  .dt-row > input[type=checkbox] { display: inline-grid; grid-area: check; align-self: start; margin-top: 2px; }
+  .dt-row > .dt-main { display: block; grid-area: main; }
+  .dt-row > .dt-sub { display: block; grid-area: sub; color: var(--ink-2); }
+  .dt-row > .dt-state { display: inline-flex; grid-area: state; font-size: var(--fs-small); color: var(--ink-2); }
+  .dt-row > .dt-act { display: flex; grid-area: act; align-self: start; margin: -4px -6px 0 0; }
+  .dt-row:not(:has(> input[type=checkbox])) { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "main act" "sub act" "state state"; }
+  .dt-act > .btn:not(:first-child):not(.icon) { display: none; }
+  .dt-act > .btn { height: var(--ctl-sm); padding: 0 8px; font-size: var(--fs-small); }
+  .dt-detail { padding-left: calc(var(--dt-pad-l) + 24px); }
+  .fl.cols2 { grid-template-columns: 96px minmax(0, 1fr); font-size: var(--fs-small); }
+  .dt-bulk .wide { display: none; }
+  .dt-bulk strong { margin-left: 10px; }
+}
+
+/* ------------------------------------------------------------------- frame */
+/* <div class="wb">
+     <header class="titlebar">   row 1
+     <div class="vhead">         row 2, the view tabs across the whole width (optional)
+     <nav class="rail">  <main class="view">  <aside class="inspector">  <aside id="chat">
+     <footer class="statusbar">
+   The rail is one --gutter wide, so the product name, the first tab and the
+   drawing's left edge share a line. --insp-w and --chat-w set the pane widths;
+   frame.js writes the widths the user dragged to as --insp-w-user and
+   --chat-w-user, which win over them while the column is open (--insp-col and
+   --chat-col are what the grid reads, and a closed state sets them to 0).
+   No more than two chrome rows sit above the drawing. */
+.wb {
+  height: 100vh; height: 100dvh;
+  display: grid;
+  --insp-col: var(--insp-w-user, var(--insp-w, 300px));
+  --chat-col: var(--chat-w-user, var(--chat-w, 400px));
+  grid-template-columns: var(--gutter) minmax(0, 1fr) var(--insp-col) var(--chat-col);
+  grid-template-rows: var(--h-bar) minmax(0, 1fr) var(--h-status);
+  grid-template-areas:
+    "title  title  title  title"
+    "rail   view   insp   chat"
+    "status status status status";
+  overflow: hidden;
+}
+.wb:has(> .vhead) {
+  grid-template-rows: var(--h-bar) var(--h-tabs) minmax(0, 1fr) var(--h-status);
+  grid-template-areas:
+    "title  title  title  title"
+    "tabs   tabs   tabs   tabs"
+    "rail   view   insp   chat"
+    "status status status status";
+}
+/* The inspector follows the agent layer's Panel button (body.panel-open). */
+body:not(.panel-open) .wb { --insp-w: 0px; --insp-col: 0px; }
+body:not(.panel-open) .inspector { display: none; }
+/* A page with no rail sets data-rail="none"; one with no agent pane or run
+   console sets data-console="none". */
+.wb[data-rail=none] { grid-template-columns: 0 minmax(0, 1fr) var(--insp-col) var(--chat-col); }
+.wb[data-rail=none] .rail { display: none; }
+.wb[data-console=none] { --chat-w: 0px; --chat-col: 0px; }
+.wb[data-console=none] :is(#chat, .console) { display: none; }
+/* Layout focus, from a three-way control in the title bar: data-layout on .wb
+   is "drawing" (no agent pane), "split" (the default) or "agent" (only it). */
+.wb[data-layout=drawing] { --chat-w: 0px; --chat-col: 0px; }
+.wb[data-layout=drawing] :is(#chat, .console) { display: none; }
+.wb[data-layout=agent] { grid-template-columns: 0 0 0 minmax(0, 1fr); }
+.wb[data-layout=agent] :is(.rail, .view, .inspector) { display: none; }
+#tabbar { display: none; }
+/* The drag handles frame.js inserts before the inspector and the agent pane: a
+   7px grab strip centred on the hairline at the pane's left edge. Only the
+   hairline shows, in the temper on hover, focus and while dragging. */
+.colgrip { position: relative; z-index: 6; justify-self: start; width: 7px; margin-left: -4px; cursor: col-resize; touch-action: none; }
+.colgrip[data-grip=insp] { grid-area: insp; }
+.colgrip[data-grip=chat] { grid-area: chat; }
+.colgrip::before { content: ""; position: absolute; inset: 0 3px; }
+.colgrip:is(:hover, [data-dragging])::before, .colgrip:focus-visible::before { background: var(--temper-text); }
+.colgrip:focus-visible::before { inset: 0 2px 0 3px; }
+.colgrip:focus { outline: none; }
+body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
+.wb[data-layout=drawing] .colgrip[data-grip=chat], .wb[data-console=none] .colgrip[data-grip=chat] { display: none; }
+
+/* --------------------------------------------------------------- title bar */
+/* <header class="titlebar">
+     <div class="tb-left"> a.mark, .prod, .tsep, nav.crumbs or .doc, .tsep, .stageline </div>
+     <button class="cmd">        the command field, centred
+     <div class="tb-right"> .conn, buttons, .seg, [data-scheme-toggle] </div>
+   Without .tb-left the children simply run left to right and .tb-right is
+   pushed to the end, as before. Without .cmd the grid has two columns, the left
+   cluster and .tb-right, so the right controls stay at the right edge. */
+.titlebar {
+  grid-area: title;
+  display: flex; align-items: center; gap: 0; min-width: 0; height: var(--h-bar);
+  padding: 0 8px 0 0;
+  border-bottom: 1px solid var(--rule);
+  white-space: nowrap;
+}
+.titlebar:has(> .tb-left) { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; }
+.titlebar:has(> .tb-left):not(:has(> .cmd)) { grid-template-columns: minmax(0, 1fr) auto; }
+.tb-left { display: flex; align-items: center; height: 100%; min-width: max-content; }
+.tb-right { margin-left: auto; display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
+.tb-right .gap { width: 10px; flex: none; }
+/* The mark is used as supplied, in a --gutter column of its own:
+   <a class="mark" href="/"><picture><source srcset="marks/loom-weave-dark.svg" media="(prefers-color-scheme: dark)"><img src="marks/loom-weave.svg" alt=""></picture></a>
+   (a bare <picture class="mark"> works too). scheme.js keeps the source in step with a forced scheme. */
+.mark { display: grid; place-items: center; width: var(--gutter); height: 100%; flex: none; }
+.mark img { display: block; height: 18px; width: auto; }
+.prod { font-weight: 600; white-space: nowrap; }
+.prod span { font-weight: 400; color: var(--ink-2); }
+.tsep { width: 1px; height: 16px; flex: none; margin: 0 10px; background: var(--rule-strong); }
+/* Where you are: <nav class="crumbs"><a href="/">Projects</a><span class="sep">/</span><span class="here">RP2040 Stepper Controller</span>
+   <button class="btn icon sm" aria-label="Rename">pencil</button><span class="rev mono">rev 1</span></nav> */
+.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ink-2); white-space: nowrap; }
+.crumbs a:hover { color: var(--ink); }
+.crumbs .sep { color: var(--ink-3); }
+.crumbs .here { color: var(--ink); font-weight: 500; }
+.crumbs .btn { color: var(--ink-3); margin-left: -2px; }
+.crumbs .rev { color: var(--ink-3); margin-left: 6px; }
+/* A document label instead of a breadcrumb: <span class="doc"><strong>clip</strong><code>~/cad/clip</code></span> */
+.titlebar .doc { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow: hidden; }
+.titlebar .doc strong { font-weight: 500; }
+.titlebar .doc code { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+/* How far a staged job has got: <div class="stageline"><span>Schematic, <span class="hint">5 of 8</span></span>
+   <span class="stagebar"><i class="on"></i>... one <i> per stage</span></div> */
+.stageline { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
+.stagebar { display: flex; gap: 2px; }
+.stagebar i { width: 8px; height: 2px; background: var(--rule-strong); }
+.stagebar i.on { background: var(--ink); }
+/* The command field: a button that looks like a field and opens the palette.
+   <button class="cmd"><svg class="ico">search</svg><span>Search or run a command</span><kbd>Ctrl K</kbd></button> */
+.cmd {
+  display: flex; align-items: center; gap: 8px; width: 288px; height: var(--ctl); padding: 0 6px 0 8px;
+  border: 1px solid var(--rule); border-radius: var(--r); background: var(--field);
+  color: var(--ink-3); font: 400 var(--fs-ui)/1 var(--sans); text-align: left;
+}
+.cmd:hover { border-color: var(--rule-strong); }
+.cmd > span { flex: 1; }
+.titlebar > .cmd:not(:has(~ .tb-right)) { margin-inline: auto; }
+/* The command palette (palette.js): a menu-family box under the title bar over a
+   transparent layer that catches outside clicks. It does not dim the page.
+   <div class="palette"><div class="palette-box" role="dialog" aria-label="Command palette">
+     <input class="input palette-input" role="combobox">
+     <div class="palette-list" role="listbox">
+       <div class="palette-group" role="presentation">Group</div>
+       <div class="palette-row" role="option" aria-selected="true"><span class="palette-title">Title</span><span class="palette-hint">hint</span><kbd>V</kbd></div>
+       <div class="palette-row" role="option" aria-disabled="true">...the hint is the reason it cannot run</div>
+       <div class="palette-empty" role="presentation">No commands match</div>
+     </div><div class="sr" aria-live="polite">2 commands</div></div></div>
+   .palette-box.static sits in the flow, for a specimen. The layer is the catch
+   layer only; the page behind keeps its look. */
+.palette { position: fixed; inset: 0; z-index: 50; }
+.palette-box {
+  position: absolute; top: calc(var(--h-bar) + var(--s-3)); left: 0; right: 0; margin-inline: auto;
+  width: min(560px, calc(100% - 16px)); padding: 4px; text-align: left;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); box-shadow: var(--shadow-menu);
+}
+.palette-box.static { position: static; margin-inline: 0; width: 100%; max-width: 560px; }
+.palette-input { width: 100%; }
+.palette-list { max-height: calc(8.5 * var(--ctl)); margin-top: 4px; overflow-y: auto; overscroll-behavior: contain; }
+.palette-group { padding: 8px 8px 4px; color: var(--ink-2); font-size: var(--fs-small); font-weight: 500; }
+.palette-group:first-child { padding-top: 4px; }
+.palette-row {
+  display: flex; align-items: center; gap: 8px; min-height: var(--ctl); padding: 0 8px;
+  border-radius: var(--r-sm); color: var(--ink); cursor: default;
+}
+.palette-row[aria-selected=true] { background: var(--press); }
+.palette-row[aria-disabled=true] { color: var(--ink-3); }
+/* ink-3 is not used on the pressed tone (tools/contrast.py), so the selected row steps up to ink-2. */
+.palette-row[aria-selected=true][aria-disabled=true], .palette-row[aria-selected=true] :is(.palette-hint, kbd) { color: var(--ink-2); }
+.palette-row > .ico { flex: none; color: var(--ink-2); }
+.palette-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette-hint { flex: 0 1 auto; max-width: 45%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-3); font-size: var(--fs-small); }
+.palette-row > kbd { flex: none; }
+/* A disabled row shows its whole reason, wrapped, so the row can be taller than --ctl. */
+.palette-row[aria-disabled=true] { padding-block: 4px; }
+.palette-row[aria-disabled=true] .palette-hint { max-width: 60%; overflow: visible; text-overflow: clip; white-space: normal; text-align: right; }
+.palette-empty { padding: 8px; color: var(--ink-3); }
+@media (max-width: 640px) {
+  .palette-box:not(.static) { top: var(--h-bar); width: 100%; border-width: 0 0 1px; border-radius: 0 0 var(--r) var(--r); }
+}
+/* Product switch on platform pages: text tabs that sit on the bar's own rule.
+   <nav class="prodtabs"><a href aria-current="page">Trace</a><a href>Loom</a></nav> */
+.prodtabs { display: flex; height: 100%; gap: 16px; }
+.prodtabs a { display: flex; align-items: center; height: 100%; padding-top: 2px; border-bottom: 2px solid transparent; color: var(--ink-2); font-weight: 500; }
+.prodtabs a:hover { color: var(--ink); }
+.prodtabs a[aria-current] { color: var(--ink); font-weight: 600; border-bottom-color: var(--temper-text); }
+/* The connection, from the agent layer's ws.js: <span class="conn" data-state="live">Live</span>
+   in .tb-right, in the chat header or in the status bar. A square lamp and a word. */
+.conn { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; color: var(--ink-2); white-space: nowrap; }
+.conn::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--quench); }
+.conn:empty { display: none; }
+.conn[data-state=connecting]::before, .conn[data-state=idle]::before { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.conn[data-state=polling]::before { background: var(--warn); }
+.conn[data-state=refused]::before, .conn[data-state=reauth]::before, .conn[data-state=down]::before { background: var(--danger); }
+
+/* --------------------------------------------------------------- view tabs */
+/* Plain text tabs with a temper underline on the current one, on the second
+   chrome row. The design views are primary; a hairline, then the records in
+   second-level ink. Readouts sit at the right end.
+   <div class="vhead"><button class="vtab" aria-current="page">Schematic</button>...
+     <span class="vsep"></span><button class="vtab second">Cost <code>$0.41</code></button>...
+     <div class="meta"><span class="readout">…</span></div> <div class="right">…</div></div>
+   Directly in .wb it spans the window; inside .view it heads that column. */
+.vhead {
+  grid-area: tabs;
+  display: flex; align-items: stretch; gap: 20px; min-width: 0; height: var(--h-tabs); flex: none;
+  padding: 0 12px 0 var(--gutter);
+  border-bottom: 1px solid var(--rule);
+  background: var(--ground);
+  overflow-x: auto; scrollbar-width: none;
+}
+.view > .vhead { padding-left: 12px; }
+.vtab {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  margin-bottom: -1px; padding: 2px 0 0; border: 0; border-bottom: 2px solid transparent; background: none;
+  font: 500 var(--fs-ui)/1 var(--sans); color: var(--ink); white-space: nowrap; cursor: pointer;
+}
+.vtab:hover { border-bottom-color: var(--rule-strong); }
+.vtab[aria-current], .vtab[aria-selected=true] { font-weight: 600; border-bottom-color: var(--temper-text); }
+.vtab.second { color: var(--ink-2); font-weight: 400; }
+.vtab.second:hover { color: var(--ink); }
+.vtab.second[aria-current] { color: var(--ink); font-weight: 600; }
+.vtab code, .vtab .n { color: var(--ink-3); font-size: 11.5px; font-weight: 400; }
+.vsep { align-self: center; width: 1px; height: 16px; flex: none; background: var(--rule); }
+.vhead .meta { display: flex; align-items: center; gap: 12px; margin-left: auto; font-size: var(--fs-small); color: var(--ink-2); white-space: nowrap; }
+.vhead .meta > span { display: inline-flex; align-items: center; gap: 6px; }
+.vhead .meta b { font: 400 var(--fs-small)/1 var(--mono); color: var(--ink); }
+.vhead .meta .ok { display: inline-flex; align-items: center; gap: 6px; color: var(--quench); font-weight: 600; }
+.vhead .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.vhead .meta + .right { margin-left: 0; }
+
+/* --------------------------------------------------------------- tool rail */
+/* <nav class="rail"><button class="tool" aria-pressed="true" title="Select (V)"><svg class="ico">..</svg><span class="k">V</span></button>
+   <hr> between groups, .end to push a tool to the bottom. Icons only, no borders. */
+.rail { grid-area: rail; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; min-height: 0; }
+.tool {
+  position: relative; display: grid; place-items: center; flex: none;
+  width: var(--ctl); height: var(--ctl);
+  border: 0; border-radius: var(--r); background: none; color: var(--ink-2); cursor: pointer;
+}
+.tool:hover { background: var(--hover); color: var(--ink); }
+.tool[aria-pressed=true] { --ink-3: var(--ink-2); background: var(--press); color: var(--ink); }
+.tool .k { position: absolute; right: 3px; bottom: 1px; font: 500 8.5px/10px var(--mono); color: var(--ink-3); }
+.rail hr { width: 0; height: 8px; margin: 0; border: 0; }
+.rail .end { margin-top: auto; }
+
+/* -------------------------------------------------------------------- view */
+/* The well: <main class="view"> [.vhead] [.previewbar] .canvas [.subtabs] </main>
+   .canvas is where the product draws. Small text readouts on the well are
+   .hud (--tl, --tr, --bl, --br): second-level ink straight on the well, no plate. */
+.view {
+  grid-area: view;
+  position: relative; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--well);
+  border-inline: 1px solid var(--rule);
+}
+.wb[data-rail=none] .view { border-left: 0; }
+.canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.hud { position: absolute; z-index: 3; font: 400 11.5px/16px var(--mono); color: var(--ink-2); white-space: nowrap; }
+.hud--tl { left: 12px; top: 6px; }
+.hud--tr { right: 12px; top: 6px; }
+.hud--bl { left: 12px; bottom: 6px; }
+.hud--br { right: 12px; bottom: 6px; }
+
+/* Sheet tabs along the bottom of the well, as small text with a count.
+   <nav class="subtabs"><button class="subtab" aria-current="page">CAN <span class="n">3</span></button>...
+     <div class="right"><span class="mono">x 131.9 y 62.9 mm</span><span class="zoom"><button class="btn icon sm">-</button><span class="mono">98%</span><button class="btn icon sm">+</button></span></div></nav> */
+.subtabs { display: flex; align-items: stretch; gap: 18px; flex: none; height: 30px; padding: 0 6px 0 12px; overflow-x: auto; scrollbar-width: none; }
+.subtab {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  padding: 2px 0 0; border: 0; border-bottom: 2px solid transparent; background: none;
+  font: 400 var(--fs-small)/1 var(--sans); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+}
+.subtab:hover { color: var(--ink); }
+.subtab[aria-current] { color: var(--ink); font-weight: 600; border-bottom-color: var(--temper-text); }
+.subtab .n { color: var(--ink-2); font-size: var(--fs-micro); }
+.subtabs .right { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--ink-2); white-space: pre; }
+.subtabs .right .mono { font-size: 11.5px; }
+.zoom { display: inline-flex; align-items: center; gap: 2px; }
+.zoom .mono { min-width: 34px; text-align: center; color: var(--ink); }
+
+/* A view-local side panel beside the drawing, for controls that belong to
+   one view rather than the page (a board's layers and query). Selection,
+   findings and comments stay in the inspector.
+   <div class="canvas split"><aside class="vpanel">details.sec ...</aside><div class="stage">...</div></div>
+   data-vpanel=closed on the .canvas hides the panel. */
+.canvas.split { display: grid; grid-template-columns: 232px minmax(0, 1fr); }
+.canvas.split[data-vpanel=closed] { grid-template-columns: minmax(0, 1fr); }
+.canvas.split[data-vpanel=closed] > .vpanel { display: none; }
+.vpanel { min-width: 0; min-height: 0; overflow: hidden auto; scrollbar-width: thin; background: var(--ground); border-right: 1px solid var(--rule); }
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.canvas:not(.split) > .stage { position: absolute; inset: 0; }
+.stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* A layer list: .layergroup headings, then label.layerrow each holding a
+   checkbox, a .swatch (its colour set from script, element.style is fine
+   under the CSP) and a .name. A <details> of rows folds a long group away. */
+.layerlist { display: grid; padding: 0 12px 4px; }
+.layergroup { margin: 6px 0 2px; font-size: var(--fs-small); color: var(--ink-3); }
+details > summary.layergroup { cursor: pointer; list-style: none; }
+details > summary.layergroup::-webkit-details-marker { display: none; }
+.layerrow { display: flex; align-items: center; gap: 8px; min-width: 0; height: 24px; cursor: pointer; }
+.layerrow .swatch { width: 10px; height: 10px; flex: none; border-radius: 1px; outline: 1px solid var(--rule-strong); outline-offset: -1px; }
+.layerrow .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.layerrow .hint { margin-left: auto; font: 400 var(--fs-micro)/1 var(--mono); color: var(--ink-3); }
+/* A labelled range, e.g. zone opacity. */
+.slider { display: flex; align-items: center; gap: 10px; padding: 4px 12px; color: var(--ink-2); }
+.slider input { flex: 1; min-width: 0; margin: 0; }
+/* A query or search box across the panel, its result count and its actions. */
+.query { display: flex; gap: 6px; padding: 4px 12px; }
+.query .input { flex: 1; min-width: 0; font: 400 var(--fs-small)/1 var(--mono); }
+.qmeta { padding: 2px 12px; font-size: var(--fs-small); color: var(--ink-2); }
+.qacts { display: flex; gap: 2px; padding: 2px 4px; }
+/* Query or search results: .hit rows of .kind, .ref and .why. .on is the active one. */
+.results { display: grid; padding: 2px 0 6px; }
+.hit {
+  display: flex; align-items: baseline; gap: 8px; min-width: 0;
+  padding: 4px 12px; border: 0; background: none; text-align: left; cursor: pointer;
+}
+.hit:hover { background: var(--hover); }
+.hit.on, .hit[aria-current] { background: var(--temper-wash); }
+.hit .kind { flex: none; width: 36px; font-size: var(--fs-small); color: var(--ink-3); }
+.hit .ref { flex: none; font: 500 var(--fs-small)/1 var(--mono); white-space: nowrap; }
+.hit .why { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); }
+/* A selection's properties: .propshead (.ref, then actions), then a table.props. */
+.propshead { display: flex; align-items: baseline; gap: 8px; padding: 4px 12px; }
+.propshead .ref { font: 500 var(--fs-read)/1 var(--mono); }
+.propshead .acts { margin-left: auto; display: flex; gap: 2px; }
+table.props { width: calc(100% - 24px); margin: 0 12px 6px; border-collapse: collapse; }
+table.props th { width: 1%; padding: 3px 12px 3px 0; font-weight: 400; color: var(--ink-2); text-align: left; white-space: nowrap; vertical-align: top; }
+table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mono); overflow-wrap: anywhere; }
+
+/* ------------------------------------------------------ pins on a drawing */
+/* Comment pins drawn in SVG over a sheet or a board: <g class="pin"> with a
+   .dot (a chamfered path: M-9-9H4L9-4V9H-9Z for an 18-unit marker), a text,
+   and a .ring when selected. .model is the agent's, .resolved is done;
+   .pindraft is one being placed. */
+.pin { pointer-events: all; cursor: pointer; }
+.pin .dot { fill: var(--pin); stroke: var(--on-pin); }
+.pin text { fill: var(--on-pin); font-family: var(--mono); font-weight: 500; }
+.pin.model .dot { fill: var(--on-pin); stroke: var(--pin); }
+.pin.model text { fill: var(--pin); }
+.pin.resolved .dot { fill: var(--ink-3); }
+.pin[aria-pressed=true] .dot, .pin.is-selected .dot { fill: var(--pin-selected); }
+.pin[aria-pressed=true] text, .pin.is-selected text { fill: var(--on-temper); }
+.pin .ring { fill: none; stroke: var(--pin-selected); }
+.pindraft { fill: none; stroke: var(--pin); }
+/* The same pin as HTML, positioned by script over a paper sheet: a plate
+   marker on a short stem above the exact point. Paper is light in both
+   schemes, so these colours are fixed.
+   <button class="hpin"><span class="mk">1</span></button>   .model the agent's, aria-pressed=true the selected one, .resolved */
+.hpin { position: absolute; z-index: 2; width: 20px; height: 20px; margin: -27px 0 0 -10px; padding: 0; border: 0; background: none; }
+.hpin::before { content: ""; position: absolute; inset: -1.5px; background: var(--paper); clip-path: polygon(0 0, calc(100% - 5.9px) 0, 100% 5.9px, 100% 100%, 0 100%); }
+.hpin::after { content: ""; position: absolute; left: 9.25px; top: 20px; width: 1.5px; height: 7px; background: var(--paper-ink); }
+.hpin .mk { width: 20px; height: 20px; --mk-edge: var(--paper-ink); --mk-fill: var(--paper-ink); color: #FFFFFF; }
+.hpin.model .mk { --mk-fill: var(--paper); color: var(--paper-ink); }
+.hpin.resolved .mk { --mk-edge: #666D73; --mk-fill: #666D73; }
+.hpin[aria-pressed=true] .mk { --mk-edge: var(--pin-selected); --mk-fill: var(--pin-selected); color: var(--on-temper); }
+.hpin[aria-pressed=true]::before { inset: -5px; background: color-mix(in srgb, var(--pin-selected) 26%, transparent); clip-path: polygon(0 0, calc(100% - 7.9px) 0, 100% 7.9px, 100% 100%, 0 100%); }
+.hpin[aria-pressed=true]::after { background: var(--pin-selected); }
+.hpin:focus-visible { outline: 2px solid var(--paper-ink); outline-offset: 3px; }
+/* A floating comment composer over a drawing, positioned by script:
+   form.composer > .where, textarea, .acts. A popover, so it has an edge and the menu shadow. */
+.composer {
+  position: absolute; z-index: 5; width: 19rem; max-width: calc(100% - 8px);
+  display: grid; gap: 6px; padding: 8px;
+  background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r);
+  box-shadow: var(--shadow-menu); cursor: default;
+}
+.composer .where { font-size: var(--fs-small); color: var(--ink-2); overflow-wrap: anywhere; }
+.composer textarea, .row textarea, .triageform textarea {
+  display: block; width: 100%; min-height: 4.5em; resize: vertical;
+  padding: 5px 8px; line-height: var(--lh-ui);
+  background: var(--ground); border: 1px solid var(--rule-strong); border-radius: var(--r);
+}
+.row textarea, .triageform textarea { min-height: 50px; background: var(--field); }
+.composer .acts { display: flex; gap: 2px; justify-content: flex-end; }
+
+/* --------------------------------------------------------------- inspector */
+/* <aside class="inspector"><div class="ihead"><h2>Review</h2><span>CAN</span><button class="btn icon sm">x</button></div>
+   <div class="iscroll"> sections </div><div class="ifoot">…</div></aside>
+   Two panes, #review and #timeline, switch with data-side on .wb and
+   aria-selected on .ptabs; more than two use .ptabs buttons with
+   aria-controls and .ipane children switched with the hidden attribute. */
+.inspector { grid-area: insp; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--rule); }
+.wb[data-console=none] .inspector, .wb[data-layout=drawing] .inspector { border-right: 0; }
+.ihead { display: flex; align-items: center; gap: 8px; height: var(--h-pane); padding: 0 6px 0 12px; flex: none; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+.ihead h2 { font: 600 var(--fs-ui)/1 var(--sans); }
+.ihead > span { color: var(--ink-3); font-size: var(--fs-small); }
+.ihead .btn { margin-left: auto; }
+.ptabs { display: flex; align-self: stretch; gap: 16px; min-width: 0; margin-right: 4px; overflow-x: auto; scrollbar-width: none; }
+.ptabs button {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  margin-bottom: -1px; padding: 2px 0 0; border: 0; border-bottom: 2px solid transparent; background: none;
+  font: 500 var(--fs-ui)/1 var(--sans); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+}
+.ptabs button:hover { color: var(--ink); }
+.ptabs button[aria-selected=true] { color: var(--ink); font-weight: 600; border-bottom-color: var(--temper-text); }
+#timeline { display: none; }
+.wb[data-side=timeline] #review { display: none; }
+.wb[data-side=timeline] #timeline { display: flex; }
+.ipane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.iscroll { flex: 1; min-height: 0; overflow: hidden auto; scrollbar-width: thin; }
+.toggles { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--rule); }
+
+/* A section in a pane, a 12px/600 header with a count:
+   <details class="sec" open><summary><svg class="ico ico--sm">chev</svg>Comments <span class="c">4</span><span class="aside">…</span></summary><div class="secbody">…</div></details> */
+.sec { border-bottom: 1px solid var(--rule); }
+.sec > summary {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px;
+  list-style: none; cursor: pointer; user-select: none;
+  font: 600 var(--fs-small)/1 var(--sans);
+}
+.sec > summary::-webkit-details-marker { display: none; }
+.sec > summary .ico { color: var(--ink-3); }
+.sec[open] > summary .ico { transform: rotate(90deg); }
+.sec > summary .c { font: 400 11.5px/1 var(--mono); color: var(--ink-3); }
+.sec > summary .aside { margin-left: auto; font: 400 var(--fs-small)/1 var(--mono); color: var(--ink); }
+.sec > summary .aside.ok { font-family: var(--sans); font-weight: 600; color: var(--quench); }
+.sec > summary .vis { margin-left: auto; }
+.secbody { padding: 0 0 8px; }
+.secbody.toggles { padding: 2px 12px 10px; border-bottom: 0; }
+.secbody > .toggles { padding: 2px 12px; border-bottom: 0; }
+.secbody > .fl { --fl-label: 56px; padding: 0 12px 4px; }
+
+/* A review item: its marker, a line of facts, an action, then the text.
+   <div class="row [is-selected]"><span class="mk">1</span>
+     <div class="rhead"><code class="ref">U10</code><span class="who">andrew</span><code class="xy">131.9, 62.9</code></div>  (or a <dl class="fields">)
+     <button class="btn quiet sm x">Resolve</button>
+     <p>comment</p> <p class="note">…</p> <textarea> <div class="acts">…</div></div>
+   Rows are divided by hairlines. The selected one takes the temper wash, with no side rule. */
+.row { position: relative; display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 7px 12px 10px; }
+.row + .row { border-top: 1px solid var(--rule); }
+.row > .mk, .row > .mk--sev { grid-row: 1; align-self: center; }
+.row > .mk--sev { justify-self: center; margin: 0; }
+.row > .rhead, .row > .fields { grid-column: 2; min-height: 24px; }
+.rhead { display: flex; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
+.rhead .ref { color: var(--ink); font-weight: 500; }
+.rhead .who { color: var(--ink-2); font-size: var(--fs-small); }
+.rhead .xy { color: var(--ink-3); font-size: var(--fs-micro); }
+.row > .x { grid-column: 3; grid-row: 1; margin-right: -8px; }
+.row > textarea, .row > p, .row > .note, .row > .acts { grid-column: 2 / -1; }
+.row > .note { margin-top: 2px; color: var(--ink-3); }
+.row.is-selected, .row[aria-current] { background: var(--temper-wash); }
+.row .acts { display: flex; gap: 2px; margin-left: -8px; }
+.ifoot { display: flex; align-items: center; gap: 6px; flex: none; padding: 8px 12px; border-top: 1px solid var(--rule); color: var(--ink-2); }
+.ifoot b { color: var(--ink); font-weight: 600; }
+.ifoot .btn:first-of-type { margin-left: auto; }
+.ifoot.toggles { display: grid; gap: 8px; padding: 10px 12px; border-bottom: 0; }
+
+/* ---------------------------------------------------------------- timeline */
+/* One entry per event on a hairline spine. Restore points (each message you
+   send, and each build) are the larger square nodes; everything else is a
+   small one. The entry being previewed takes the temper wash, and whatever
+   came after it dims on a dashed spine: that is what a restore would set aside.
+   <ol class="tl"><li class="ev ck"><time>14:12</time><span class="node node--build"></span><div class="ebody">.eh, .eq, .ed, ul.chg, .eacts, form.restore</div></li> */
+.tlbar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; flex: none; border-bottom: 1px solid var(--rule); font-size: var(--fs-small); color: var(--ink-2); }
+.tlscroll { flex: 1; min-height: 0; overflow: auto; scrollbar-width: thin; }
+.tl { padding: 8px 0 14px; }
+.ev { position: relative; display: grid; grid-template-columns: 40px 16px minmax(0, 1fr); column-gap: 8px; padding: 6px 12px 7px 4px; }
+.ev::before { content: ""; position: absolute; left: 59.5px; top: 0; bottom: 0; border-left: 1px solid var(--rule-strong); }
+.ev:first-child::before { top: 12px; }
+.ev:last-child::before { bottom: calc(100% - 12px); }
+.ev > time { font: 400 11.5px/18px var(--mono); color: var(--ink-2); text-align: right; }
+.node { position: relative; z-index: 1; justify-self: center; margin-top: 4px; width: 10px; height: 10px; border-radius: 1px; background: var(--ground); box-shadow: 0 0 0 3px var(--ground); }
+.node--msg { border: 1.5px solid var(--ink); }
+.node--build { background: var(--ink); }
+.node--ev { width: 6px; height: 6px; margin-top: 6px; background: var(--ink-3); }
+.node--wait { border: 1.5px dashed var(--ink); }
+.node--now { background: var(--temper-text); outline: 1.5px solid var(--temper-text); outline-offset: 2px; }
+.ev.is-preview .node { background-color: var(--ground); }
+.ebody { min-width: 0; }
+.eh b { font-weight: 600; }
+.eh .mk { display: inline-grid; vertical-align: -4px; margin-right: 2px; }
+.eq { margin-top: 2px; font-weight: 500; }
+.ed { color: var(--ink-2); font-size: var(--fs-small); }
+.chg { margin: 4px 0 0; display: flex; flex-wrap: wrap; gap: 2px 12px; font: 400 11.5px/16px var(--mono); color: var(--ink-2); }
+.chg code { color: var(--ink); }
+.chg ins { text-decoration: none; color: var(--quench); }
+.chg del { text-decoration: none; color: var(--danger); }
+.chg .def { color: var(--danger); }
+.chg .wrn { color: var(--warn); }
+.rp { font: 400 var(--fs-micro)/1 var(--mono); color: var(--ink-3); }
+.eacts { display: none; gap: 2px; margin: 4px 0 0 -8px; }
+.ev.ck:hover, .ev.ck:focus-within { background: var(--hover); }
+.ev.ck:hover .eacts, .ev.ck:focus-within .eacts { display: flex; }
+.ev.is-preview { background: var(--temper-wash); }
+.ev.is-preview .eacts { display: none; }
+/* The restore choice is a small form, so it has a field's edge. */
+.restore { display: none; }
+.ev.is-preview .restore { display: grid; gap: 8px; margin-top: 8px; padding: 10px 12px 12px; background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r); }
+.restore h3 { font: 600 var(--fs-ui)/var(--lh-ui) var(--sans); }
+.restore label { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 8px; align-items: center; cursor: pointer; }
+.restore label[aria-disabled=true] { color: var(--ink-3); cursor: default; }
+.restore small { grid-column: 2; font-size: var(--fs-small); color: var(--ink-2); }
+.restore .racts { display: flex; gap: 6px; margin-top: 2px; }
+.wb[data-preview] .is-preview ~ .ev > * { opacity: 0.5; }
+.wb[data-preview] .is-preview ~ .ev::before { border-left-style: dashed; }
+
+/* Previewing an earlier state: a bar over the view and a temper frame round
+   the drawing. The page sets data-preview on .wb and shows [data-then] overlays.
+   <div class="previewbar"><svg class="ico">restore</svg><b>Previewing turn 2</b><span>…</span><button class="btn">Back to now</button></div> */
+.previewbar { display: none; }
+.wb[data-preview] .previewbar { display: flex; align-items: center; gap: 10px; flex: none; min-height: var(--h-row); padding: 0 6px 0 12px; background: var(--temper-wash); border-bottom: 1px solid var(--rule); }
+.previewbar b { font-weight: 600; }
+.previewbar span { color: var(--ink-2); }
+.previewbar .btn:first-of-type { margin-left: auto; }
+.wb[data-preview] .canvas::after { content: ""; position: absolute; inset: 0; z-index: 4; pointer-events: none; outline: 2px solid var(--temper-text); outline-offset: -2px; }
+[data-then], .statusbar .pv { display: none; }
+.wb[data-preview] [data-then] { display: block; }
+.wb[data-preview] .statusbar .pv { display: inline-flex; color: var(--ink); font-weight: 600; }
+
+/* -------------------------------------------------------------- status bar */
+/* <footer class="statusbar"><span class="conn" data-state="live">Live</span><span>Agent <b>Ready</b></span>
+     <button class="alert">Approval needed: Write</button><span class="push">Build <span class="ok">ok</span> <b>14:32</b></span><span>Cost <b>$0.41</b></span></footer>
+   Labels in the sans, values (<b>) in mono. .push starts the right-hand group. */
+.statusbar {
+  grid-area: status;
+  display: flex; align-items: center; gap: 16px; min-width: 0; height: var(--h-status); padding: 0 12px;
+  border-top: 1px solid var(--rule);
+  font-size: var(--fs-small); line-height: 1; color: var(--ink-2); white-space: nowrap; overflow: hidden;
+}
+.statusbar > * { display: inline-flex; align-items: center; gap: 6px; }
+.statusbar .conn { padding: 0; }
+.statusbar b { font: 400 11.5px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.statusbar .k { color: var(--ink-3); }
+.statusbar .push { margin-left: auto; }
+.statusbar .ok { color: var(--quench); }
+/* The approval alert: shown while the chat has pending approvals
+   (#chat[data-pending] > 0), jumps to the card. Ember, with Allow's chamfer:
+   the two are one role and look it. */
+.alert {
+  --cut: 5px;
+  position: relative; isolation: isolate;
+  display: inline-flex; align-items: center; gap: 6px; height: 18px; padding: 0 10px 0 7px;
+  border: 0; background: none; color: var(--on-ember);
+  font: 600 var(--fs-small)/1 var(--sans); white-space: nowrap; cursor: pointer;
+}
+.alert .ico { width: 12px; height: 12px; }
+.alert:focus-visible { outline-offset: 2px; }
+
+/* ====================================================== the agent pane */
+/* annealage-ember's chat.js fills this scaffold (embed.py writes it):
+   <aside id="chat"><header> h1, #agentStatus.agentstatus, .working (.bar, "Working", b#chatWorkingTime),
+     .spacer, #connIndicator.conn, [#sessionStart.hdrbtn.primary], details#chatMore.more > summary.hdrbtn + .menu </header>
+   #chatBanner.chatbanner, #chatLog, .side > [.chathint] #chatPending #chatComposer, #settingsModal.modal </aside>
+   chat.js keeps data-working, data-turn-started and data-pending on #chat.
+   The pane is a log, not a chat: no bubbles. The pending approval is the only
+   bordered box in it. */
+#chat {
+  grid-area: chat;
+  display: flex; flex-direction: column; flex: none; width: auto; min-width: 0; min-height: 0;
+  background: var(--ground); border: 0;
+}
+#chat > header, .chead {
+  position: relative;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0 8px; flex: none;
+  min-height: var(--h-pane); padding: 0 6px 0 16px;
+  border-bottom: 1px solid var(--rule); white-space: nowrap;
+}
+#chat > header h1, .chead h1 {
+  display: flex; align-items: center; height: calc(var(--h-pane) - 1px); margin: 0;
+  font: 600 var(--fs-ui)/1 var(--sans); color: var(--ink); text-transform: none; letter-spacing: normal;
+}
+/* chat.js inserts .chatwho and .chatusage before #agentStatus, so the order is
+   set here: name, who, status, then the connection and buttons at the right.
+   Working and usage wrap onto a second line of the header when they show. */
+#chat > header > *, .chead > * { order: 6; }
+#chat > header h1, .chead h1 { order: 0; }
+#chat .chatwho { order: 1; max-width: 12em; font-size: var(--fs-ui); color: var(--ink-2); }
+#chat > header .agentstatus { order: 2; }
+#chat > header .spacer, .chead .spacer { order: 3; flex: 1; }
+#chat > header .conn { order: 4; padding: 0 4px; font-size: var(--fs-small); }
+#chat > header::after, .chead::after { content: ""; order: 7; flex-basis: 100%; height: 0; }
+#chat > header .working, .chead .working { order: 8; }
+/* Usage is a row of readouts, context and cost, each a .readout (a .val and a
+   .lg) that chat.js hides while its figure is unknown:
+   <span class="chatusage"><span class="readout" data-usage="context">…</span><span class="readout" data-usage="cost">…</span></span>
+   The wrapper takes no space when every readout is hidden. An older one-string
+   .chatusage (text, no readouts) is drawn as one boxed readout. */
+#chat .chatusage { order: 9; margin-left: auto; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+#chat .chatusage:has(> .readout):not(:has(> .readout:not([hidden]))) { display: none; }
+#chat .chatusage:not(:has(> .readout)) {
+  height: 20px; padding: 0 6px; border-radius: var(--r-xs);
+  background: var(--well); box-shadow: inset 0 0 0 1px var(--rule);
+  font: 400 var(--fs-small)/20px var(--sans); font-variant-numeric: tabular-nums; color: var(--ink);
+}
+/* Pane layout the chat page (embed.render_agent_page) relies on, scoped to #chat:
+   a log that keeps some height, a pending area and tool inputs that cap, a
+   composer that wraps on a very narrow pane, and More showing a paused agent
+   by the held state of its summary rather than by injected text. */
+#chat #chatLog { min-height: 20vh; }
+#chat #chatPending { max-height: 50vh; }
+#chat #chatPending .permcard pre.toolinput { max-height: 16vh; overflow: auto; }
+#chat .more > summary { list-style: none; }
+#chat .more[open] > summary, #chat .more:has(#pauseBtn[aria-pressed=true]) > summary { background: var(--press); color: var(--ink); }
+#chat #chatComposerRow textarea { min-width: 0; }
+@media (max-width: 420px) { #chat > header .conn { font-size: 0; } }
+@media (max-width: 520px) { #chat > header .chatusage { order: 10; flex: 1 1 100%; justify-content: flex-start; margin-left: 0; padding-left: 0; } }
+/* The agent's state: a lamp and a word. .agentstatus[data-state=ready|idle|connecting|unavailable]
+   (the class is doubled so these outrank agent.css's pill wherever the element sits). */
+.agentstatus.agentstatus {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0; border: 0; border-radius: 0; background: none;
+  font-size: var(--fs-small); font-weight: 400; color: var(--ink-2); white-space: nowrap;
+}
+.agentstatus.agentstatus::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--ink-3); }
+.agentstatus.agentstatus[data-state=ready]::before { background: var(--quench); }
+.agentstatus.agentstatus[data-state=connecting]::before { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.agentstatus.agentstatus[data-state=unavailable] { color: var(--danger); }
+.agentstatus.agentstatus[data-state=unavailable]::before { background: var(--danger); }
+/* Working: a 2px temper line along the header's bottom edge, and the time. */
+.working { display: none; align-items: center; gap: 6px; height: 28px; margin-top: -4px; color: var(--ink-2); }
+#chat[data-working] .working, .console[data-working] .working { display: inline-flex; }
+.working b { font: 400 var(--fs-small)/1 var(--mono); color: var(--ink); }
+.working .bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--temper-text); animation: pline-breathe 1.6s ease-in-out infinite alternate; }
+/* A small text button in a pane header: <button class="hdrbtn">Export</button>, .primary for Start session. */
+.hdrbtn, #chat .hdrbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: var(--ctl-sm); min-height: 0; padding: 0 8px;
+  border: 0; border-radius: var(--r); background: none;
+  font: 500 var(--fs-small)/1 var(--sans); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+}
+.hdrbtn:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.hdrbtn:disabled { opacity: 0.45; cursor: default; }
+.hdrbtn[aria-pressed=true] { background: var(--press); color: var(--ink); }
+.hdrbtn.primary, #chat .hdrbtn.primary { background: var(--ink); color: var(--ground); font-weight: 600; }
+.hdrbtn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 86%, var(--ground)); color: var(--ground); }
+#chat .menu .hdrbtn { width: 100%; height: var(--ctl); border-radius: var(--r-sm); font: 400 var(--fs-ui)/1 var(--sans); color: var(--ink); }
+
+/* Agent errors and resets: a message row with a lamp, under the header.
+   #chatBanner.chatbanner[data-kind=error|reset|info|attention] > span, button (dismiss), details.chatbannerdetail */
+#chat .chatbanner {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; gap: 2px 8px; align-items: baseline; flex: none;
+  margin: 0; padding: 8px 8px 8px 16px;
+  border: 0; border-bottom: 1px solid var(--rule); border-radius: 0;
+  background: none; color: var(--ink); font-size: var(--fs-ui);
+}
+#chat .chatbanner::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--quench); transform: translateY(-1px); }
+#chat .chatbanner[data-kind=error]::before { background: var(--danger); }
+#chat .chatbanner[data-kind=reset]::before { background: var(--warn); }
+#chat .chatbanner > span { white-space: pre-wrap; }
+#chat .chatbanner > button { width: var(--ctl-sm); height: var(--ctl-sm); padding: 0; border: 0; border-radius: var(--r); background: none; color: var(--ink-2); font-size: 16px; line-height: 1; }
+#chat .chatbanner > button:hover { background: var(--hover); color: var(--ink); }
+#chat .chatbannerdetail { grid-column: 2 / -1; min-width: 0; }
+#chat .chatbannerdetail summary { display: flex; align-items: center; height: 24px; list-style: none; font-size: var(--fs-small); color: var(--ink-2); opacity: 1; }
+#chat .chatbannerdetail summary::-webkit-details-marker { display: none; }
+#chat .chatbannerdetail pre { margin: 2px 0 0; max-height: 12em; overflow: auto; padding: 6px 8px; border-radius: var(--r-xs); background: var(--field); color: var(--ink); font: 400 11.5px/18px var(--mono); white-space: pre-wrap; word-break: break-word; }
+
+/* The log. Your messages sit on a faint row under your name (a page with a
+   signed-in name sets --chat-you: "andrew"); the agent's text is plain; a
+   tool call is one mono line that opens to its input and result.
+   .turn > .msg.user (.author, .text, .attachthumbs, .contextchips)
+         + .msg.assistant > .segments (.text | details.thinking | details.toolgroup > .tools > details.toolcard) + .turnerrors
+   .msg.action[data-outcome] is an upload action's outcome. */
+#chatLog {
+  display: block; flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; scrollbar-width: thin;
+  padding: 0 0 8px; gap: 0; background: none;
+}
+#chatLog .turn { display: block; }
+#chatLog .msg {
+  display: block; margin: 0; padding: 0; max-width: none;
+  border: 0; border-radius: 0; background: none;
+  color: var(--ink); font-size: var(--fs-read); line-height: var(--lh-read);
+}
+#chatLog .msg.user { align-self: auto; padding: 8px 16px 10px; background: var(--hover); white-space: pre-wrap; word-break: break-word; }
+#chatLog .msg.user::before { content: var(--chat-you, "You"); display: block; margin-bottom: 2px; font: 500 var(--fs-small)/16px var(--sans); color: var(--ink-2); }
+#chatLog .msg.user .author { margin-bottom: 2px; font-size: var(--fs-small); font-weight: 400; color: var(--ink-2); opacity: 1; }
+#chatLog .msg.assistant { padding: 10px 16px 6px; }
+#chatLog .segments > * + * { margin-top: 6px; }
+#chatLog .msg .text { word-break: break-word; }
+#chatLog .msg .text p + p, #chatLog .msg .text ul, #chatLog .msg .text ol { margin-top: 6px; }
+#chatLog .msg .text ul, #chatLog .msg .text ol { padding-left: 18px; list-style: revert; }
+#chatLog .msg .text code { padding: 0 3px; border-radius: var(--r-xs); background: var(--hover); font-size: var(--fs-small); }
+#chatLog .msg .text pre.code {
+  margin: 6px -16px; padding: 6px 16px; overflow-x: auto;
+  border: 0; border-block: 1px solid var(--rule); border-radius: 0; background: var(--field);
+  font-size: var(--fs-small); line-height: var(--lh-ui);
+}
+#chatLog .msg .text pre.code code { padding: 0; background: none; }
+#chatLog .msg.user .attachthumbs, #chatLog .msg.user .contextchips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+#chatLog .msg.user .attachthumbs:empty, #chatLog .msg.user .contextchips:empty { display: none; }
+#chatLog .msg.user .attachthumbs img { width: 72px; height: 72px; object-fit: cover; border: 1px solid var(--rule-strong); border-radius: var(--r-sm); }
+#chatLog .msg.user.flash { animation: chat-flash 1.4s ease-out; outline-offset: -2px; }
+@keyframes chat-flash { from { outline: 2px solid var(--temper-text); } to { outline: 2px solid transparent; } }
+/* Context a page attached: a small named button, in the strip and in the sent message. */
+#chat .contextchip {
+  display: inline-flex; align-items: center; max-width: 100%; height: 22px; padding: 0 7px;
+  border: 0; border-radius: var(--r-sm); background: var(--press); color: var(--ink);
+  font: 500 var(--fs-small)/1 var(--sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+}
+#chat .contextchip:hover { background: var(--press); text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+/* Earlier history: a quiet button at the top of the log. */
+#chat .chathistory {
+  display: block; align-self: auto; margin: 8px auto; min-height: 0; height: var(--ctl-sm); padding: 0 8px; max-width: calc(100% - 32px);
+  border: 0; border-radius: var(--r); background: none; color: var(--ink-2); font-size: var(--fs-small);
+}
+#chat .chathistory:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+
+/* Thinking, tool runs and tool calls: single quiet lines with a chevron. */
+#chat .thinking, #chat .toolgroup, :is(#chat, .modal) .toolcard { border: 0; border-radius: 0; background: none; }
+#chat .thinking > summary, #chat .toolgroup > summary, :is(#chat, .modal) .toolcard > summary, #chat .turnerror > summary {
+  display: flex; align-items: center; gap: 5px; height: 24px; padding: 0; list-style: none; cursor: pointer;
+  font: 400 var(--fs-small)/1 var(--sans); font-style: normal; color: var(--ink-2); white-space: nowrap;
+}
+#chat .thinking > summary::-webkit-details-marker, #chat .toolgroup > summary::-webkit-details-marker, :is(#chat, .modal) .toolcard > summary::-webkit-details-marker, #chat .turnerror > summary::-webkit-details-marker { display: none; }
+#chat .thinking > summary:hover, #chat .toolgroup > summary:hover, :is(#chat, .modal) .toolcard > summary:hover, :is(#chat, .modal) .toolcard[open] > summary { color: var(--ink); }
+#chat .thinking > summary { color: var(--ink-3); }
+#chat .thinkingtext { max-height: min(24rem, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: 0 0 4px 17px; font-size: var(--fs-small); line-height: var(--lh-ui); color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+#chat .thinkingnote { padding: 0 0 4px 17px; font-size: var(--fs-small); color: var(--ink-3); }
+#chat .toolgroup { margin-inline: -16px; }
+#chat .toolgroup > summary { padding: 0 16px; }
+#chat .tools { display: block; max-height: min(24rem, 45vh); overflow-y: auto; overscroll-behavior: contain; padding: 0; gap: 0; }
+:is(#chat, .modal) .toolcard > summary { padding: 0 16px 0 33px; font-family: var(--mono); font-weight: 400; }
+:is(#chat, .modal) .toolcard > summary::before, #chat .toolgroup > summary::before, #chat .thinking > summary::before, #chat .turnerror > summary::before { content: ""; color: inherit; }
+/* A call's input and result: a field-tone block between two hairlines. */
+:is(#chat, .modal) pre.toolinput, :is(#chat, .modal) pre.toolresult {
+  display: grid; grid-template-columns: 48px minmax(0, 1fr);
+  margin: 0; padding: 2px 16px 2px 49px; border: 0; overflow-x: visible;
+  background: var(--field); color: var(--ink);
+  font: 400 var(--fs-small)/var(--lh-ui) var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal;
+}
+:is(#chat, .modal) pre.toolinput::before, :is(#chat, .modal) pre.toolresult::before, #chat .permcard .ptool::before { color: var(--ink-3); font: 400 var(--fs-small)/var(--lh-ui) var(--sans); }
+:is(#chat, .modal) pre.toolinput::before { content: "Input"; }
+:is(#chat, .modal) pre.toolresult::before { content: "Result"; }
+:is(#chat, .modal) .toolcard > pre.toolinput { margin-top: 2px; padding-top: 6px; border-top: 1px solid var(--rule); }
+:is(#chat, .modal) .toolcard > pre.toolresult, :is(#chat, .modal) .toolcard > pre.toolinput:has(+ pre.toolresult[hidden]), :is(#chat, .modal) .toolcard > pre.toolinput:last-child { margin-bottom: 4px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+#chat pre.toolresult.error { color: var(--danger); }
+/* What went wrong in a turn, with the backend's own text behind a disclosure. */
+#chat .turnerror { margin: 6px 0 0; padding: 0; border: 0; color: var(--ink); font-size: var(--fs-ui); }
+#chat .turnerror > summary { height: auto; min-height: 24px; color: var(--danger); font-size: var(--fs-ui); white-space: pre-wrap; word-break: break-word; }
+#chat .turnerror pre { margin: 2px -16px 0; max-height: 12em; overflow: auto; padding: 6px 16px; border-block: 1px solid var(--rule); background: var(--field); font: 400 11.5px/18px var(--mono); white-space: pre-wrap; word-break: break-word; }
+#chatLog .turnmeta { min-height: 0; margin-top: 4px; font-size: var(--fs-small); line-height: var(--lh-ui); color: var(--ink-3); }
+#chatLog .turnmeta:empty { display: none; }
+/* An upload action's outcome: a lamp and a line. */
+#chatLog .msg.action { padding: 6px 16px; border: 0; font-size: var(--fs-ui); line-height: var(--lh-ui); color: var(--ink-2); }
+#chatLog .msg.action .actionhead { display: flex; align-items: baseline; gap: 8px; font-weight: 500; color: var(--ink); }
+#chatLog .msg.action .actionhead::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--quench); }
+#chatLog .msg.action[data-outcome=failed] .actionhead::before { background: var(--danger); }
+#chatLog .msg.action[data-outcome=denied] .actionhead { color: var(--ink-2); }
+#chatLog .msg.action[data-outcome=denied] .actionhead::before { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+#chatLog .msg.action pre.toolresult { margin: 4px -16px 0; padding: 6px 16px; border-block: 1px solid var(--rule); }
+
+/* Under the log: the hint, the pending approval, the composer. */
+.side { display: flex; flex-direction: column; flex: none; min-width: 0; min-height: 0; max-height: 70%; }
+#chat .chathint { flex: none; padding: 6px 16px 2px; font-size: var(--fs-small); line-height: 17px; color: var(--ink-3); }
+#chatPending { flex: 0 1 auto; min-height: 0; max-height: none; overflow-y: auto; padding: 6px 12px 4px; }
+#chatPending:empty { display: none; padding: 0; }
+/* The approval: the one thing waiting on the human, so the one bordered box.
+   .permcard > [.porigin] .ptool pre.toolinput .pactions (button.allow, [button], textarea.preason, button.danger) .pstatus
+   Its heading and the Tool / Input labels are drawn here, not in the markup. */
+#chat .permcard, .confirm {
+  padding: 10px 12px 12px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); color: var(--ink);
+}
+#chat .permcard { margin: 0 0 8px; }
+#chat .permcard::before { content: "Approval needed"; display: block; margin-bottom: 6px; font: 600 var(--fs-ui)/var(--lh-ui) var(--sans); }
+#chat .permcard .porigin { margin: 0 0 4px; font-size: var(--fs-small); color: var(--ink-2); }
+#chat .permcard .ptool { display: grid; grid-template-columns: 48px minmax(0, 1fr); margin: 0; font: 500 var(--fs-small)/var(--lh-ui) var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+#chat .permcard .ptool::before { content: "Tool"; }
+#chat .permcard pre.toolinput { margin: 0; padding: 0; border: 0; background: none; color: var(--ink); }
+#chat .pactions { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 4px; align-items: center; margin-top: 10px; }
+#chat .pactions button {
+  height: var(--ctl); min-height: 0; padding: 0 10px; justify-self: start;
+  border: 0; border-radius: var(--r); background: none; color: var(--ink);
+  font: 500 var(--fs-ui)/1 var(--sans); white-space: nowrap;
+}
+#chat .pactions button:hover:not(:disabled) { background: var(--hover); }
+#chat .pactions button.danger { grid-column: 3; grid-row: 2; background: none; border: 0; color: var(--danger); }
+#chat .pactions button:disabled { opacity: 0.45; cursor: default; }
+#chat .pactions textarea.preason {
+  grid-column: 1 / 3; grid-row: 2;
+  flex: none; height: var(--ctl); min-height: var(--ctl); min-width: 0; resize: none; overflow: hidden;
+  padding: 4px 8px; font-size: var(--fs-ui); line-height: var(--lh-ui);
+  border: 1px solid var(--rule-strong); border-radius: var(--r); background: var(--ground); color: var(--ink);
+}
+#chat .permcard.submitted { border-color: var(--rule); }
+#chat .permcard.submitted .pactions { opacity: 0.6; }
+#chat .permcard .pstatus { margin-top: 6px; font-size: var(--fs-small); color: var(--ink-2); }
+#chat .permcard .pstatus:empty { display: none; }
+
+/* The page's own confirmation, which replaces the browser's confirm(): the
+   approval's box (it shares its declarations above) for an action the human
+   started and is about to make final. Opened in place by confirm.js, never a
+   modal and never dimming the page. No ember and no plate cut: a spend
+   confirms with the solid ink button, a destructive action with danger text,
+   so the view's one ember (an agent approval) stays the only one.
+   <div class="confirm" data-kind="danger|spend" role="group" aria-labelledby aria-live="polite">
+     <p class="ch">Title</p> [<p class="cd">one line of consequence</p> | <details class="disc">…</details>]
+     [<dl class="fl"><dt>Model</dt><dd>…</dd></dl>]
+     <div class="cacts"><button class="btn quiet">Cancel</button><button class="btn danger|primary">Verb</button></div></div>
+   Inside a table it sits in a .dt-detail under its row. */
+.confirm { margin: 8px 0 0; min-width: 0; }
+.confirm .ch { margin: 0; font: 600 var(--fs-ui)/var(--lh-ui) var(--sans); overflow-wrap: anywhere; }
+.confirm .cd { margin: 2px 0 0; color: var(--ink-2); font-size: var(--fs-small); line-height: 17px; overflow-wrap: anywhere; }
+.confirm .disc { margin-top: 2px; }
+.confirm .disc > summary { height: 24px; color: var(--ink-2); font-size: var(--fs-small); }
+.confirm .disc-body { padding-bottom: 4px; font-size: var(--fs-small); overflow-wrap: anywhere; }
+.confirm .cx { margin: 8px 0 0; min-width: 0; font-size: var(--fs-small); overflow-wrap: anywhere; }
+.confirm .cx > :first-child { margin-top: 0; }
+.confirm dl.fl { --fl-label: 72px; margin: 8px 0 0; font-size: var(--fs-small); }
+.confirm .cacts { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 0 -10px; }
+.confirm .cacts .btn.quiet:last-child { margin-right: -10px; }
+.dt-detail > .confirm { margin: 4px 0 0; }
+.row > .confirm { grid-column: 2 / -1; margin: 6px 0 0; }
+
+/* The composer: one field holding the message, with attach at its bottom left
+   and Interrupt and Send (which reads Queue or Steer mid-turn) at its bottom right.
+   #chatComposer > [.chatmodelrow] #chatAttachStrip.attachstrip #chatComposerRow > #chatAttachBtn.attachbtn #chatInput .chatbtns */
+#chatComposer { display: grid; gap: 8px; flex: none; padding: 8px 12px 12px; border: 0; border-top: 1px solid var(--rule); }
+#chat .chatmodelrow { display: flex; align-items: center; gap: 8px; font-size: var(--fs-small); color: var(--ink-2); }
+#chat .chatmodelrow label { text-transform: none; letter-spacing: normal; }
+#chatModelInput {
+  flex: 1; min-width: 0; height: var(--ctl-sm); min-height: 0; padding: 0 7px;
+  font: 400 var(--fs-small)/1 var(--mono); color: var(--ink);
+  background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r);
+}
+#chatModelInput:focus { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--rule-strong); }
+#chatModelInput::placeholder, #chatInput::placeholder { color: var(--ink-3); opacity: 1; }
+#chatComposerRow {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "in in in" "at . bt";
+  gap: 0; align-items: center; padding: 4px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r); background: var(--field);
+}
+#chatComposerRow:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+#chatInput {
+  grid-area: in; min-width: 0; min-height: 48px; max-height: 160px; resize: vertical;
+  padding: 6px 8px 4px; border: 0; border-radius: 0; background: none; color: var(--ink);
+  font-size: var(--fs-read); line-height: 20px; outline: none;
+}
+#chatInput:focus { outline: none; border: 0; }
+#chat .attachbtn {
+  grid-area: at; display: grid; place-items: center; flex: none;
+  width: var(--ctl); height: var(--ctl); min-height: 0; padding: 0;
+  border: 0; border-radius: var(--r); background: none; color: var(--ink-2); font-size: 16px;
+}
+#chat .attachbtn:hover { background: var(--hover); color: var(--ink); }
+#chat .attachbtn.on { background: var(--press); color: var(--ink); }
+#chat .chatbtns { grid-area: bt; display: flex; flex-direction: row; gap: 4px; }
+#chat .chatbtns button {
+  height: var(--ctl); min-height: 0; padding: 0 10px;
+  border: 0; border-radius: var(--r); background: none; color: var(--ink-2);
+  font: 500 var(--fs-ui)/1 var(--sans);
+}
+#chat .chatbtns button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+#chat .chatbtns button#chatSend { padding: 0 12px; background: var(--ink); color: var(--ground); font-weight: 600; }
+#chat .chatbtns button#chatSend:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 86%, var(--ground)); color: var(--ground); }
+#chat .chatbtns button:disabled { opacity: 0.45; cursor: default; }
+/* Attachments waiting to send: 46px thumbnails, each uploading (.attachspinner),
+   done (img.attachthumb) or failed (.error, .attacherr), with a remove button.
+   A document is a wider .docchip with its name, state and actions; context a
+   page attached is a .contextattach holding a .contextchip. */
+#chat .attachstrip { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 6px; }
+#chat .attachchip {
+  position: relative; display: flex; align-items: center; justify-content: center; overflow: visible;
+  width: 46px; height: 46px; border: 1px solid var(--rule-strong); border-radius: var(--r); background: var(--field);
+}
+#chat .attachchip .attachthumb { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 5px; }
+#chat .attachchip .attachspinner { width: 16px; height: 16px; border: 2px solid var(--rule-strong); border-top-color: var(--ink); border-radius: 50%; animation: chat-spin 0.7s linear infinite; }
+@keyframes chat-spin { to { transform: rotate(360deg); } }
+#chat .attachchip .attacherr { padding: 2px; font-size: 9.5px; line-height: 1.2; color: var(--danger); text-align: center; word-break: break-word; }
+#chat .attachchip.error { border-color: var(--danger); background: var(--field); }
+#chat .attachchip .attachremove {
+  position: absolute; top: -7px; right: -7px; display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0;
+  border: 1px solid var(--rule-strong); border-radius: var(--r-sm); background: var(--field); color: var(--ink);
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+#chat .attachchip .attachremove:hover { background: var(--ground); }
+#chat .attachchip.docchip { flex-wrap: wrap; justify-content: flex-start; gap: 4px 8px; width: auto; height: auto; min-height: 36px; padding: 4px 16px 4px 8px; color: var(--ink); font-size: var(--fs-small); }
+#chat .docchip .docname { font-family: var(--mono); font-weight: 500; }
+#chat .docchip .docstatus { color: var(--ink-2); }
+#chat .docchip .docactions { display: inline-flex; gap: 4px; }
+#chat .docchip .docactions button { height: 22px; padding: 0 8px; border: 0; border-radius: var(--r-sm); background: var(--hover); color: var(--ink); font-size: var(--fs-small); }
+#chat .attachchip.contextattach { width: auto; height: auto; min-height: 22px; padding: 0 12px 0 0; border: 0; background: none; }
+#chat.dragover { outline: 2px dashed var(--temper-text); outline-offset: -2px; background: var(--temper-wash); }
+
+/* ------------------------------------------------------ review components */
+/* For a product that runs a review rather than a chat (Trace), and anything
+   else that needs them: a run console in the agent pane's place, findings
+   and coverage. */
+
+/* The run console:
+   <section class="console"><header class="chead"><h1>Run</h1><span>…</span>.working .spacer .hdrbtn</header>
+   <div class="cbody"><ol class="steps">…</ol><pre class="log">…</pre></div></section>
+   data-working on .console shows the working line. */
+.console { grid-area: chat; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chead > span { font-size: var(--fs-small); color: var(--ink-2); }
+.chead h1 + span { order: 1; }
+.cbody { display: grid; grid-template-rows: auto minmax(0, 1fr); flex: 1; min-height: 0; }
+.cbody > * { min-width: 0; min-height: 0; overflow: auto; scrollbar-width: thin; }
+.cbody > * + * { border-top: 1px solid var(--rule); }
+/* Run steps: li.step[data-state=done|running|waiting|queued|failed|skipped|cancelled]
+   holding a .name and a .meta; a nested ol for a stage's parts. */
+.steps { margin: 0; padding: 6px 0; }
+.steps ol { padding: 0 0 0 18px; }
+.step { display: flex; align-items: center; gap: 8px; min-height: 24px; padding: 0 16px; }
+.step::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 1px; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.step[data-state=done]::before { background: var(--quench); box-shadow: none; }
+.step[data-state=running]::before { background: var(--temper-text); box-shadow: none; }
+.step[data-state=waiting]::before { box-shadow: inset 0 0 0 1.5px var(--warn); }
+.step[data-state=failed]::before { background: var(--danger); box-shadow: none; }
+.step[data-state=skipped] { color: var(--ink-3); }
+.step[data-state=cancelled] { color: var(--ink-2); }
+.step[data-state=cancelled]::before { background: var(--ink-3); box-shadow: none; }
+.step[data-state=queued] .name { color: var(--ink-2); }
+.step[data-state=running] .name { font-weight: 600; }
+.step .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step .meta { margin-left: auto; flex: none; font: 400 11.5px/1 var(--mono); color: var(--ink-2); }
+.log { margin: 0; padding: 8px 16px; font: 400 11.5px/18px var(--mono); color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.log b { font-weight: 500; color: var(--ink); }
+.log .err { color: var(--danger); }
+.log .warn { color: var(--warn); }
+
+/* Filters: .filters holding .frow rows, each a label and .chips. */
+.filters { padding: 6px 0 2px; border-bottom: 1px solid var(--rule); }
+.frow { display: flex; align-items: baseline; gap: 4px; padding: 0 12px 2px; }
+.frow > span { flex: none; width: 64px; font-size: var(--fs-small); color: var(--ink-2); }
+.frow .chips { padding: 0; }
+
+/* Severity as a lamp and a word: <span class="sev" data-sev="critical">Critical</span>
+   data-sev=critical|major|minor|info. Critical is danger, major is warn. Never ember. */
+.sev { display: inline-flex; align-items: center; gap: 6px; flex: none; font-size: var(--fs-small); font-weight: 500; line-height: 1; color: var(--ink-2); }
+.sev::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--ink-3); }
+.sev[data-sev=critical] { color: var(--danger); font-weight: 600; }
+.sev[data-sev=critical]::before { background: var(--danger); }
+.sev[data-sev=major] { color: var(--warn); }
+.sev[data-sev=major]::before { background: var(--warn); }
+.sev[data-sev=info]::before { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+/* Status in words: .fstat[data-status=unverified|confirmed|confirmed-interpretive|refuted|needs-evidence]. */
+.fstat { font-size: var(--fs-small); color: var(--ink-2); }
+.fstat[data-status^=confirmed] { color: var(--quench); }
+.fstat[data-status=needs-evidence] { color: var(--warn); }
+.fstat[data-status=refuted] { color: var(--ink-3); }
+
+/* A finding: <details class="finding"><summary> .fhead (.sev, .fid, .fstat, [.ftri] [.fver] [.fstale]), .claim, .subj </summary> .fbody </details>
+   An open or current one takes the temper wash. Refuted findings stay
+   listed, dimmed with the claim struck through. The tags beside the status
+   are words, not boxes: .ftri[data-triage=accepted|dismissed] is the owner's
+   triage, .fver names a non-skeptic verifier, .fstale says a fact changed since. */
+.finding { border-bottom: 1px solid var(--rule); }
+.finding > summary { display: grid; gap: 3px; padding: 8px 12px; list-style: none; cursor: pointer; }
+.finding > summary::-webkit-details-marker { display: none; }
+.finding > summary:hover { background: var(--hover); }
+.finding[open], .finding[aria-current] { --ink-3: var(--ink-2); }
+.finding[open] > summary, .finding[aria-current] > summary { background: var(--temper-wash); }
+.fhead { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 18px; }
+.fid { margin-right: auto; font: 400 11.5px/1 var(--mono); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.fhead > :not(.fid) { flex: none; }
+.ftri, .fver, .fstale { font-size: var(--fs-small); color: var(--ink-2); }
+.ftri[data-triage=accepted] { color: var(--temper-text); font-weight: 500; }
+.fver { font-family: var(--mono); font-size: 11.5px; }
+.fstale { display: inline-flex; align-items: center; gap: 5px; color: var(--warn); }
+.fstale::before { content: ""; width: 8px; height: 8px; border-radius: 1px; box-shadow: inset 0 0 0 1.5px var(--warn); }
+.finding[data-triage=dismissed] .claim { color: var(--ink-2); }
+.claim { line-height: var(--lh-ui); }
+.finding[data-status=refuted] .claim { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--rule-strong); }
+.subj { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.subj code { font-size: 11.5px; color: var(--ink-2); }
+.fbody { display: grid; gap: 8px; padding: 6px 12px 12px; }
+.fbody h3 { margin: 4px 0 0; font: 600 var(--fs-small)/1 var(--sans); color: var(--ink-2); }
+.fbody .acts { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -10px; }
+/* Dismissing needs a note: form.triageform with a required textarea. */
+.triageform { display: grid; gap: 6px; }
+.triageform label { font-size: var(--fs-small); color: var(--ink-2); }
+/* Evidence: ul.evidence of li each with a .etype and its text; a datasheet cite as a .linkish. */
+.evidence { display: grid; gap: 4px; }
+.evidence li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; font: 400 11.5px/18px var(--mono); overflow-wrap: anywhere; }
+.evidence .etype { font-family: var(--sans); font-size: var(--fs-small); color: var(--ink-3); }
+/* Coverage per dimension: <details class="sec cov"> with .covcounts in the summary and .covlist groups. */
+.covcounts { margin-left: auto; flex: none; display: flex; gap: 8px; white-space: nowrap; font: 400 var(--fs-micro)/1 var(--mono); color: var(--ink-2); }
+.covcounts .ne { color: var(--warn); }
+.covlist { display: grid; gap: 4px; padding: 0 12px 6px; }
+.covlist li { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 8px; align-items: baseline; }
+.covlist li::before { content: ""; width: 8px; height: 8px; border-radius: 1px; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.covlist .ck::before { background: var(--quench); box-shadow: none; }
+.covlist .ne::before { background: var(--warn); box-shadow: none; }
+.covlist .nc { color: var(--ink-2); }
+.covhead { padding: 4px 12px 2px; font-size: var(--fs-small); color: var(--ink-2); }
+
+/* ------------------------------------------------ settings (settings.js) */
+/* The overlay is a div.modal or a <dialog class="modal"> (open it with showModal() or show(); the dialog's own backdrop is not drawn, .modal paints the scrim). Single-line .toolcard rows read the same inside it as in #chat.
+   settings.js builds this inside the page's #settingsModal.modal:
+   .setpanel > header (h2, button.setclose) [.setwarn] .setbody > section (h3, [h4], .setrow > label.setlabel + .setinput + .setnote + .sethelp)
+   Diagnostics: .diagblock > .diagrow > .diagkey + .diagval.  Agent log: .loglist > .logrow > .loghead (.logname .logpath button.logbtn) [.logopts pre.logtail]
+   footer > .setstatus + button.primary.  A dialog, so it has an edge and the menu shadow. */
+dialog.modal:not([open]) { display: none; }
+dialog.modal { width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; color: inherit; overflow: visible; }
+dialog.modal::backdrop { background: none; }
+.modal { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; background: light-dark(rgba(20, 23, 26, 0.35), rgba(0, 0, 0, 0.55)); }
+.setpanel {
+  display: flex; flex-direction: column; width: min(600px, 100%); max-height: min(86vh, 100%);
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  box-shadow: var(--shadow-menu);
+}
+.setpanel > header { display: flex; align-items: center; gap: 8px; flex: none; height: var(--h-bar); padding: 0 6px 0 16px; border-bottom: 1px solid var(--rule); }
+.setpanel > header h2 { margin: 0 auto 0 0; font: 600 var(--fs-ui)/1 var(--sans); color: var(--ink); text-transform: none; letter-spacing: normal; }
+.setclose { width: var(--ctl); height: var(--ctl); padding: 0; border: 0; border-radius: var(--r); background: none; color: var(--ink-2); font-size: 18px; line-height: 1; }
+.setclose:hover { background: var(--hover); color: var(--ink); }
+.setwarn { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 8px; align-items: baseline; margin: 0; padding: 8px 16px; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; background: none; color: var(--ink); font-size: var(--fs-ui); }
+.setwarn::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--danger); transform: translateY(-1px); }
+.setbody { overflow-y: auto; padding: 0 16px 8px; scrollbar-width: thin; }
+.setbody section { padding: 4px 0 10px; border-bottom: 1px solid var(--rule); }
+.setbody section:last-child { border-bottom: 0; }
+.setbody h3 { display: flex; align-items: center; height: 32px; margin: 0; font: 600 var(--fs-small)/1 var(--sans); color: var(--ink); text-transform: none; letter-spacing: normal; }
+.setbody h4, .setmodels h4 { margin: 12px 0 2px; font: 500 var(--fs-small)/1 var(--sans); color: var(--ink-2); }
+.setrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 12px; padding: 6px 0; }
+.setlabel { font: 400 var(--fs-small)/var(--lh-ui) var(--sans); color: var(--ink); }
+.setinput, .setinput-model-choice {
+  min-height: 0; height: var(--ctl); min-width: 150px; padding: 0 8px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); color: var(--ink); font: 400 var(--fs-ui)/1 var(--sans);
+}
+.setinput[type=checkbox] { min-width: 0; width: 14px; height: 14px; padding: 0; border: 1.5px solid var(--ink-3); border-radius: 3px; }
+.setinput:disabled, .setinput-model-choice:disabled { opacity: 0.5; }
+.setnote, .sethelp { grid-column: 1 / -1; font-size: var(--fs-small); line-height: 17px; }
+.setnote { color: var(--ink-2); }
+.sethelp { color: var(--ink-3); }
+.setmodels .setrow { grid-template-columns: minmax(0, 1fr); }
+.setmodels .setinput, .setmodels .setinput-model-choice, .loginsection .setinput { width: 100%; min-width: 0; max-width: 100%; }
+.diagblock { font-size: var(--fs-small); }
+.diagrow { display: flex; gap: 12px; padding: 3px 0; align-items: baseline; }
+.diagkey { flex: none; width: 112px; color: var(--ink-2); }
+.diagval { flex: 1; min-width: 0; font-family: var(--mono); color: var(--ink); word-break: break-all; }
+.logrow { padding: 4px 0; }
+.loghead { display: flex; align-items: baseline; gap: 10px; }
+.logname { flex: none; font-size: var(--fs-ui); color: var(--ink); }
+.logpath { flex: 1; min-width: 0; font: 400 11.5px/18px var(--mono); color: var(--ink-2); word-break: break-all; }
+.logbtn { flex: none; min-height: 0; height: var(--ctl-sm); padding: 0 8px; border: 0; border-radius: var(--r); background: none; color: var(--ink); font: 500 var(--fs-small)/1 var(--sans); cursor: pointer; }
+.logbtn:hover:not(:disabled) { background: var(--hover); }
+.logbtn:disabled { opacity: 0.5; cursor: default; }
+.lognote, .logopts, .setstatus { font-size: var(--fs-small); color: var(--ink-2); }
+.logopts { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; margin-top: 6px; }
+.logtail { margin: 4px 0 0; max-height: 18em; overflow: auto; padding: 6px 8px; border: 1px solid var(--rule); border-radius: var(--r-xs); background: var(--well); color: var(--ink); font: 400 11.5px/18px var(--mono); white-space: pre-wrap; word-break: break-word; }
+.loginflow { display: grid; gap: 6px; margin: 8px 0; padding: 10px 12px; border: 1px solid var(--rule-strong); border-radius: var(--r); background: var(--field); }
+.loginlink { color: var(--ink); font-size: var(--fs-ui); font-weight: 500; text-decoration: underline; text-decoration-color: var(--rule-strong); text-underline-offset: 3px; }
+.setpanel > footer { display: flex; align-items: center; gap: 10px; flex: none; padding: 10px 16px; border-top: 1px solid var(--rule); }
+.setstatus { flex: 1; }
+.setpanel > footer button { min-height: 0; height: var(--ctl); padding: 0 10px; border: 0; border-radius: var(--r); background: none; color: var(--ink); font: 500 var(--fs-ui)/1 var(--sans); cursor: pointer; }
+.setpanel > footer button:hover:not(:disabled) { background: var(--hover); }
+.setpanel > footer button.primary { padding: 0 12px; background: var(--ink); border: 0; color: var(--ground); font-weight: 600; }
+.setpanel > footer button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 86%, var(--ground)); }
+.setpanel > footer button:disabled { opacity: 0.5; cursor: default; }
+
+/* ------------------------------------------------------------ source code */
+/* A block of source: <pre class="src"><code>…</code></pre>, or one numbered
+   line per item: <ol class="src"><li><code>…</code></li>…</ol>. Colour comes
+   from the --syn-* tokens through the classes Loom's pyhl.js writes
+   (.tok-keyword .tok-builtin .tok-decorator .tok-number .tok-string
+   .tok-comment .tok-defname), so a product needs no CSS of its own. It reads
+   in any product because it is ink level and weight first and only strings
+   and numbers carry a hue. Red Hat Mono has no weight above 500, so the 600
+   of a definition name renders as 500 (no synthesised bold). A comment is
+   --ink-3, not slanted: no italic is shipped, and a synthesised one looks
+   worse than a level change. A search match in an editor is
+   <mark>, the current one mark[aria-current]; a selection is the temper wash. */
+pre.src, ol.src {
+  margin: 0; padding: 6px 0; overflow: auto; tab-size: 4;
+  border-block: 1px solid var(--rule); background: var(--field); color: var(--ink);
+  font: 400 var(--fs-small)/var(--lh-ui) var(--mono); font-synthesis-weight: none; font-variant-numeric: tabular-nums;
+}
+pre.src { padding: 6px 12px; white-space: pre; }
+:is(pre, ol).src code { padding: 0; background: none; font: inherit; white-space: pre; }
+ol.src { counter-reset: line; }
+ol.src > li { counter-increment: line; display: grid; grid-template-columns: 4ch minmax(0, 1fr); gap: 0 12px; padding: 0 12px; }
+ol.src > li::before { content: counter(line); text-align: right; color: var(--ink-3); user-select: none; }
+:is(pre, ol).src ::selection { background: var(--temper-wash); color: inherit; }
+:is(pre, ol).src mark { background: var(--temper-wash); color: inherit; }
+:is(pre, ol).src mark[aria-current] { outline: 1.5px solid var(--temper-text); outline-offset: 0; }
+.tok-keyword { color: var(--syn-keyword); font-weight: 500; }
+.tok-defname { color: var(--syn-def); font-weight: 600; font-synthesis-weight: none; }
+.tok-builtin, .tok-decorator { color: var(--syn-meta); }
+.tok-number { color: var(--syn-number); }
+.tok-string { color: var(--syn-string); }
+.tok-comment { color: var(--syn-comment); }
+.tok-invalid { color: var(--syn-invalid); }
+
+/* ------------------------------------------- project views (project.js) */
+/* annealage-ember's project.js builds the title bar's project name and Rename,
+   the History pane, the "Send to" lineage bar, the project list and the
+   confirming dialog out of pj-* classes. They are drawn here, from the page's
+   own tokens, with no --pj-* variable. Every rule sits under one of the five
+   roots (.pj-header, .pj-history, .pj-lineage, .pj-projects, .pj-modal) so it
+   outranks ember's single-class project.css whichever order the two load in.
+   .pj-btn is a text button (.btn), .pj-menu the menu, .pj-dialog the settings
+   window's dialog. Rows are hairlines; only the dialog, the menu and inputs
+   have an edge.
+   .pj-header > .pj-titlerow (strong.pj-title, .pj-btn Rename, .pj-btn Change id | input.pj-nameedit) .pj-banner .pj-error
+   .pj-history > .pj-bar (.pj-now, .pj-refresh) .pj-banner .pj-error .pj-notice .pj-list > section.pj-group (header .pj-grouplabel .pj-count .pj-btn)
+     > .pj-commit (.pj-commithead .pj-subject .pj-btn, .pj-meta .pj-author-agent|human code, pre.pj-diff > .pj-d-add .pj-d-del .pj-d-hunk .pj-d-file)
+   .pj-lineage > .pj-bar (h3.pj-lineage-title, .pj-menuwrap > .pj-btn + .pj-menu > .pj-menuitem, .pj-revnote, .pj-notice) .pj-result .pj-links > h4 + ul > li.pj-link
+   .pj-projects > form.pj-new, .pj-cards > article.pj-card (header .pj-name code .pj-state, .pj-meta), p.pj-empty
+   .pj-modal > .pj-dialog (header h2, .pj-modal-main > .pj-modal-body + .pj-error, footer) */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) { color: var(--ink); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-hint { color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-actions { display: flex; flex-wrap: wrap; gap: 2px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: var(--ctl); padding: 0 10px; flex: none;
+  border: 0; border-radius: var(--r); background: none; color: var(--ink);
+  font: 500 var(--fs-ui)/1 var(--sans); white-space: nowrap; cursor: pointer;
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn:hover:not(:disabled) { background: var(--hover); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn:active:not(:disabled) { background: var(--press); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn.pj-quiet { color: var(--ink-2); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn.pj-quiet:hover:not(:disabled) { color: var(--ink); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn.pj-sm { height: var(--ctl-sm); padding: 0 8px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn.pj-danger { color: var(--danger); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn[aria-expanded=true] { background: var(--press); color: var(--ink); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-btn:disabled { background: none; color: var(--ink-3); cursor: default; }
+
+/* Messages are rows with a square lamp, never boxes. */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-error, :is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr); column-gap: 8px; align-items: baseline;
+  margin: 0; padding: 4px 0; color: var(--ink); font-size: var(--fs-ui); overflow-wrap: anywhere;
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-error::before, :is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict::before { content: ""; width: 8px; height: 8px; border-radius: 1px; background: var(--danger); transform: translateY(-1px); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-error > *, :is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict > * { grid-column: 2; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-error:empty, :is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-notice:empty { display: none; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-notice { margin: 0; padding: 4px 0; color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict { margin: 8px 0; padding: 8px 0; border-block: 1px solid var(--rule); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict p { margin: 0 0 4px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-conflict .pj-actions { margin-top: 2px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-result {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px;
+  margin: 8px 0; padding: 8px 0; border-block: 1px solid var(--rule); font-size: var(--fs-ui);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-result::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--quench); }
+
+/* The project name in the title bar. */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-titlerow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pj-header { min-width: 0; }
+.pj-header .pj-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-nameedit {
+  height: var(--ctl); min-width: 16ch; width: 32ch; max-width: 40vw; padding: 0 8px;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); color: var(--ink); font: 600 var(--fs-ui)/1 var(--sans);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-nameedit:disabled { color: var(--ink-3); }
+
+/* History: a group of commits is a heading over hairline rows. */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-bar { display: flex; align-items: center; gap: 12px; min-height: var(--h-row); margin: 0; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-bar .pj-refresh { margin-left: auto; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-now { color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-group { margin: 0 0 12px; border: 0; border-top: 1px solid var(--rule); border-radius: 0; background: none; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-group > header { display: flex; align-items: center; gap: 10px; min-height: var(--h-row); padding: 0; border: 0; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-grouplabel { font-weight: 600; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-count { color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-group > header .pj-btn { margin-left: auto; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-commit { padding: 8px 0; border-top: 1px solid var(--rule); background: none; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-commit:first-of-type { border-top: 0; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-commit + .pj-commit { border-top: 1px solid var(--rule); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-commithead { display: flex; align-items: center; gap: 4px 10px; margin: 0 0 2px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-subject { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-author { font-weight: 500; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-author-agent { color: var(--temper-text); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-author-human { color: var(--ink); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-more { margin-top: 4px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) pre.pj-diff {
+  max-height: 28em; margin: 6px 0 0; padding: 6px 8px; overflow: auto;
+  border: 0; border-block: 1px solid var(--rule); border-radius: 0; background: var(--field);
+  color: var(--ink); font-size: var(--fs-small);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-d-add { color: var(--quench); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-d-del { color: var(--danger); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-d-hunk { color: var(--ink-3); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-d-file { color: var(--ink); font-weight: 600; }
+
+/* The project list: hairline rows, the state as a lamp and a word. */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-new { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-new textarea, html .pj-modal textarea {
+  width: 100%; padding: 5px 8px; border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); color: var(--ink); font: 400 var(--fs-ui)/var(--lh-ui) var(--sans);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-new textarea { flex: 1 1 100%; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-cards { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-card { padding: 8px 0; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; background: none; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-card > header { display: flex; align-items: baseline; gap: 10px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-name { font-weight: 600; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-state { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; color: var(--ink-2); font-size: var(--fs-small); white-space: nowrap; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-state::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 1px; background: var(--ink-3); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-empty { color: var(--ink-2); }
+
+/* "Send to" and "Derived from". */
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-lineage-title { margin: 0; font: 600 var(--fs-ui)/var(--lh-ui) var(--sans); }
+.pj-lineage .pj-bar { flex-wrap: wrap; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menuwrap { position: relative; display: inline-flex; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menu {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 20;
+  display: flex; flex-direction: column; min-width: 200px; margin: 0; padding: 4px; text-align: left;
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--field); box-shadow: var(--shadow-menu);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menuitem {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: var(--ctl); padding: 0 8px;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--ink);
+  font: 400 var(--fs-ui)/1 var(--sans); white-space: nowrap; text-align: left; cursor: pointer;
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menuitem:hover:not(:disabled), :is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menuitem:focus-visible { background: var(--hover); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-menuitem:disabled { background: none; color: var(--ink-3); cursor: default; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-revnote { color: var(--ink-2); font-size: var(--fs-small); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-links h4 { margin: 12px 0 2px; font: 500 var(--fs-small)/1 var(--sans); color: var(--ink-2); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-links ul { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-link { padding: 6px 0; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; background: none; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-linkhead { display: flex; align-items: baseline; gap: 8px; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-chip { padding: 0; border: 0; border-radius: 0; font-size: var(--fs-small); color: var(--ink-2); white-space: nowrap; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-intent { overflow-wrap: anywhere; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-choices { display: grid; gap: 6px; margin: 0 0 8px; padding: 0; border: 0; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-choice { display: flex; align-items: baseline; gap: 8px; }
+
+/* The confirming dialog is the settings window's dialog. */
+html .pj-modal {
+  position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: light-dark(rgba(20, 23, 26, 0.35), rgba(0, 0, 0, 0.55));
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-dialog {
+  display: flex; flex-direction: column; width: min(34em, 100%); max-height: min(90vh, 100%);
+  border: 1px solid var(--rule-strong); border-radius: var(--r);
+  background: var(--ground); color: var(--ink); box-shadow: var(--shadow-menu);
+}
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-dialog header { flex: none; display: flex; align-items: center; min-height: var(--h-bar); padding: 0 16px; border: 0; border-bottom: 1px solid var(--rule); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-dialog h2 { margin: 0; font: 600 var(--fs-ui)/var(--lh-ui) var(--sans); color: var(--ink); }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-modal-main { padding: 12px 16px; overflow: auto; }
+:is(.pj-history, .pj-header, .pj-projects, .pj-lineage, .pj-modal) .pj-dialog footer { flex: none; display: flex; justify-content: flex-end; gap: 8px; padding: 10px 16px; border: 0; border-top: 1px solid var(--rule); }
+
+/* ------------------------------------------------------------------- phone */
+/* .wide shows only above 640px and .narrow only at or below it. */
+.narrow { display: none; }
+@media (max-width: 640px) {
+  .wide { display: none !important; }
+  .narrow { display: revert; }
+}
+/* At 900px and below frame.js (or annealage-ember's layout.js) shows one pane
+   at a time from the page's #tabbar, hiding the rest with an inline
+   display:none. So every pane is laid out in the one main area here and shown
+   by default. */
+@media (max-width: 900px) {
+  .wb, .wb:has(> .vhead), .wb[data-rail=none], .wb[data-layout] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--h-bar) 40px auto minmax(0, 1fr);
+    grid-template-areas: "title" "panes" "tabs" "main";
+  }
+  .wb > .statusbar, #panelBtn, .colgrip { display: none; }
+  .titlebar:has(> .tb-left) { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .tb-left { min-width: 0; }
+  .titlebar { padding-right: 4px; }
+  .titlebar .doc, .titlebar .stageline, .titlebar .tsep, .titlebar .crumbs a, .titlebar .crumbs .sep, .titlebar .crumbs .btn { display: none; }
+  /* The command field becomes its icon: a quiet square button, no words, no key. */
+  .titlebar .cmd { width: var(--ctl); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--ink-2); }
+  .titlebar .cmd:hover { background: var(--hover); color: var(--ink); }
+  .titlebar .cmd > :is(span, kbd) { display: none; }
+  .titlebar .crumbs { overflow: hidden; margin-left: 10px; }
+  .titlebar .crumbs .here { overflow: hidden; text-overflow: ellipsis; }
+  .tb-right .conn { padding: 0 4px; font-size: 0; }
+  /* One pane shows at a time, so the layout focus control has nothing to do. */
+  .wb > .titlebar .tb-right > :is(.seg, .gap) { display: none; }
+  /* Title-bar buttons drop their words to fit: <span class="lbl"> around the text. */
+  .titlebar .btn > .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .titlebar .btn:has(> .lbl) { width: var(--ctl); padding: 0; }
+  /* The pane switch: text tabs, the current one underlined. */
+  #tabbar { grid-area: panes; display: flex; gap: 20px; padding: 0 12px; border-bottom: 1px solid var(--rule); overflow-x: auto; scrollbar-width: none; }
+  #tabbar button {
+    display: inline-flex; align-items: center; gap: 6px; flex: none;
+    margin-bottom: -1px; padding: 2px 0 0; border: 0; border-bottom: 2px solid transparent; background: none;
+    font: 500 var(--fs-ui)/1 var(--sans); color: var(--ink-2); white-space: nowrap; cursor: pointer;
+  }
+  #tabbar button:is(.on, [aria-selected=true]) { color: var(--ink); font-weight: 600; border-bottom-color: var(--temper-text); }
+  .vhead { padding-left: 12px; }
+  .wb:has(> .view[style*="none"]) > .vhead { display: none; }
+  .view, .inspector, #chat, .console { grid-area: main; border: 0; }
+  body:not(.panel-open) .inspector, #timeline, .wb[data-side=timeline] #review, .wb[data-layout=agent] :is(.view, .inspector), .wb[data-layout=drawing] #chat { display: flex; }
+  /* Review/Timeline come from the tab bar; an inspector with its own panes keeps its tabs. */
+  .ptabs:not(:has([aria-controls])) { display: none; }
+  /* The rail becomes a tool strip floating along the bottom of the view. It
+     goes with the view when another tab is showing. */
+  .rail, .wb[data-layout=agent] .rail {
+    grid-area: main; z-index: 5; display: flex;
+    align-self: end; justify-self: center;
+    flex-direction: row; gap: 2px;
+    margin-bottom: 12px; padding: 3px;
+    border: 1px solid var(--rule-strong); border-radius: var(--r);
+    background: var(--field); box-shadow: var(--shadow-menu);
+  }
+  .wb:has(> .view[style*="none"]) > .rail { display: none; }
+  .tool { width: 36px; height: 36px; }
+  .rail hr { width: 8px; height: 0; }
+  .rail .end { margin: 0 0 0 auto; }
+  .wb:has(> .view > .subtabs:not([hidden])) > .rail { margin-bottom: 42px; }
+  .side { max-height: none; }
+  .modal { padding: 0; }
+  .setpanel { width: 100%; height: 100%; max-height: 100%; border: 0; border-radius: 0; }
+  .setrow { grid-template-columns: minmax(0, 1fr); }
+  .setinput { width: 100%; }
+  /* A view's side panel goes above the drawing, clear of the floating tools. */
+  .canvas.split { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .vpanel { max-height: 38vh; border-right: 0; border-bottom: 1px solid var(--rule); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .pline.indet > i { transform: translateX(105%); }
+}

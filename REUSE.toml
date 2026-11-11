@@ -46,3 +46,19 @@ path = "src/annealage_mesh/static/js/vendor/VERSIONS.json"
 precedence = "override"
 SPDX-FileCopyrightText = "2026 Andrew Leech"
 SPDX-License-Identifier = "PolyForm-Noncommercial-1.0.0"
+
+# The vendored brand styling: copies of Annealage/style files, written only by
+# tools/vendor-style.sh (VENDORED.json records the commit and hashes). The
+# library is PolyForm Noncommercial; the fonts are SIL OFL 1.1 and carry their
+# own licence texts beside them.
+[[annotations]]
+path = "src/annealage_mesh/style/**"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 Andrew Leech"
+SPDX-License-Identifier = "PolyForm-Noncommercial-1.0.0"
+
+[[annotations]]
+path = "src/annealage_mesh/style/fonts/*.woff2"
+precedence = "override"
+SPDX-FileCopyrightText = "The Instrument Sans and Red Hat Mono Project Authors"
+SPDX-License-Identifier = "OFL-1.1"

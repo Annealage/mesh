@@ -1,0 +1,29 @@
+{
+  "source": "Annealage/style",
+  "commit": "2444116af5cc44805081141061e6dab715460a8f",
+  "date": "2026-11-11T15:32:22Z",
+  "files": [
+    {"path": "LICENSE", "sha256": "4995bfb4b800b9875a1ffff0e92aa434d3db57622552363ac3b5c689216cedc4"},
+    {"path": "confirm.js", "sha256": "acfdb07001538f336727b6a9943a3cc5fcc3332f30a24bb195b6aed46b87cb25"},
+    {"path": "fonts/OFL-InstrumentSans.txt", "sha256": "c27a3c53c3beed7f5c26853afa15991478ff7145d3754a36b0382f84e10c0d03"},
+    {"path": "fonts/OFL-RedHatMono.txt", "sha256": "5fa3c7d20a2a1fa8fe051fcd66d7e3ef41a4b37dd1aa99463e57d06c2c49e5ee"},
+    {"path": "fonts/instrument-sans-latin-400-normal.woff2", "sha256": "9a91efaa3599a6ef01b2f49e9ec670e3a2f39baeef09c73198f1052cf3bb0850"},
+    {"path": "fonts/instrument-sans-latin-500-normal.woff2", "sha256": "9d3547da16d950d12a677c772a3ff9b69846e60e7dcd1b5efd540993f7286532"},
+    {"path": "fonts/instrument-sans-latin-600-normal.woff2", "sha256": "efb770916eda95a0e31d80cccde9651d4e8617010b21220e9f227c4820d675da"},
+    {"path": "fonts/instrument-sans-latin-ext-400-normal.woff2", "sha256": "a7bedd76b981e6cc8dd4cf918d7d22f4a1833af2f337798b317030e9e1d9b615"},
+    {"path": "fonts/instrument-sans-latin-ext-500-normal.woff2", "sha256": "37de060fbb3d90e059573c16e2a1384218d898aa6deb300b3b3498248123c64d"},
+    {"path": "fonts/instrument-sans-latin-ext-600-normal.woff2", "sha256": "ed2412451550a2da085eb856e0d0277a84a6194ac237a953e6e2c9d690ee10e4"},
+    {"path": "fonts/red-hat-mono-latin-400-normal.woff2", "sha256": "392fbbdfabe89c965489cbb7738abce86aff180b12b75280026dfe3f6005b189"},
+    {"path": "fonts/red-hat-mono-latin-500-normal.woff2", "sha256": "f0c8d8a580be4e8b26344c5205726cdd86233a11533c8125ffaf7eb5b7ebc294"},
+    {"path": "fonts/red-hat-mono-latin-ext-400-normal.woff2", "sha256": "cbf640bdfc086ce930458ec1ff3eef9782eb9a7af3789931e41f373a1421e4cf"},
+    {"path": "fonts/red-hat-mono-latin-ext-500-normal.woff2", "sha256": "d9cf2afa866bacdca269439d326294e3de19ab1416d0baf719175a4953da67ab"},
+    {"path": "frame.js", "sha256": "8a269edfe74e0000f8da7bac705d0de66b5a84bfacd848e76d8ce6b69479d538"},
+    {"path": "icons.svg", "sha256": "b75ae8bcf529920375b53361a45a5b315f1a492ea4201ce3c80a26a5502a4072"},
+    {"path": "marks/mesh-layers-dark.svg", "sha256": "e78d0ab09facafe46115708a51300f81cc8fd3c0f03c45522bf9cefba5adfca7"},
+    {"path": "marks/mesh-layers.svg", "sha256": "db7a3aea7db88105489d9a9322453c306df52d1053667f943cdee4fb066f8144"},
+    {"path": "palette.js", "sha256": "467fab69e358e67d9688bff37481b780590df1d8adc38e79ef0b2e6d413aec52"},
+    {"path": "scheme.js", "sha256": "418c12f063026626486f74e2b0b825874ed870920d3af18596e8a8074fa4c652"},
+    {"path": "theme.css", "sha256": "bf93397b24363cf47a9c5d0e1d2578a01fa8e1befb0546ea7ed00869e073e227"},
+    {"path": "tokens.css", "sha256": "644355831674515c23d46a652b322c849922ebec4388320d1a57bbedb5bc4373"}
+  ]
+}

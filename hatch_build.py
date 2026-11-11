@@ -1,4 +1,4 @@
-"""Bundle the agent package and the shared styling into Mesh's wheel.
+"""Bundle the agent package into Mesh's wheel.
 
 annealage-ember is not published on its own, and a published wheel cannot
 depend on a path, so a Mesh wheel carries the agent itself: the
@@ -24,11 +24,9 @@ The sdist carries ``lib/ember/src/annealage_ember`` and
 ``lib/ember/pyproject.toml`` (its ``include`` list), so a wheel built from it,
 which is what ``uv build`` does, finds both here too.
 
-The brand styling, the ``lib/style`` submodule, goes in the same way: the
-files the viewer uses are copied to ``annealage_mesh/style``, which is where
-``http/routes_viewer.py`` looks before falling back to the submodule in a
-checkout. Only those files ship, not the submodule's reference page or the
-other products' marks. The sdist carries the same list.
+The brand styling is not bundled here: its runtime files are vendored into
+``src/annealage_mesh/style`` (tools/vendor-style.sh from Annealage/style), so
+they are ordinary package files and ``packages`` already ships them.
 """
 
 import os
@@ -46,20 +44,6 @@ else:
 AGENT_DIR = os.path.join("lib", "ember")
 AGENT_PACKAGE = os.path.join(AGENT_DIR, "src", "annealage_ember")
 AGENT_PYPROJECT = os.path.join(AGENT_DIR, "pyproject.toml")
-
-STYLE_DIR = os.path.join("lib", "style")
-# Relative to STYLE_DIR; a directory ships whole. Keep in step with the sdist
-# include list in pyproject.toml.
-STYLE_FILES = (
-    "tokens.css",
-    "theme.css",
-    "scheme.js",
-    "icons.svg",
-    "LICENSE",
-    "fonts",
-    os.path.join("marks", "mesh-layers.svg"),
-    os.path.join("marks", "mesh-layers-dark.svg"),
-)
 
 
 def _normal(requirement):
@@ -108,16 +92,6 @@ class BundleAgentHook(BuildHookInterface):
                 "dependencies or codex extra:\n  %s" % "\n  ".join(missing)
             )
         build_data["force_include"][source] = "annealage_ember"
-        for rel in STYLE_FILES:
-            path = os.path.join(self.root, STYLE_DIR, rel)
-            if not os.path.exists(path):
-                raise FileNotFoundError(
-                    "%s is missing, so the wheel would ship without the viewer's styling: "
-                    "run `git submodule update --init lib/style` first"
-                    % os.path.join(STYLE_DIR, rel)
-                )
-            target = "/".join(("annealage_mesh", "style") + tuple(rel.split(os.sep)))
-            build_data["force_include"][path] = target
 
 
 if __name__ == "__main__":

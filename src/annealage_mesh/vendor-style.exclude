@@ -1,0 +1,13 @@
+# Left out of the vendored style library: Mesh has no page outside the frame
+# and ships only its own two marks.
+pages.css
+marks/canvas-frame.svg
+marks/canvas-frame-dark.svg
+marks/loom-weave.svg
+marks/loom-weave-dark.svg
+marks/parent-ribbon-b123d.svg
+marks/parent-ribbon-b123d-dark.svg
+marks/pod-slab.svg
+marks/pod-slab-dark.svg
+marks/trace-net.svg
+marks/trace-net-dark.svg

@@ -20,6 +20,7 @@ Signed-off-by: Your Name <you@example.com>
 - Include a test or a reproducer in the same PR where it is reasonable to do so.
 - Run `uv run --extra dev pytest -q` locally before pushing. uv installs `annealage-ember` from the git submodule `lib/ember` (`[tool.uv.sources]` in `pyproject.toml`), so clone with `--recurse-submodules`, or run `git submodule update --init` in an existing clone. The omp backend's tests also need `omp-rpc`, which isn't on PyPI and which `uv sync` removes: install it the way CI does (`.github/workflows/test.yml`).
 - The agent package is developed in its own repository, [Annealage/ember](https://github.com/Annealage/ember); `lib/ember` is a pinned checkout of it, not a place to make changes. To take a new agent commit into Mesh, commit it in your clone of that repository, run `tools/bump-ember.sh [REV]` (REV defaults to `main`, fetched from `$EMBER_DEV`, default `~/studio/ember`, pushed or not; it checks the commit out in `lib/ember` and stages the gitlink), and commit the bump. CI can only check the commit out once it's pushed to GitHub.
+- The brand styling under `src/annealage_mesh/style/` is copied from the private `Annealage/style` repository and never edited by hand. To update it, run `tools/vendor-style.sh <mesh>/src/annealage_mesh/style --ref <sha>` from a clean style checkout (it reads `src/annealage_mesh/vendor-style.exclude` for what Mesh leaves out) and commit the result with its `VENDORED.json`. `tests/test_vendored_style.py` checks the files against `VENDORED.json`, and against the style checkout in `$STYLE_DEV` (default `~/studio/style`) when there is one.
 - Install the pre-commit hooks once per checkout (`uv run --extra dev pre-commit install`), so `ruff check --fix` and `ruff format` run automatically on `git commit` and a commit message without a `Signed-off-by:` line is rejected. CI's `lint` job runs the identical ruff hooks (`.pre-commit-config.yaml`) and fails a PR where they were skipped.
 
 ## Contribution licensing
@@ -46,7 +47,7 @@ You confirm you have the right to grant this licence (the contribution is your o
 
 ### Outbound licence
 
-Your contribution is also made available to the public under the outbound licence of the path it touches: MIT for `skill/annealage-mesh/`, PolyForm Noncommercial 1.0.0 everywhere else. The vendored three.js files under `src/annealage_mesh/static/js/vendor/` stay under the three.js authors' MIT License. Change them upstream, not here. Your own rights to your contribution are not otherwise affected; you retain copyright in your work.
+Your contribution is also made available to the public under the outbound licence of the path it touches: MIT for `skill/annealage-mesh/`, PolyForm Noncommercial 1.0.0 everywhere else. The vendored three.js files under `src/annealage_mesh/static/js/vendor/` stay under the three.js authors' MIT License, and the vendored brand styling under `src/annealage_mesh/style/` (fonts under the SIL OFL 1.1) stays as it is upstream. Change them upstream, not here. Your own rights to your contribution are not otherwise affected; you retain copyright in your work.
 
 ### Other terms
 
