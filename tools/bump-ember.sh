@@ -7,7 +7,7 @@
 # REV (default main) is a commit in the agent's development clone, EMBER_DEV
 # (~/studio/ember), the clone that pushes to GitHub; it reaches Mesh from
 # there, pushed or not. The commit is fetched into lib/ember and checked out,
-# and the new gitlink staged for a commit with uv.lock (brought up to date): it is the agent Mesh runs, and the
+# and the new gitlink staged for a commit: it is the agent Mesh runs, and the
 # one a release bundles. CI, and any other clone, can only check the commit
 # out once it's pushed.
 #
@@ -32,8 +32,7 @@ sha=$(git -C "$ember_dev" rev-parse --verify --quiet "$rev^{commit}") ||
 
 git -C "$sub" fetch -q "$ember_dev" "$sha"
 git -C "$sub" checkout -q --detach "$sha"
-(cd "$repo" && uv lock -q)
-git -C "$repo" add lib/ember uv.lock
+git -C "$repo" add lib/ember
 echo "bump-ember: lib/ember is at $(git -C "$sub" log -1 --format='%h %s'), staged"
 
 status=0
