@@ -218,7 +218,7 @@ export default {
     wide('mesh-approval', { state: approval }),
     wide('mesh-paused', { state: paused }),
     wide('mesh-viewer-only', {}), // run against the --no-agent server
-    wide('mesh-empty', { ready: () => !!window.mesh && !!document.getElementById('err').textContent }), // run against a server on an empty folder
+    wide('mesh-empty', { ready: () => !!window.mesh && !document.getElementById('viewEmpty').hidden }), // run against a server on an empty folder
     wide('mesh-settings', { state: settings }),
     wide('mesh-sketch', { state: sketch }),
     wide('mesh-toast-error', { state: both(content, toastAndError) }),

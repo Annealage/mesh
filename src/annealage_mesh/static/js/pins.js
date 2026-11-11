@@ -342,10 +342,17 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
   const pinCount = document.getElementById("pinCount");
   const reviewCounts = document.getElementById("reviewCounts");
   const statusEl = document.getElementById("status");
+  const submitBtn = document.getElementById("submit");
+  const clearBtn = document.getElementById("clear");
   function updateStatus(state) {
     const b = document.createElement("b");
     b.textContent = state.pins.length + " pin" + (state.pins.length === 1 ? "" : "s");
     statusEl.replaceChildren(b, state.dirty ? ", unsaved" : ", submitted");
+    const none = state.pins.length === 0;
+    submitBtn.disabled = none;
+    submitBtn.title = none ? "No pins to submit" : "";
+    clearBtn.disabled = none;
+    clearBtn.title = none ? "Nothing to clear" : "";
     reviewCounts.textContent =
       state.pins.length + " pin" + (state.pins.length === 1 ? "" : "s") + ", " +
       state.callouts.length + " callout" + (state.callouts.length === 1 ? "" : "s");
@@ -365,7 +372,6 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
     sbPin.replaceChildren("Pin " + p.id + " at ", b, " mm");
   }
 
-  const clearBtn = document.getElementById("clear");
   const clearSlot = document.getElementById("clearConfirm");
   clearBtn.addEventListener("click", async () => {
     const count = store.getState().pins.length;
@@ -443,7 +449,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       );
       marker.position.set(p[0], p[1], p[2]);
       agentGroup.add(marker);
-      const sprite = makeLabelSprite(num, agentStyle());
+      const sprite = makeLabelSprite("A" + num, agentStyle());
       sprite.position.set(p[0], p[1], p[2] + rad * 2.2);
       sprite.scale.set(rad * 3, rad * 3, 1);
       agentGroup.add(sprite);

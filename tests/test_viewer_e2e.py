@@ -3027,8 +3027,8 @@ def test_clear_all_asks_in_the_page_and_deletes_only_on_confirm(browser, mesh_se
         page.goto(mesh_server.base_url + "/")
         _wait_both_meshes_loaded(page)
 
-        page.click("#clear")
-        assert page.locator("#clearConfirm .confirm").count() == 0, "no pins, no question"
+        assert page.is_disabled("#clear"), "nothing to clear"
+        assert page.get_attribute("#clear", "title") == "Nothing to clear"
 
         page.evaluate(_ADD_TWO_PINS)
         page.click("#clear")
@@ -3185,5 +3185,74 @@ def test_typing_a_pin_comment_survives_callouts_changing_underneath(browser, mes
         assert textarea.input_value() == typed
         assert page.evaluate("() => document.activeElement.tagName") == "TEXTAREA"
         assert page.evaluate("() => window.mesh.store.getState().pins[0].comment") == typed
+    finally:
+        page.close()
+
+
+def test_controls_that_cannot_act_are_disabled_and_say_why(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        # No pins: Submit and Clear all are off, with the reason.
+        assert page.is_disabled("#submit") and page.is_disabled("#clear")
+        assert page.get_attribute("#submit", "title") == "No pins to submit"
+        page.evaluate(_ADD_TWO_PINS)
+        assert page.is_enabled("#submit") and page.is_enabled("#clear")
+
+        # No agent (this server is viewer-only): the composer and Pause say why.
+        page.evaluate(
+            "async () => { const { store } = await import('agent/store.js'); "
+            "store.setChatAgentStatus('unavailable'); }"
+        )
+        for sel in ("#chatSend", "#chatInput", "#chatAttachBtn", "#chatInterrupt", "#pauseBtn"):
+            assert page.is_disabled(sel), sel
+            assert "not running" in page.get_attribute(sel, "title"), sel
+
+        # The sketch bar: nothing drawn, so nothing to undo, clear or attach.
+        page.click("#sketchBtn")
+        for sel in ("#sketchUndoBtn", "#sketchClearBtn", "#sketchAttachBtn"):
+            assert page.is_disabled(sel), sel
+            assert page.get_attribute(sel, "title"), sel
+        assert page.get_attribute("#navTool", "aria-pressed") == "false"
+    finally:
+        page.close()
+
+
+def test_plates_are_uploaded_as_srgb_and_agent_plates_read_a_n(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate(_ADD_TWO_PINS)
+        page.evaluate(
+            "() => window.mesh.store.setCallouts([{ id: 2, part: 'alpha', label: '+Z', "
+            "point: [0, 0, 5], comment: 'x' }])"
+        )
+        page.wait_for_function("() => document.querySelectorAll('#agentPins .apin').length === 1")
+        spaces = page.evaluate(
+            """() => { const out = [];
+              window.mesh.scene.traverse((o) => { if (o.isSprite) out.push(o.material.map.colorSpace); });
+              return out; }"""
+        )
+        assert spaces and set(spaces) == {"srgb"}
+        assert page.locator("#agentPins .apin .mk").inner_text() == "A2"
+    finally:
+        page.close()
+
+
+def test_the_page_has_an_icon_and_an_empty_folder_says_so_in_the_view(browser, tmp_path):
+    page = browser.new_page()
+    try:
+        server = _ServerThread(tmp_path)
+        server.start()
+        try:
+            page.goto(server.base_url + "/")
+            page.wait_for_selector("#viewEmpty:not([hidden])")
+            assert "No parts in this folder" in page.locator("#viewEmpty").inner_text()
+            assert "No parts" not in page.locator("#err").inner_text()
+            assert page.locator("link[rel=icon]").count() == 1
+        finally:
+            server.stop()
     finally:
         page.close()

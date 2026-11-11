@@ -245,6 +245,8 @@ export function initModels({ scene, fitView, meshes }) {
    * cheap rather than wasteful: `/model` answers a conditional request, so a
    * part whose bytes are unchanged costs one 304 and no transfer.
    */
+  const viewEmpty = document.getElementById("viewEmpty");
+
   async function loadManifest({ first = false } = {}) {
     try {
       const res = await fetch("/manifest", { cache: "no-store" });
@@ -256,7 +258,7 @@ export function initModels({ scene, fitView, meshes }) {
         Object.keys(meshes).forEach(disposeMesh);
         store.setModels([]);
         updateTitle([], j && j.dir);
-        if (first) showError("No parts in this folder yet.");
+        viewEmpty.hidden = false;
         return;
       }
       const withSlot = models.map((m) => ({ ...m, slot: slotOf(m.rel) }));
@@ -264,6 +266,7 @@ export function initModels({ scene, fitView, meshes }) {
       Object.keys(meshes).forEach((rel) => {
         if (!listed.has(rel)) disposeMesh(rel);
       });
+      viewEmpty.hidden = true;
       store.setModels(withSlot);
       updateTitle(models, j.dir);
       withSlot.forEach((m) => loadPart(m, { fit: first }));

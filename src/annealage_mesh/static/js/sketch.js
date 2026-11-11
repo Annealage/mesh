@@ -40,6 +40,8 @@
 
 import { uploadImage } from "agent/uploads.js";
 import { toast } from "agent/ui.js";
+import { store as agentStore } from "agent/store.js";
+import { store } from "./store.js";
 import { palette } from "./palette.js";
 import { MAX_CAPTURE_CHARS, MAX_CAPTURE_WIDTH } from "./commands.js";
 
@@ -51,6 +53,7 @@ const HALO_EXTRA = 2; // CSS pixels in the overlay; scaled for the composite
 
 export function initSketch({ container, captureView, cameraState }) {
   const sketchBtn = document.getElementById("sketchBtn");
+  const navTool = document.getElementById("navTool");
 
   let active = false;
   let overlay = null;
@@ -63,6 +66,7 @@ export function initSketch({ container, captureView, cameraState }) {
   // that pointerdown and compared again at Attach. Null until then.
   let drawnAgainst = null;
   let attaching = false;
+  let stopAgentWatch = null;
 
   // Which view a set of strokes means. The camera's own position, target and
   // field of view, plus the shape of the box it is projected into: an aspect
@@ -117,6 +121,7 @@ export function initSketch({ container, captureView, cameraState }) {
     const w = overlay.clientWidth, h = overlay.clientHeight;
     ctx.clearRect(0, 0, w, h);
     drawStrokes(ctx, allStrokes(), w, h, 1);
+    refreshBar();
   }
 
   // The overlay's backing store tracks devicePixelRatio, like the renderer's
@@ -188,6 +193,22 @@ export function initSketch({ container, captureView, cameraState }) {
     return bar;
   }
 
+  // What cannot be pressed says why: nothing drawn yet, or no agent to attach to.
+  function refreshBar() {
+    const bar = container.querySelector(".sketchbar");
+    if (!bar) return;
+    const drawn = strokes.length > 0;
+    const noAgent = agentStore.getState().chat.agentStatus === "unavailable";
+    const set = (id, off, why) => {
+      const b = bar.querySelector("#" + id);
+      b.disabled = off;
+      b.title = off ? why : "";
+    };
+    set("sketchUndoBtn", !drawn, "Nothing drawn yet");
+    set("sketchClearBtn", !drawn, "Nothing drawn yet");
+    set("sketchAttachBtn", !drawn || noAgent, !drawn ? "Draw on the model first" : "The agent is not running");
+  }
+
   function enter() {
     if (active) return;
     active = true;
@@ -207,6 +228,7 @@ export function initSketch({ container, captureView, cameraState }) {
     ctx = overlay.getContext("2d");
     container.appendChild(overlay);
     container.appendChild(buildToolbar());
+    stopAgentWatch = agentStore.subscribe("chat", refreshBar);
 
     ro = new ResizeObserver(resizeOverlay);
     ro.observe(container);
@@ -218,6 +240,7 @@ export function initSketch({ container, captureView, cameraState }) {
     overlay.addEventListener("pointercancel", endStroke);
     addEventListener("keydown", onKeydown);
     sketchBtn.setAttribute("aria-pressed", "true");
+    navTool.setAttribute("aria-pressed", "false");
   }
 
   function teardown() {
@@ -231,8 +254,10 @@ export function initSketch({ container, captureView, cameraState }) {
     if (overlay) { overlay.remove(); overlay = null; ctx = null; }
     const bar = container.querySelector(".sketchbar");
     if (bar) bar.remove();
+    if (stopAgentWatch) { stopAgentWatch(); stopAgentWatch = null; }
     removeEventListener("keydown", onKeydown);
     sketchBtn.setAttribute("aria-pressed", "false");
+    navTool.setAttribute("aria-pressed", String(store.getState().mode === "nav"));
   }
 
   function cancel() { teardown(); }

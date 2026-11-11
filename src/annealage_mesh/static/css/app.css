@@ -29,6 +29,13 @@
   background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r);
 }
 
+/* ---------- empty folder ---------- */
+.viewempty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 0 24px; text-align: center; color: var(--ink-2); font-size: var(--fs-ui); pointer-events: none; }
+.viewempty[hidden] { display: none; }
+
+/* The error line sits under the title and view bars, not over the command field. */
+html #err { top: calc(var(--h-bar) + var(--h-pane) + var(--s-3)); }
+
 /* ---------- parts list ---------- */
 #parts .sw { width: 10px; height: 10px; border-radius: 1px; flex: none; outline: 1px solid var(--rule-strong); outline-offset: -1px; }
 #parts .check { min-width: 0; }
@@ -54,7 +61,7 @@
    The theme floats #err at the top, which at 900px and below is the title bar
    and the tab bar. Keep those reachable: stack it above the toast instead. */
 @media (max-width: 900px) {
-  /* The phone's tool pill sits on the bottom edge of the view; the measured distance moves up. */
-  #measureHud { bottom: auto; top: 6px; }
+  /* The phone's tool pill sits on the bottom edge of the view; the measured distance sits above it. */
+  #measureHud { bottom: 60px; }
   html #err { top: auto; bottom: calc(var(--h-status) + 56px); }
 }

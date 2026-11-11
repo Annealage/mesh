@@ -54,11 +54,15 @@ export function makeLabelSprite(text, { fill, edge, ink, ring }) {
     ctx.stroke();
   }
   ctx.fillStyle = ink;
-  ctx.font = "500 28px " + MONO;
+  // Two characters fill the plate; a third needs a smaller face.
+  const size = String(text).length <= 2 ? 28 : String(text).length === 3 ? 20 : 15;
+  ctx.font = "500 " + size + "px " + MONO;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillText(String(text), 32, 34);
   const tex = new THREE.CanvasTexture(c);
+  // Canvas pixels are sRGB; without this three encodes them a second time.
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false }));
 }
@@ -86,6 +90,8 @@ export function makeTagSprite(text, ink, background) {
   ctx.textBaseline = "middle";
   ctx.fillText(text, w / 2, 34);
   const tex = new THREE.CanvasTexture(c);
+  // Canvas pixels are sRGB; without this three encodes them a second time.
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
   const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, depthWrite: false }));
   spr.userData.aspect = w / 64;
