@@ -9,8 +9,6 @@
  * bar's approval alert, which jumps to the first pending card.
  */
 
-import { store } from "./store.js";
-
 function elapsed(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
   const m = Math.floor(s / 60);
@@ -76,8 +74,8 @@ export function initChrome() {
     const card = pending.querySelector(".permcard");
     if (!card) return;
     // The chat pane is its own tab at phone width.
-    const tab = document.querySelector('#tabbar button[data-tab="chat"]');
-    if (tab && getComputedStyle(tab).display !== "none") tab.click();
+    const frame = window.annealageFrame.current;
+    if (frame.isNarrow()) frame.activateTab("chat");
     card.scrollIntoView({ block: "nearest" });
     const allow = card.querySelector(".pactions button");
     if (allow) allow.focus();
@@ -86,7 +84,9 @@ export function initChrome() {
   // The Measure tool opens the review panel on its Measure section.
   document.getElementById("measureTool").addEventListener("click", () => {
     const sec = document.getElementById("measureSec");
-    if (!store.getState().panelOpen) document.getElementById("panelBtn").click();
+    const frame = window.annealageFrame.current;
+    if (frame.isNarrow()) frame.activateTab("review");
+    else frame.setPanelOpen(true);
     sec.open = true;
     sec.scrollIntoView({ block: "nearest" });
     document.getElementById("mA").focus();

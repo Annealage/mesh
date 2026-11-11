@@ -16,23 +16,41 @@
 } }
 </script>
 </head>
-<body>
-<div class="wb" data-side="review">
+<body class="panel-open">
+<div class="wb" data-side="review" data-layout="split">
 
   <header class="titlebar">
-    <picture class="mark"><source srcset="/style/marks/mesh-layers-dark.svg" media="(prefers-color-scheme: dark)"><img src="/style/marks/mesh-layers.svg" alt="" width="640" height="512"></picture>
-    <span class="prod">Annealage Mesh</span>
-    <span class="tsep"></span>
-    <span class="doc"><code id="docPath"></code></span>
+    <div class="tb-left">
+      <picture class="mark"><source srcset="/style/marks/mesh-layers-dark.svg" media="(prefers-color-scheme: dark)"><img src="/style/marks/mesh-layers.svg" alt="" width="640" height="512"></picture>
+      <span class="prod">Annealage Mesh</span>
+      <span class="tsep"></span>
+      <span class="doc"><strong id="docName"></strong></span>
+    </div>
+    <button class="cmd" type="button" aria-label="Search or run a command"><svg class="ico"><use href="/style/icons.svg#i-search"/></svg><span>Search or run a command</span><kbd>Ctrl K</kbd></button>
     <div class="tb-right">
-      <button id="pauseBtn" class="btn quiet" type="button" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view."><svg class="ico ico--sm"><use href="/style/icons.svg#i-pause"/></svg><span data-label>Pause</span></button>
-      <button class="btn quiet icon" type="button" data-scheme-toggle><svg class="ico" data-for="system"><use href="/style/icons.svg#i-monitor"/></svg><svg class="ico" data-for="light"><use href="/style/icons.svg#i-sun"/></svg><svg class="ico" data-for="dark"><use href="/style/icons.svg#i-moon"/></svg></button>
-      <button id="panelBtn" class="btn quiet icon" type="button" aria-label="Show or hide the review panel" title="Review panel"><svg class="ico"><use href="/style/icons.svg#i-panel"/></svg></button>
-      <button id="settingsBtn" class="btn quiet icon" type="button" aria-label="Settings" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed"><svg class="ico"><use href="/style/icons.svg#i-settings"/></svg></button>
+      <button id="pauseBtn" class="btn quiet" type="button" aria-pressed="false" title="Pause the agent's control of this viewer. While paused, its tools that move the camera, show or hide parts, select a pin or add a callout are refused, so you can line up a view or edit a pin comment without it changing underneath you. The agent's own file edits and commands are not affected, and it can still read the view."><svg class="ico"><use href="/style/icons.svg#i-pause"/></svg><span data-label>Pause</span></button>
+      <span class="gap"></span>
+      <div class="seg icons" role="group" aria-label="Layout focus">
+        <button type="button" aria-pressed="false" data-layout-set="drawing" aria-label="Model" title="Model"><svg class="ico"><use href="/style/icons.svg#i-lay-drawing"/></svg></button>
+        <button type="button" aria-pressed="true" data-layout-set="split" aria-label="Split" title="Split"><svg class="ico"><use href="/style/icons.svg#i-lay-split"/></svg></button>
+        <button type="button" aria-pressed="false" data-layout-set="agent" aria-label="Agent" title="Agent"><svg class="ico"><use href="/style/icons.svg#i-lay-agent"/></svg></button>
+      </div>
+      <span class="gap"></span>
+      <button id="panelBtn" class="btn icon" type="button" aria-pressed="true" aria-label="Review panel" title="Review panel"><svg class="ico"><use href="/style/icons.svg#i-review"/></svg></button>
+      <button class="btn icon" type="button" data-scheme-toggle aria-label="Colours" title="Colours"><svg class="ico"><use href="/style/icons.svg#i-auto"/></svg></button>
+      <button id="settingsBtn" class="btn icon" type="button" aria-label="Settings" title="Settings: which port and host this serves on, which model the agent uses, and what this machine has installed"><svg class="ico"><use href="/style/icons.svg#i-settings"/></svg></button>
     </div>
   </header>
 
-  <nav id="tabbar" aria-label="Panes"></nav>
+  <nav id="tabbar" role="tablist" aria-label="Panes"><button type="button" role="tab" aria-selected="true" data-tab="model" data-target="#view">Model</button><button type="button" role="tab" aria-selected="false" data-tab="review" data-target="#review">Review</button><button type="button" role="tab" aria-selected="false" data-tab="chat" data-target="#chat">Agent</button></nav>
+
+  <div class="vhead">
+    <button class="vtab" type="button" aria-current="page">Model</button>
+    <div class="meta"><span id="docParts"></span><span><b id="docTris">0</b> triangles</span><span id="docRebuilt" hidden>rebuilt <b id="docRebuiltAt"></b></span></div>
+    <div class="right">
+      <div class="seg sm" role="group" aria-label="Up axis"><button id="upZ" type="button" aria-pressed="true">Z-up</button><button id="upY" type="button" aria-pressed="false">Y-up</button></div>
+    </div>
+  </div>
 
   <nav class="rail" aria-label="Tools">
     <button id="navTool" class="tool" type="button" aria-pressed="true" aria-label="Navigate" title="Navigate: drag to orbit, pinch to zoom, two fingers to pan"><svg class="ico"><use href="/style/icons.svg#i-select"/></svg></button>
@@ -44,14 +62,9 @@
   </nav>
 
   <main id="view" class="view" aria-label="Model">
-    <div class="vhead">
-      <button class="vtab" type="button" aria-current="page"><code id="docName"></code></button>
-      <div class="meta"><span id="docParts"></span><span><b id="docTris">0</b> triangles</span><span id="docRebuilt" hidden>rebuilt <b id="docRebuiltAt"></b></span></div>
-      <div class="right">
-        <div class="seg" role="group" aria-label="Up axis"><button id="upZ" type="button" aria-pressed="true">Z-up</button><button id="upY" type="button" aria-pressed="false">Y-up</button></div>
-      </div>
-    </div>
     <div id="app" class="canvas"></div>
+    <span class="hud hud--bl" id="hudAxis"></span>
+    <span class="hud hud--br" id="measureHud"></span>
   </main>
 
   <aside id="review" class="inspector" aria-label="Review">
@@ -82,7 +95,7 @@
         </div>
       </details>
     </div>
-    <div class="ifoot"><span id="status"></span><button id="clear" class="btn quiet" type="button">Clear all</button><button id="submit" class="btn" type="button">Submit</button></div>
+    <div class="ifoot"><span id="status"></span><button id="clear" class="btn quiet" type="button">Clear all</button><button id="submit" class="btn primary" type="button">Submit</button></div>
   </aside>
 
   <aside id="chat" aria-label="Agent">
@@ -91,7 +104,7 @@
       <span id="agentStatus" class="agentstatus"></span>
       <span class="working" role="status"><span class="bar" aria-hidden="true"></span>Working <b id="chatWorkingTime"></b></span>
       <span class="spacer"></span>
-      <button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share"><svg class="ico ico--sm"><use href="/style/icons.svg#i-export"/></svg>Export</button>
+      <details id="chatMore" class="more"><summary class="hdrbtn">More</summary><div class="menu"><button id="chatExport" type="button" class="hdrbtn" title="Write this conversation into review/ as a file you can commit or share">Export</button></div></details>
     </header>
     <div id="chatBanner" class="chatbanner" hidden>
       <span id="chatBannerText"></span>
@@ -112,7 +125,7 @@
         <div id="chatComposerRow">
           <input id="chatFileInput" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
           <button id="chatAttachBtn" type="button" class="attachbtn" aria-label="Attach an image" title="Attach an image (or paste or drop one into the message box)"><svg class="ico"><use href="/style/icons.svg#i-attach"/></svg></button>
-          <textarea id="chatInput" placeholder="Message the agent…" rows="2"></textarea>
+          <textarea id="chatInput" data-palette-ignore placeholder="Message the agent…" rows="2"></textarea>
           <div class="chatbtns">
             <button id="chatInterrupt" type="button" title="Stop the current turn">Interrupt</button>
             <button id="chatSend" type="button" class="primary">Send</button>
@@ -124,8 +137,8 @@
 
   <footer class="statusbar">
     <span id="connIndicator" class="conn"></span>
-    <span>Agent <b id="sbAgent"></b></span>
-    <span id="sbWorking" hidden>Working <b id="sbWorkingTime"></b></span>
+    <span><span class="k">Agent</span> <b id="sbAgent"></b></span>
+    <span id="sbWorking" hidden><span class="k">Working</span> <b id="sbWorkingTime"></b></span>
     <button id="approvalAlert" class="alert" type="button" title="Go to the pending approval" hidden><svg class="ico"><use href="/style/icons.svg#i-alert"/></svg><span id="approvalAlertText"></span></button>
     <span id="sbPin" class="push"></span>
     <span id="sbMode"></span>
@@ -139,5 +152,7 @@
 <div id="err"></div>
 
 <script type="module" src="/static/js/main.js"></script>
+<script src="/style/frame.js" data-auto></script>
+<script src="/style/palette.js"></script>
 </body>
 </html>

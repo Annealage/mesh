@@ -25,7 +25,6 @@
 import * as THREE from "three";
 import { authToken } from "agent/ws.js";
 import { toast } from "agent/ui.js";
-import { isNarrow } from "agent/layout.js";
 import { store } from "./store.js";
 import { disposeSprite, makeLabelSprite } from "./sprites.js";
 import { onPaletteChange, palette } from "./palette.js";
@@ -167,7 +166,8 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
       faceIndex: h.faceIndex != null ? h.faceIndex : -1,
       label: faceLabel,
     });
-    const panelVisible = isNarrow() ? store.getState().activeTab === "review" : store.getState().panelOpen;
+    const frame = window.annealageFrame.current;
+    const panelVisible = frame.isNarrow() ? frame.activeTab() === "review" : frame.panelOpen();
     if (!panelVisible) {
       toast("Pin #" + id + " added, open Panel to comment", true);
     }
@@ -272,6 +272,7 @@ export function initPins({ scene, camera, controls, renderer, markerRadius, getM
 
     const ta = document.createElement("textarea");
     ta.rows = 2;
+    ta.setAttribute("data-palette-ignore", "");
     ta.setAttribute("aria-label", "Comment on pin " + p.id);
     ta.addEventListener("input", () => store.setPinComment(p.id, ta.value));
     ta.addEventListener("focus", () => store.selectPin(p.id));

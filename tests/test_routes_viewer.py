@@ -47,6 +47,7 @@ async def test_index_serves_viewer_html(client):
     # bootstraps the split front end. Which endpoints main.js and its imports
     # go on to call is js/models.js's business, not the shell's.
     links = [
+        '<script src="/style/scheme.js"></script>',
         '<link rel="stylesheet" href="/style/tokens.css">',
         '<link rel="stylesheet" href="/agent/static/agent.css">',
         '<link rel="stylesheet" href="/style/theme.css">',
@@ -62,6 +63,11 @@ async def test_index_serves_viewer_html(client):
         assert -1 not in positions, positions
         assert positions == sorted(positions)
         assert '<script type="module" src="/static/js/main.js"></script>' in res.text
+        # The frame and palette drivers are classic scripts after the markup.
+        tail = res.text[res.text.find("</footer>") :]
+        assert tail.find('<script src="/style/frame.js" data-auto></script>') != -1
+        assert tail.find('<script src="/style/palette.js"></script>') > tail.find("frame.js")
+        assert 'id="topbar"' not in res.text
 
 
 @pytest.mark.parametrize(

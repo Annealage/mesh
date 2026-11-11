@@ -34,6 +34,7 @@ import { onPaletteChange, palette, partColor } from "./palette.js";
 export function initModels({ scene, fitView, meshes }) {
   const loader = new STLLoader();
   let loadedCount = 0;
+  let framed = false;
 
   function urlFor(rel) {
     // Encoded per path segment, not as a whole, so a '#' or '?' in a
@@ -98,7 +99,12 @@ export function initModels({ scene, fitView, meshes }) {
         // Only ever on the first load. Reframing the camera because a part was
         // regenerated would move the view out from under someone who had just
         // lined it up on the detail they were asking about.
-        if (fit && loadedCount === 1) fitView();
+        // The first part to arrive may be a hidden one, which would frame nothing,
+        // so it is the first visible part that does the framing.
+        if (fit && !framed && store.getState().visibility[model.rel]) {
+          framed = true;
+          fitView();
+        }
       },
       undefined,
       () => showError("Failed to load " + model.label + ", is it in the served directory?"),
@@ -205,17 +211,16 @@ export function initModels({ scene, fitView, meshes }) {
   }
   ["models", "triangles", "visibility", "rebuiltAt"].forEach((k) => store.subscribe(k, renderDocTab));
 
-  function updateTitle(models, dir) {
-    // The title bar shows exactly what's being reviewed: the file's absolute
-    // path for a single STL, otherwise the served directory. Right-click
-    // copies it.
-    shownPath = (models.length === 1 ? models[0].path || models[0].file : dir || "") || "";
-    docPath.textContent = shownPath;
-    docPath.title = shownPath;
-  }
+  // The title bar shows the folder's name (the file's stem for a single
+  // STL) with the full path as its tooltip. Right-click copies the path.
   let shownPath = "";
-  const docPath = document.getElementById("docPath");
-  docPath.addEventListener("contextmenu", (e) => {
+  function updateTitle(models, dir) {
+    shownPath = (models.length === 1 ? models[0].path || models[0].file : dir || "") || "";
+    const base = shownPath.split(/[\\/]/).filter(Boolean).pop() || shownPath;
+    docName.textContent = models.length === 1 ? base.replace(/\.[^.]*$/, "") || base : base;
+    docName.title = shownPath;
+  }
+  docName.addEventListener("contextmenu", (e) => {
     if (!shownPath) return;
     e.preventDefault();
     navigator.clipboard
@@ -249,6 +254,7 @@ export function initModels({ scene, fitView, meshes }) {
         // showing models the directory no longer contains.
         Object.keys(meshes).forEach(disposeMesh);
         store.setModels([]);
+        updateTitle([], j && j.dir);
         if (first) showError("No STLs found in the served directory.");
         return;
       }
@@ -259,10 +265,6 @@ export function initModels({ scene, fitView, meshes }) {
       });
       store.setModels(withSlot);
       updateTitle(models, j.dir);
-      if (j.dir) {
-        docName.textContent = j.dir.split(/[\\/]/).filter(Boolean).pop() || j.dir;
-        docName.title = j.dir;
-      }
       withSlot.forEach((m) => loadPart(m, { fit: first }));
     } catch (e) {
       showError("Failed to load /manifest: " + e.message);

@@ -41,7 +41,6 @@
 import { uploadImage } from "agent/uploads.js";
 import { toast } from "agent/ui.js";
 import { palette } from "./palette.js";
-import { activateTab } from "agent/layout.js";
 import { MAX_CAPTURE_CHARS, MAX_CAPTURE_WIDTH } from "./commands.js";
 
 // The stroke is --sketch with a --sketch-halo casing drawn first and wider,
@@ -96,6 +95,7 @@ export function initSketch({ container, captureView, cameraState }) {
     stroke.slice(1).forEach((p) => strokeCtx.lineTo(p.x * w, p.y * h));
     strokeCtx.stroke();
   }
+
   // Casing first, then the stroke; colours read when drawn so a scheme change
   // is picked up.
   function drawStrokes(c, list, w, h, scale) {
@@ -108,7 +108,6 @@ export function initSketch({ container, captureView, cameraState }) {
       list.forEach((stroke) => strokePath(c, stroke, w, h));
     });
   }
-
 
   function allStrokes() {
     return current && current.length > 1 ? [...strokes, current] : strokes;
@@ -177,7 +176,7 @@ export function initSketch({ container, captureView, cameraState }) {
       const b = document.createElement("button");
       b.type = "button";
       b.id = id;
-      if (cls) b.className = cls;
+      b.className = cls ? "btn " + cls : "btn";
       b.textContent = label;
       b.addEventListener("click", handler);
       bar.appendChild(b);
@@ -201,7 +200,7 @@ export function initSketch({ container, captureView, cameraState }) {
     // At 900px and below the 3D pane is one tab among three; entering
     // sketch mode with no way to see the canvas would leave the sketch
     // blind, so bringing the Model tab forward is part of entering.
-    activateTab("model");
+    window.annealageFrame.current.activateTab("model");
 
     overlay = document.createElement("canvas");
     overlay.className = "sketch-overlay";
@@ -327,7 +326,7 @@ export function initSketch({ container, captureView, cameraState }) {
     teardown();
     // The chip and the composer are in the chat pane, which at 900px and
     // below is a different tab from the one entering sketch mode switched to.
-    activateTab("chat");
+    window.annealageFrame.current.activateTab("chat");
   }
 
   sketchBtn.addEventListener("click", () => (active ? cancel() : enter()));

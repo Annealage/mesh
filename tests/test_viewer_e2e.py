@@ -2795,6 +2795,7 @@ def test_export_button_writes_a_transcript_and_names_the_file(settings_server, b
         _wait_one_mesh_loaded(page)
         page.wait_for_function("() => !document.getElementById('chatExport').disabled")
 
+        page.click("#chatMore summary")
         page.click("#chatExport")
         page.wait_for_selector("#chatBanner:not([hidden])")
         banner = page.text_content("#chatBannerText")
@@ -2844,5 +2845,168 @@ def test_submit_works_in_agent_mode_where_the_route_requires_the_token(settings_
         written = served / "mesh-comments.json"
         assert written.is_file(), "the human's own submit must reach disk in agent mode"
         assert json.loads(written.read_text(encoding="utf-8"))["count"] == 1
+    finally:
+        page.close()
+
+
+# 20. The Workbench frame: scheme toggle, layout focus, approval alert, ids ---
+
+
+def test_scheme_toggle_cycles_and_survives_reload(browser, mesh_server):
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        choice = "() => localStorage.getItem('annealage.scheme')"
+        assert page.evaluate(choice) is None
+        seen = []
+        for _ in range(3):
+            page.click("[data-scheme-toggle]")
+            seen.append(page.evaluate(choice))
+        assert sorted(s for s in seen if s) == ["dark", "light"]
+        assert seen[-1] is None
+        page.click("[data-scheme-toggle]")
+        kept = page.evaluate(choice)
+        assert kept in ("light", "dark")
+        page.reload()
+        _wait_both_meshes_loaded(page)
+        assert page.evaluate(choice) == kept
+        assert (
+            page.evaluate("document.documentElement.dataset.scheme || window.annealageScheme.get()")
+            == kept
+        )
+    finally:
+        page.close()
+
+
+def test_layout_focus_buttons_hide_columns_and_resize_canvas(browser, mesh_server):
+    page = browser.new_page(viewport={"width": 1600, "height": 900})
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        width = "() => window.mesh.renderer.domElement.width"
+        split = page.evaluate(width)
+
+        page.click("[data-layout-set='drawing']")
+        page.wait_for_function("(w) => window.mesh.renderer.domElement.width > w", arg=split)
+        assert page.is_visible("#review")
+        assert not page.is_visible("#chat")
+
+        page.click("[data-layout-set='agent']")
+        page.wait_for_selector("#chat", state="visible")
+        assert not page.is_visible("#review")
+        assert not page.is_visible("#app")
+
+        page.click("[data-layout-set='split']")
+        page.wait_for_function(
+            "(w) => Math.abs(window.mesh.renderer.domElement.width - w) <= 1", arg=split
+        )
+        assert page.is_visible("#review") and page.is_visible("#chat")
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize(
+    "viewport", [{"width": 1600, "height": 900}, {"width": 390, "height": 844}]
+)
+def test_approval_alert_focuses_the_allow_button(browser, chat_server, viewport):
+    server, session = chat_server
+    page = browser.new_page(viewport=viewport)
+    try:
+        page.goto(server.viewer_url)
+        _wait_connection_state(page, "live")
+        assert not page.is_visible("#approvalAlert")
+        _emit_on_loop(
+            server,
+            session,
+            session_base.PermissionRequest(
+                request_id="pr_77", tool="Bash", input={"command": "ls"}
+            ),
+        )
+        card = "div.permcard[data-request-id='pr_77']"
+        page.wait_for_selector(card, state="attached")
+        if viewport["width"] > 900:
+            page.wait_for_selector("#approvalAlert", state="visible")
+            page.click("#approvalAlert")
+        else:
+            # The theme hides the status bar on a phone; the alert's own click
+            # handler still has to bring the Agent tab forward.
+            page.wait_for_function("() => !document.getElementById('approvalAlert').hidden")
+            page.evaluate("() => document.getElementById('approvalAlert').click()")
+        page.wait_for_selector(card, state="visible")
+        focused = "() => document.activeElement.closest('.pactions') !== null"
+        page.wait_for_function(focused)
+    finally:
+        page.close()
+
+
+def test_ids_the_agent_layer_and_mesh_bind_exist_exactly_once(browser, mesh_server):
+    ids = [
+        "chat",
+        "chatLog",
+        "chatInput",
+        "chatSend",
+        "chatInterrupt",
+        "chatPending",
+        "chatComposer",
+        "chatComposerRow",
+        "chatAttachBtn",
+        "chatAttachStrip",
+        "chatFileInput",
+        "chatBanner",
+        "chatBannerText",
+        "chatBannerClose",
+        "chatExport",
+        "chatModelRow",
+        "chatModelInput",
+        "agentStatus",
+        "connIndicator",
+        "pauseBtn",
+        "settingsBtn",
+        "settingsModal",
+        "toast",
+        "err",
+        "panelBtn",
+        "tabbar",
+        "app",
+        "parts",
+        "pins",
+        "agentPins",
+        "mA",
+        "mB",
+        "mResult",
+        "clear",
+        "submit",
+        "status",
+        "tgAgent",
+        "tgUser",
+        "fit",
+    ]
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        counts = page.evaluate(
+            "(ids) => Object.fromEntries(ids.map((i) => [i, document.querySelectorAll('#' + i).length]))",
+            ids,
+        )
+        assert {k: v for k, v in counts.items() if v != 1} == {}
+    finally:
+        page.close()
+
+
+def test_command_palette_opens_with_ctrl_k_but_not_in_the_composer(browser, mesh_server):
+    page = browser.new_page(viewport={"width": 1600, "height": 900})
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.keyboard.press("Control+k")
+        page.wait_for_selector(".palette-box", state="visible")
+        page.wait_for_selector(".palette-row:has-text('Fit view')")
+        page.keyboard.press("Escape")
+        page.wait_for_selector(".palette-box", state="hidden")
+        page.focus("#chatInput")
+        page.keyboard.press("Control+k")
+        assert not page.is_visible(".palette-box")
     finally:
         page.close()

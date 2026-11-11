@@ -242,11 +242,13 @@ export function initScene(container, { getMeshes }) {
   const upZ = document.getElementById("upZ");
   const upY = document.getElementById("upY");
   const sbAxis = document.getElementById("sbAxis");
+  const hudAxis = document.getElementById("hudAxis");
   function applyUpAxis(axis) {
     camera.up.set(0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0);
     upZ.setAttribute("aria-pressed", String(axis === "z"));
     upY.setAttribute("aria-pressed", String(axis === "y"));
     sbAxis.textContent = axis === "z" ? "Z-up" : "Y-up";
+    hudAxis.textContent = (axis === "z" ? "Z-up" : "Y-up") + ", mm";
   }
   applyUpAxis(store.getState().upAxis);
   const pickAxis = (axis) => {

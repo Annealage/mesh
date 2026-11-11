@@ -4,17 +4,16 @@
  * of it (three-scene.js to fit and scale against, models.js to fill,
  * pins.js to raycast against), then mounts the agent layer's front end
  * (`agent/*.js`: the chat pane, the socket, the settings window, the pause
- * control and the layout) with Mesh's parts plugged into it, and wires up the
+ * control) with Mesh's parts plugged into it, and wires up the
  * debug surface.
  *
  * This file is the one place the agent layer's modules meet Mesh's: every
  * Mesh-specific thing they need (which events Mesh handles, what to refetch
- * on a reconnect, how to fall back to polling, which tabs exist, what the
+ * on a reconnect, how to fall back to polling, what the
  * saved up axis means) is passed in here, so none of them names a Mesh module.
  */
 
 import { initChat } from "agent/chat.js";
-import { initLayout } from "agent/layout.js";
 import { initPause } from "agent/pause.js";
 import { initSettings } from "agent/settings.js";
 import { initWs } from "agent/ws.js";
@@ -26,6 +25,7 @@ import { initMeasure } from "./measure.js";
 import { initCommands } from "./commands.js";
 import { initSketch } from "./sketch.js";
 import { initChrome } from "./chrome.js";
+import { initPaletteCommands } from "./palette-commands.js";
 import { stylesReady } from "./palette.js";
 
 // Sprite labels are drawn to a canvas once, so the mono face has to be loaded
@@ -56,15 +56,9 @@ const pinsApi = initPins({
 
 initMeasure({ scene: scene3d.scene, markerRadius: scene3d.markerRadius });
 
-// The chat pane is the third pane at wide viewports and the third tab at
-// narrow ones, after the model and the review panel.
-initLayout({
-  tabs: [
-    { id: "model", label: "Model", target: "#view" },
-    { id: "review", label: "Review", target: "#review" },
-    { id: "chat", label: "Chat", target: "#chat" },
-  ],
-});
+// The frame (layout focus, the Panel toggle, the phone tab bar) is the style
+// library's frame.js, started from the markup by data-auto; there is nothing
+// to call here.
 
 // `wsApi` is assigned after initWs runs below, but the `send` callbacks
 // chat.js and pause.js are given are only ever invoked later, from a user
@@ -86,6 +80,7 @@ const commandsApi = initCommands({ scene3d });
 initSketch({ container: appEl, captureView: scene3d.captureView,
              cameraState: scene3d.cameraState });
 initChrome();
+initPaletteCommands();
 
 // The 1.5s /callouts poll is pins.js's fallback for whenever ws.js decides
 // the socket is not live; ws.js owns that decision, pins.js only owns the

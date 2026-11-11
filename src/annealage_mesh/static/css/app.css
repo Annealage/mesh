@@ -21,18 +21,11 @@
 .sketchbar {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1;
   display: flex; gap: 6px; padding: 6px;
-  background: var(--panel); border: 1px solid var(--rule-2); border-radius: var(--r);
+  background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r);
 }
-.sketchbar button {
-  height: var(--ctl); padding: 0 12px; border-radius: var(--r);
-  border: 1px solid var(--rule-2); background: var(--field); color: var(--ink);
-  font: inherit; font-weight: 600; cursor: pointer; touch-action: manipulation;
-}
-.sketchbar button:hover { background: var(--hover); }
-.sketchbar button.primary { background: var(--ink); border-color: var(--ink); color: var(--view); }
 
 /* ---------- parts list ---------- */
-#parts .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; box-shadow: inset 0 0 0 1px rgba(20, 23, 26, 0.25); }
+#parts .sw { width: 10px; height: 10px; border-radius: 1px; flex: none; outline: 1px solid var(--rule-strong); outline-offset: -1px; }
 #parts .hint { margin-left: auto; }
 
 /* ---------- pins ---------- */
@@ -42,27 +35,14 @@
 /* ---------- measure ---------- */
 #measureSec .mrow { display: flex; gap: 12px; padding: 4px 12px; }
 #measureSec .mrow label { display: flex; flex: 1; min-width: 0; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
-#measureSec select {
-  flex: 1; min-width: 0; height: var(--ctl); padding: 0 6px; border-radius: var(--r);
-  border: 1px solid var(--rule-2); background: var(--field); color: var(--ink); font: 400 12px var(--mono);
-}
+#measureSec select { flex: 1; min-width: 0; }
 #measureSec .mresult { padding: 6px 12px 0; font: 400 12px var(--mono); color: var(--ink-2); }
-#measureSec .mresult .len { margin-top: 4px; font-size: 22px; color: var(--ink); }
+#measureSec .mresult .len { margin-top: 4px; color: var(--ink); }
 #measureSec .mresult .empty { font-family: inherit; }
 
-/* ---------- toast and error banner (agent/ui.js shows and hides them) ---------- */
-#toast {
-  position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 20;
-  max-width: calc(100vw - 24px); padding: 8px 14px; border-radius: var(--r);
-  font-weight: 600; text-align: center; display: none;
-  background: var(--panel); color: var(--ink); border: 1px solid var(--rule-2);
-}
-#toast.err { color: var(--danger); border-color: var(--danger); }
-#err {
-  position: fixed; bottom: 40px; left: 56px; z-index: 14; display: none;
-  max-width: calc(100vw - 80px); padding: 8px 12px; border-radius: var(--r);
-  background: var(--panel); color: var(--danger); border: 1px solid var(--danger);
-}
+/* ---------- error line on a phone ----------
+   The theme floats #err at the top, which at 900px and below is the title bar
+   and the tab bar. Keep those reachable: stack it above the toast instead. */
 @media (max-width: 900px) {
-  #err { left: 12px; max-width: calc(100vw - 24px); }
+  html #err { top: auto; bottom: calc(var(--h-status) + 56px); }
 }
