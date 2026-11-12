@@ -70,6 +70,23 @@ async def test_index_serves_viewer_html(client):
         assert 'id="topbar"' not in res.text
 
 
+async def test_the_title_bar_holds_the_empty_account_place_and_does_not_load_its_script(client):
+    # Mesh has no hosted serving yet (nothing in it knows it is served behind
+    # the Annealage front), so the page carries only the standalone-safe
+    # markup: a hidden, empty place as the last item of .tb-right, and no
+    # account.js. Loading the script here would make a GET /_front/me that a
+    # local run answers with a 404.
+    res = await client.get("/")
+    assert res.status_code == 200
+    page = res.text
+    place = '<span class="menuwrap" data-account-menu hidden></span>'
+    assert page.count(place) == 1
+    right = page[page.index('<div class="tb-right">') : page.index("</header>")]
+    assert right.rstrip().removesuffix("</div>").rstrip().endswith(place)
+    assert "account.js" not in page
+    assert "_front/me" not in page
+
+
 @pytest.mark.parametrize(
     "name, content_type",
     [
@@ -77,6 +94,7 @@ async def test_index_serves_viewer_html(client):
         ("theme.css", "text/css"),
         ("scheme.js", "text/javascript"),
         ("frame.js", "text/javascript"),
+        ("account.js", "text/javascript"),
         ("palette.js", "text/javascript"),
         ("confirm.js", "text/javascript"),
         ("icons.svg", "image/svg+xml"),

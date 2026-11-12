@@ -457,6 +457,28 @@ def test_part_list_shows_both_labels_with_no_external_requests(browser, mesh_ser
         page.close()
 
 
+def test_a_standalone_page_leaves_the_account_place_empty_and_asks_for_no_account(
+    browser, mesh_server
+):
+    """Mesh has no hosted serving, so the page carries the hidden account place
+    but never loads account.js: it makes no GET /_front/me (a local run would
+    answer 404 and put it in the console) and the place stays hidden and empty."""
+    page = browser.new_page()
+    seen = []
+    page.on("request", lambda r: seen.append(r.url))
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        place = page.locator(".titlebar .tb-right > .menuwrap[data-account-menu]")
+        assert place.count() == 1
+        assert place.is_hidden()
+        assert place.evaluate("el => el.children.length") == 0
+        assert page.evaluate("typeof window.annealageAccount") == "undefined"
+        assert [u for u in seen if "/_front/" in u or u.endswith("/account.js")] == []
+    finally:
+        page.close()
+
+
 # 2. Checkbox -> store and mesh -----------------------------------------------
 
 

@@ -177,6 +177,27 @@ const toastAndError = async (tab) => {
   })()`);
 };
 
+// The account menu of a hosted title bar. Mesh does not serve itself hosted yet, so the page never loads
+// account.js: these states stand in for the host. They answer /_front/me the way the hosted front does (a
+// signed-in person, or a visitor with no principal: 401) and load the vendored script the way a hosted page
+// would, so the title bar is shown with its place filled in.
+const ME = { v: 1, display: 'andrew', email: 'andrew@example.com', account_url: 'https://account.annealage.ai/', security_url: 'https://account.annealage.ai/security', projects_url: 'https://account.annealage.ai/projects', signout: { method: 'POST', url: '/auth/logout' }, products: [{ key: 'mesh', name: 'Mesh', url: 'https://mesh.annealage.ai/', current: true }, { key: 'canvas', name: 'Canvas', url: 'https://canvas.annealage.ai/', current: false }, { key: 'loom', name: 'Loom', url: 'https://loom.annealage.ai/', current: false }] };
+const MENU = '.titlebar .tb-right > [data-account-menu] [data-menu]';
+const hosted = (visitor) => async (tab) => {
+  await tab.run(async ({ page }, o) => {
+    await page.route('**/_front/me', (r) => r.fulfill({ status: o.visitor ? 401 : 200, contentType: 'application/json', body: JSON.stringify(o.visitor ? { error: 'unauthenticated' } : o.me) }));
+    await page.evaluate(() => new Promise((done, fail) => {
+      const s = document.createElement('script');
+      s.src = '/style/account.js';
+      s.onload = done;
+      s.onerror = fail;
+      document.body.appendChild(s);
+    }));
+    if (o.visitor) await new Promise((done) => setTimeout(done, 400));
+    else await page.waitForSelector(o.menu, { timeout: 8000 });
+  }, { args: [{ visitor: !!visitor, me: ME, menu: MENU }] });
+};
+
 // [rail, centre, inspector, agent] as the grid resolves them; null is the fluid column.
 const cols = (columns, reason) => ({ reason, expect: { '.wb': { gridTemplateColumns: columns } } });
 const DRAWING = cols(['40px', null, '300px', '0px'], 'layout focus "drawing" closes the agent column');
@@ -207,6 +228,7 @@ export default {
   baseline: '../shots/accepted',
   allow: [
     { match: /^request (0|no response) .*\/model\/.*\.stl$/, reason: 'the first socket handshake refetches every part (a 304 each); the shot ends the page while that is in flight' },
+    { match: /_front\/me/, reason: 'no principal: the snippet draws nothing' },
     { match: /agent\/login\/providers/, reason: 'the shot servers run without an agent backend, so the Settings window asks for sign-in providers that do not exist' },
   ],
   shots: [
@@ -238,6 +260,14 @@ export default {
     wide('m5-palette-disabled', { state: paletteDisabled }),
     wide('m5-title-odd', {}), // run against a server on a folder with a hostile 120-character name
     narrow('m5-title-odd-phone'), // same server
+    // hosted title bar: the account menu closed and open, at 1100 wide (the name hides below 1200), and a visitor with no menu
+    wide('mesh-hosted-menu', { state: both(content, hosted()) }),
+    wide('mesh-hosted-open', { state: both(content, hosted(), click(MENU)) }),
+    frame('mesh-hosted-1100', { viewports: [[1100, 800]], state: both(content, hosted(), click(MENU)) }),
+    wide('mesh-hosted-visitor', { state: both(content, hosted(true)) }),
+    narrow('mesh-hosted-menu-phone', { state: hosted() }),
+    narrow('mesh-hosted-open-phone', { state: both(hosted(), click(MENU)) }),
+    narrow('mesh-hosted-visitor-phone', { state: hosted(true) }),
     narrow('m7-phone-approval', { state: approval }), // the compact status bar carries the approval alert on the Model tab
     narrow('mesh-phone-model'),
     narrow('mesh-phone-review', { state: both(content, tab('review')), conform: PHONE_TAB }),
