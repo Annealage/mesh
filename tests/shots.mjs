@@ -242,7 +242,6 @@ export default {
   allow: [
     { match: /^request (0|no response) .*\/model\/.*\.stl$/, reason: 'the first socket handshake refetches every part (a 304 each); the shot ends the page while that is in flight' },
     { match: /_front\/me/, reason: 'no principal: the snippet draws nothing' },
-    { match: /agent\/login\/providers/, reason: 'the shot servers run without an agent backend, so the Settings window asks for sign-in providers that do not exist' },
   ],
   shots: [
     wide('mesh-split', { state: content }),

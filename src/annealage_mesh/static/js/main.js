@@ -18,6 +18,7 @@ import { initChat } from "agent/chat.js";
 import { initPause } from "agent/pause.js";
 import { initSettings } from "agent/settings.js";
 import { initWs } from "agent/ws.js";
+import { confirmRow } from "/style/confirm.js";
 import { store } from "./store.js";
 import { initScene } from "./three-scene.js";
 import { initModels } from "./models.js";
@@ -124,6 +125,7 @@ wsApi = initWs({
 });
 
 const settingsApi = initSettings({
+  confirmRow,
   // Mesh's one load-effect setting. Only a value that differs is written:
   // this read arrives well after the first frame, and by then the agent may
   // already have moved the camera. `three-scene.js` reorients the view

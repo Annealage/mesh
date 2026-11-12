@@ -2701,8 +2701,8 @@ def _open_settings(page):
 
 
 def test_settings_window_shows_each_value_with_where_it_came_from(settings_server, browser):
-    """Provenance is the whole point of the window: a port with no layer named
-    beside it tells a reader nothing about which file to go and edit."""
+    """Provenance is the whole point of the window: a value set outside the
+    defaults names the layer it came from; a default names none."""
     server, _served = settings_server
     page = browser.new_page()
     try:
@@ -2710,11 +2710,10 @@ def test_settings_window_shows_each_value_with_where_it_came_from(settings_serve
         _wait_one_mesh_loaded(page)
         _open_settings(page)
 
-        port_note = page.text_content("[data-key='port'] .setnote")
-        assert "built-in default" in port_note
-        # Restart-required is stated rather than implied, because the field is
-        # editable and saving it will not move the running listener.
-        assert "takes effect next run" in port_note
+        # A built-in default names no layer; the section says once that its
+        # keys wait for a restart, which the field being editable would hide.
+        assert page.query_selector("[data-key='port'] .setnote") is None
+        assert "next time the server starts" in page.text_content(".setpanel .sethelp")
 
         # Diagnostics duplicates `doctor` on purpose: this is the only way to
         # read it from a phone with no terminal.
@@ -2754,7 +2753,7 @@ def test_settings_window_lays_out_the_keys_the_server_declares(settings_server, 
         up_axis = page.eval_on_selector_all("#set-up_axis option", "os => os.map(o => o.value)")
         assert up_axis == ["z", "y"]
         effort = page.eval_on_selector_all("#set-effort option", "os => os.map(o => o.textContent)")
-        assert effort == ["(not set)", "low", "medium", "high", "xhigh", "max"]
+        assert effort == ["(not set)", "Low", "Medium", "High", "Extra high", "Maximum"]
         assert "Mesh version" in page.text_content(".diagblock")
     finally:
         page.close()
@@ -2775,7 +2774,7 @@ def test_saving_a_restart_required_setting_reports_it_as_saved_not_applied(
         page.fill("#set-port", "9411")
         page.click(".setpanel footer button.primary")
         page.wait_for_selector(".setpanel", state="hidden")
-        assert "takes effect next run" in page.text_content("#toast")
+        assert "will change the next time the server starts" in page.text_content("#toast")
 
         _open_settings(page)
         note = page.text_content("[data-key='port'] .setnote")
