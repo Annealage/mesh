@@ -10,6 +10,11 @@
 // The viewer-only entries (`viewer-only-*`) belong to the second server; shoot
 // them with `--base http://127.0.0.1:5734 --only <names>`.
 //
+// `m5-title-odd` and `m5-title-odd-phone` also belong to a `--no-agent` server (the Agent column reads
+// Unavailable, with no backend error in the chat), on a folder that holds one STL, `shroud.stl`, and has
+// a 120-character name with markup characters in it. Do not start it with `--backend`: a backend the
+// machine has not set up (codex without a login) puts its error text in the chat column.
+//
 // The scene is WebGL, so every entry is marked webgl. Entries are frame states:
 // layout focus, the Panel closed, the phone's three tabs, the working line, an
 // approval, a pause, Settings, sketch mode, a toast with the error line.
@@ -258,7 +263,7 @@ export default {
     wide('m5-submit-refused', { state: both(content, say('toast', 'Could not submit: sign in again', false)) }),
     wide('m5-sketch-moved', { state: both(sketch, say('toast', 'The view moved since you started drawing, so the marks no longer line up. Clear and draw again, or put the view back.', false)) }),
     wide('m5-palette-disabled', { state: paletteDisabled }),
-    wide('m5-title-odd', {}), // run against a server on a folder with a hostile 120-character name
+    wide('m5-title-odd', {}), // run against the --no-agent server on the one-STL folder with a hostile 120-character name
     narrow('m5-title-odd-phone'), // same server
     // hosted title bar: the account menu closed and open, at 1100 wide (the name hides below 1200), and a visitor with no menu
     wide('mesh-hosted-menu', { state: both(content, hosted()) }),
