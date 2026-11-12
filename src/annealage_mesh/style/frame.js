@@ -20,6 +20,8 @@
 //   [data-panel-close]                       closes the panel
 //   #tabbar                                  the phone tab bar, role="tablist"
 //     button[data-tab="id"][data-target="selector"]   one tab per pane (aria-selected)
+//   .statusbar .alert                        the approval alert: a click shows the Agent tab at 900px and below
+//   .wb[data-agent-open]                     set by frame.js while the Agent tab is showing (the status bar hides)
 //   .split.even > .half + .half              a view split in two halves with a handle between them
 //
 // Settings, kept in localStorage per origin and per product (<html data-product>,
@@ -220,10 +222,15 @@
         b.setAttribute("aria-selected", String(b.getAttribute("data-tab") === active));
       });
       var narrow = isNarrow();
+      var chat = doc.querySelector("#chat");
+      var agentOpen = false;
       tabs.forEach(function (t) {
         var el = t.target ? doc.querySelector(t.target) : null;
         if (el) el.style.display = narrow && t.id !== active ? "none" : "";
+        if (el && el === chat && narrow && t.id === active) agentOpen = true;
       });
+      if (agentOpen) root.setAttribute("data-agent-open", "");
+      else root.removeAttribute("data-agent-open");
     }
     function activateTab(id) {
       if (!tabs.some(function (t) { return t.id === id; })) return;

@@ -371,6 +371,8 @@ a.state:hover { text-decoration-color: var(--ink); }
    left and top from script, and it shows while it is in the page. <span class="menu at" role="menu"> */
 .menu.at { position: fixed; top: auto; right: auto; display: block; }
 .menu .menu-note { display: block; padding: 6px 8px 4px; color: var(--ink-3); font-size: var(--fs-small); }
+.menu .menu-note[role=alert] { color: var(--danger); }
+.menu a[aria-current] { font-weight: 600; }
 details.more { position: relative; }
 details.more > summary { list-style: none; }
 details.more > summary::-webkit-details-marker { display: none; }
@@ -884,6 +886,8 @@ body:not(.panel-open) .wb[data-insp=left] .half:first-child > .vhead { padding-l
 @media (min-width: 901px) and (max-width: 1200px) {
   .wb[data-insp=left] .titlebar .cmd { width: 150px; }
   .wb[data-insp=left] .titlebar .cmd kbd { display: none; }
+  /* The account menu (account.js) keeps its icon and drops the name, so the bar's controls fit. */
+  .titlebar .tb-right .menuwrap > [data-menu] .wide { display: none; }
 }
 /* Under 1000px the left layout's command field is its icon, as on a phone, so the bar's controls fit. */
 @media (min-width: 901px) and (max-width: 1000px) {
@@ -1864,7 +1868,15 @@ html .pj-modal {
      reachable from any pane. Everything else in it is dropped. */
   .wb > .statusbar > :not(.conn, .alert) { display: none; }
   .wb > .statusbar { gap: 12px; }
-  .wb > .statusbar .alert { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* The connection is its lamp alone here (the word is still there for a screen
+     reader), so a view's own "Live" is not repeated. */
+  .wb > .statusbar .conn { font-size: 0; }
+  /* A block, not a flex box, so a long label ends in an ellipsis. The element is
+     24px high (the tap target) with the 18px chamfered fill inset inside it. */
+  .wb > .statusbar .alert { display: block; margin-left: auto; min-width: 0; max-width: 100%; height: var(--h-status); padding-block: 3px; line-height: 18px; overflow: hidden; text-overflow: ellipsis; }
+  .wb > .statusbar .alert::before { inset: 3px 0; }
+  /* On the Agent tab the pane shows the connection and the approval itself. */
+  .wb[data-agent-open] > .statusbar { display: none; }
   .titlebar:has(> .tb-left) { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
   .titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(0, 1fr) auto auto; }
   .tb-left { min-width: 0; }

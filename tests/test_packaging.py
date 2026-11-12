@@ -131,6 +131,7 @@ def test_wheel_and_sdist_ship_the_vendored_style_and_its_licences(tmp_path):
         "theme.css",
         "scheme.js",
         "frame.js",
+        "account.js",
         "palette.js",
         "confirm.js",
         "icons.svg",
