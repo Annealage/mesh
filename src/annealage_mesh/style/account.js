@@ -18,7 +18,9 @@
 //
 // The menu is the one of demo/workbench.html and demo/list.html: a .menuwrap with a
 // [data-menu] button and a .menu. This script toggles data-open on the .menuwrap and
-// aria-expanded on the button itself, and closes it on a click outside and on Escape, so a
+// aria-expanded on the button itself, and closes it on a click outside, on Escape (focus
+// goes back to the button) and when focus leaves it. Down or Up on the button opens it onto
+// the first or last item; Up, Down, Home and End move between the items (role=menu). A
 // page that has its own generic [data-menu] handler (demo/demo.js has) must not load it:
 // the two would toggle the same menu twice. The "Products" group is left out when the page has
 // a [data-product-switch] place, and when the deployment serves one product only.
@@ -66,6 +68,17 @@
       return p === "http:" || p === "https:" ? url : null;
     } catch (e) {
       return null;
+    }
+  }
+
+  // A path on this page's own origin. The URL parser decides, so a tab, newline, carriage return or backslash after the
+  // first slash (which a browser drops or reads as a slash) cannot turn "/x" into another host.
+  function sameOriginPath(url) {
+    if (typeof url !== "string" || url.charAt(0) !== "/") return false;
+    try {
+      return new URL(url, window.location.origin).origin === window.location.origin;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -119,7 +132,7 @@
     }
     var out = me.signout;
     var signout = null;
-    if (out && out.method === "POST" && typeof out.url === "string" && /^\/[^\/\\]/.test(out.url)) {
+    if (out && out.method === "POST" && sameOriginPath(out.url)) {
       menu.appendChild(el("hr", {}));
       signout = el("button", { type: "button", role: "menuitem" }, "Sign out");
       menu.appendChild(signout);
@@ -132,11 +145,40 @@
       wrap.removeAttribute("data-open");
       button.setAttribute("aria-expanded", "false");
     }
+    function items() { return Array.prototype.slice.call(menu.querySelectorAll("[role=menuitem]")); }
+    function openMenu() {
+      wrap.setAttribute("data-open", "");
+      button.setAttribute("aria-expanded", "true");
+    }
     button.addEventListener("click", function () {
-      var open = !wrap.hasAttribute("data-open");
-      if (open) wrap.setAttribute("data-open", "");
-      else wrap.removeAttribute("data-open");
-      button.setAttribute("aria-expanded", String(open));
+      if (wrap.hasAttribute("data-open")) close();
+      else openMenu();
+    });
+    // The menu keys: Down on the button opens it onto the first item; Up, Down, Home and End move between the items.
+    button.addEventListener("keydown", function (e) {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      openMenu();
+      var list = items();
+      if (list.length) list[e.key === "ArrowDown" ? 0 : list.length - 1].focus();
+    });
+    menu.addEventListener("keydown", function (e) {
+      var list = items();
+      var at = list.indexOf(e.target);
+      var to = null;
+      if (e.key === "ArrowDown") to = at < 0 ? 0 : (at + 1) % list.length;
+      else if (e.key === "ArrowUp") to = at <= 0 ? list.length - 1 : at - 1;
+      else if (e.key === "Home") to = 0;
+      else if (e.key === "End") to = list.length - 1;
+      if (to === null || !list.length) return;
+      e.preventDefault();
+      list[to].focus();
+    });
+    // Tabbing out of the menu closes it.
+    var busy = false;
+    wrap.addEventListener("focusout", function (e) {
+      if (busy || !wrap.hasAttribute("data-open")) return;
+      if (!e.relatedTarget || !wrap.contains(e.relatedTarget)) close();
     });
     document.addEventListener("click", function (e) {
       if (wrap.hasAttribute("data-open") && !wrap.contains(e.target)) close();
@@ -152,6 +194,7 @@
     signout.addEventListener("click", function () {
       if (signout.disabled) return;
       signout.disabled = true;
+      busy = true;
       if (failed) { menu.removeChild(failed); failed = null; }
       fetch(out.url, { method: "POST", credentials: "same-origin", headers: { Accept: "application/json" } })
         .then(function (r) {
@@ -160,6 +203,7 @@
         })
         .catch(function () {
           signout.disabled = false;
+          busy = false;
           failed = el("span", { "class": "menu-note", role: "alert" }, "Couldn't sign out. Try again.");
           menu.appendChild(failed);
         });

@@ -652,8 +652,12 @@ body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
   white-space: nowrap;
 }
 .titlebar:has(> .tb-left) { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; }
+/* With a command field the left and right clusters are equal while both fit, which centres the field. Short of room (below
+   1440px, see the media rules further down) the field shrinks first, then the left cluster (its crumbs and document label
+   end in an ellipsis), and the right cluster never gives way: the account menu at its end must stay on screen. */
+.titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(max-content, 1fr) minmax(var(--ctl), 288px) minmax(max-content, 1fr); }
 .titlebar:has(> .tb-left):not(:has(> .cmd)) { grid-template-columns: minmax(0, 1fr) auto; }
-.tb-left { display: flex; align-items: center; height: 100%; min-width: max-content; }
+.tb-left { display: flex; align-items: center; height: 100%; min-width: 0; }
 .tb-right { margin-left: auto; display: flex; align-items: center; justify-content: flex-end; gap: 2px; min-width: 0; }
 .tb-right .gap { width: 10px; flex: none; }
 /* The mark is used as supplied, in a --gutter column of its own:
@@ -666,14 +670,15 @@ body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
 .tsep { width: 1px; height: 16px; flex: none; margin: 0 10px; background: var(--rule-strong); }
 /* Where you are: <nav class="crumbs"><a href="/">Projects</a><span class="sep">/</span><span class="here">RP2040 Stepper Controller</span>
    <button class="btn icon sm" aria-label="Rename">pencil</button><span class="rev mono">rev 1</span></nav> */
-.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--ink-2); white-space: nowrap; }
+.crumbs { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; color: var(--ink-2); white-space: nowrap; }
+.crumbs .here { min-width: 0; max-width: 36ch; overflow: hidden; text-overflow: ellipsis; }
 .crumbs a:hover { color: var(--ink); }
 .crumbs .sep { color: var(--ink-3); }
 .crumbs .here { color: var(--ink); font-weight: 500; }
 .crumbs .btn { color: var(--ink-3); margin-left: -2px; }
 .crumbs .rev { color: var(--ink-3); margin-left: 6px; }
 /* A document label instead of a breadcrumb: <span class="doc"><strong>clip</strong><code>~/cad/clip</code></span> */
-.titlebar .doc { display: flex; align-items: baseline; gap: 10px; min-width: 0; overflow: hidden; }
+.titlebar .doc { display: flex; align-items: baseline; gap: 10px; min-width: 0; max-width: 48ch; overflow: hidden; }
 .titlebar .doc strong { font-weight: 500; }
 .titlebar .doc code { color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
 /* How far a staged job has got: <div class="stageline"><span>Schematic, <span class="hint">5 of 8</span></span>
@@ -685,12 +690,13 @@ body:not(.panel-open) .colgrip[data-grip=insp], .wb[data-layout=agent] .colgrip,
 /* The command field: a button that looks like a field and opens the palette.
    <button class="cmd"><svg class="ico">search</svg><span>Search or run a command</span><kbd>Ctrl K</kbd></button> */
 .cmd {
-  display: flex; align-items: center; gap: 8px; width: 288px; height: var(--ctl); padding: 0 6px 0 8px;
+  display: flex; align-items: center; gap: 8px; width: 100%; max-width: 288px; min-width: 0; justify-self: center; overflow: hidden; height: var(--ctl); padding: 0 6px 0 8px;
   border: 1px solid var(--rule); border-radius: var(--r); background: var(--field);
   color: var(--ink-3); font: 400 var(--fs-ui)/1 var(--sans); text-align: left;
 }
 .cmd:hover { border-color: var(--rule-strong); }
-.cmd > span { flex: 1; }
+.cmd > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmd > kbd { flex: none; }
 .titlebar > .cmd:not(:has(~ .tb-right)) { margin-inline: auto; }
 /* The command palette (palette.js): a menu-family box under the title bar over a
    transparent layer that catches outside clicks. It does not dim the page.
@@ -876,24 +882,32 @@ body:not(.panel-open) .wb[data-insp=left] .half:first-child > .vhead { padding-l
 .half[data-preview] .previewbar :is(b, span) { white-space: nowrap; }
 /* Between 900 and 1280px the tree and the agent, both open, leave the view under 620px, too narrow
    for two halves side by side, so the halves stack (editor over screen) and the handle goes. With
-   either column closed there is room and they stay side by side. Between 900 and 1200px the left
-   layout's command field also narrows, to leave the title bar's controls room, and under 1000px it is its icon. */
+   either column closed there is room and they stay side by side. Under 1440px every title
+   bar's command field narrows (see "A title bar that is short of room"), and under 1000px the left layout's is its icon. */
 @media (min-width: 901px) and (max-width: 1280px) {
   body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .canvas.split.even { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
   body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .half ~ .half { border-left: 0; border-top: 1px solid var(--rule); }
   body.panel-open .wb[data-insp=left]:not([data-layout=drawing]) .colgrip[data-grip=split] { display: none; }
 }
-@media (min-width: 901px) and (max-width: 1200px) {
-  .wb[data-insp=left] .titlebar .cmd { width: 150px; }
-  .wb[data-insp=left] .titlebar .cmd kbd { display: none; }
-  /* The account menu (account.js) keeps its icon and drops the name, so the bar's controls fit. */
-  .titlebar .tb-right .menuwrap > [data-menu] .wide { display: none; }
+/* A title bar that is short of room gives up, in this order: the command field's width (and its key) below 1440px, the stage
+   line below 1360px, the account menu's name below 1000px (the icon stays), then the left cluster's crumbs end in an ellipsis.
+   The right cluster, with the account menu at its end, is never clipped. */
+@media (min-width: 901px) and (max-width: 1439px) {
+  .titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(0, 1fr) minmax(var(--ctl), 200px) minmax(max-content, 1fr); }
+  .titlebar .cmd kbd { display: none; }
+}
+@media (min-width: 901px) and (max-width: 1360px) {
+  .titlebar .tb-left .stageline, .titlebar .tb-left .tsep:has(+ .stageline) { display: none; }
+}
+@media (min-width: 901px) and (max-width: 1000px) {
+  .titlebar .tb-right .menuwrap > [data-menu] .wide, .titlebar .crumbs .rev { display: none; }
 }
 /* Under 1000px the left layout's command field is its icon, as on a phone, so the bar's controls fit. */
 @media (min-width: 901px) and (max-width: 1000px) {
   .wb[data-insp=left] .titlebar .cmd { width: var(--ctl); padding: 0; justify-content: center; border-color: transparent; background: none; color: var(--ink-2); }
   .wb[data-insp=left] .titlebar .cmd:hover { background: var(--hover); color: var(--ink); }
   .wb[data-insp=left] .titlebar .cmd > :is(span, kbd) { display: none; }
+  .wb[data-insp=left] .titlebar:has(> .tb-left):has(> .cmd) { grid-template-columns: minmax(0, 1fr) var(--ctl) minmax(max-content, 1fr); }
 }
 .stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 
