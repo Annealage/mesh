@@ -119,7 +119,7 @@
     }
     var out = me.signout;
     var signout = null;
-    if (out && out.method === "POST" && typeof out.url === "string" && out.url.charAt(0) === "/" && out.url.charAt(1) !== "/") {
+    if (out && out.method === "POST" && typeof out.url === "string" && /^\/[^\/\\]/.test(out.url)) {
       menu.appendChild(el("hr", {}));
       signout = el("button", { type: "button", role: "menuitem" }, "Sign out");
       menu.appendChild(signout);

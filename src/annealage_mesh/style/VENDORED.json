@@ -1,10 +1,10 @@
 {
   "source": "Annealage/style",
-  "commit": "7ce560a3e1cbf91d56ad75b37a4f283e0494ee78",
-  "date": "2026-11-12T01:51:08Z",
+  "commit": "6a93818e8d658a7ddeab8e983f3ec8c6ecce250a",
+  "date": "2026-11-12T02:04:57Z",
   "files": [
     {"path": "LICENSE", "sha256": "4995bfb4b800b9875a1ffff0e92aa434d3db57622552363ac3b5c689216cedc4"},
-    {"path": "account.js", "sha256": "166fbef12f6f3e11886fe7b75dae604569175e3954e263955928d4f79bf76809"},
+    {"path": "account.js", "sha256": "b34fc7f67a3663cbc52a718c691b0da746d70fe559d640b5fdb4753a9e8760d1"},
     {"path": "confirm.js", "sha256": "acfdb07001538f336727b6a9943a3cc5fcc3332f30a24bb195b6aed46b87cb25"},
     {"path": "fonts/OFL-InstrumentSans.txt", "sha256": "c27a3c53c3beed7f5c26853afa15991478ff7145d3754a36b0382f84e10c0d03"},
     {"path": "fonts/OFL-RedHatMono.txt", "sha256": "5fa3c7d20a2a1fa8fe051fcd66d7e3ef41a4b37dd1aa99463e57d06c2c49e5ee"},
