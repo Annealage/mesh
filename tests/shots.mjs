@@ -7,6 +7,8 @@
 //   .venv/bin/annealage-mesh /tmp/meshdemo --no-open --no-git --no-agent --port 5734
 //   MESH_SHOT_TOKEN=<the #t= value the server printed> tools/shot --table tests/shots.mjs --base http://127.0.0.1:5733 --webgl --preset full --conform
 //
+// Serve the main folder on port 5733: `mesh-settings` shows the port. The gate is run with `--tolerance 0`.
+//
 // The viewer-only entries (`viewer-only-*`) belong to the second server; shoot
 // them with `--base http://127.0.0.1:5734 --only <names>`.
 //
