@@ -1,7 +1,7 @@
 {
   "source": "Annealage/style",
-  "commit": "cf7c111fed434a7face06c8e142fb7a64e676240",
-  "date": "2026-11-12T05:18:47Z",
+  "commit": "a8a20c0c669d28e7284ad56f78c165b61bf959d4",
+  "date": "2026-11-12T13:58:05Z",
   "files": [
     {"path": "LICENSE", "sha256": "4995bfb4b800b9875a1ffff0e92aa434d3db57622552363ac3b5c689216cedc4"},
     {"path": "account.js", "sha256": "0a4aef4a8b128e6c772552b9a4cc1729e5996e0e4e5f47b47d721bf4a2086742"},
@@ -24,7 +24,7 @@
     {"path": "marks/mesh-layers.svg", "sha256": "db7a3aea7db88105489d9a9322453c306df52d1053667f943cdee4fb066f8144"},
     {"path": "palette.js", "sha256": "467fab69e358e67d9688bff37481b780590df1d8adc38e79ef0b2e6d413aec52"},
     {"path": "scheme.js", "sha256": "418c12f063026626486f74e2b0b825874ed870920d3af18596e8a8074fa4c652"},
-    {"path": "theme.css", "sha256": "1c2a88ee7f48ea4c0da6cd42d283c9cca5b478465071366b4ed7c91a663d8ae6"},
+    {"path": "theme.css", "sha256": "2fcc34c8ff5175f83029549dc07a68e956801329f11a5c5a6197770c4ec2f2ca"},
     {"path": "tokens.css", "sha256": "644355831674515c23d46a652b322c849922ebec4388320d1a57bbedb5bc4373"}
   ]
 }

@@ -1259,7 +1259,12 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
 .hdrbtn[aria-pressed=true] { background: var(--press); color: var(--ink); }
 .hdrbtn.primary, #chat .hdrbtn.primary { background: var(--ink); color: var(--ground); font-weight: 600; }
 .hdrbtn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 86%, var(--ground)); color: var(--ground); }
-#chat .menu .hdrbtn { width: 100%; height: var(--ctl); border-radius: var(--r-sm); font: 400 var(--fs-ui)/1 var(--sans); color: var(--ink); }
+#chat .menu .hdrbtn { display: flex; justify-content: flex-start; width: 100%; height: var(--ctl); border-radius: var(--r-sm); font: 400 var(--fs-ui)/1 var(--sans); color: var(--ink); }
+/* The More menu opens under its button (top is its static position) and hangs from the header's right edge, never wider than
+   the pane, so at any pane width (a narrow column, an iframe) every item is
+   inside it. The header's nowrap is not inherited into the items. */
+#chat details.more { position: static; }
+#chat > header .menu { top: auto; margin-top: 2px; right: 6px; left: auto; max-width: calc(100% - 12px); white-space: normal; }
 
 /* Agent errors and resets: a message row with a lamp, under the header.
    #chatBanner.chatbanner[data-kind=error|reset|info|attention] > span, button (dismiss), details.chatbannerdetail */
@@ -1399,6 +1404,8 @@ table.props td { padding: 3px 0; font: 400 var(--fs-small)/var(--lh-ui) var(--mo
   border: 0; border-radius: var(--r); background: none; color: var(--ink);
   font: 500 var(--fs-ui)/1 var(--sans); white-space: nowrap;
 }
+/* In a very narrow pane a label wraps rather than leaving the card. */
+@media (max-width: 360px) { #chat .pactions button { height: auto; min-height: var(--ctl); padding-block: 4px; line-height: 1.2; white-space: normal; text-align: left; } }
 #chat .pactions button:hover:not(:disabled) { background: var(--hover); }
 #chat .pactions button.danger { grid-column: 3; grid-row: 2; background: none; border: 0; color: var(--danger); }
 #chat .pactions button:disabled { opacity: 0.45; cursor: default; }
