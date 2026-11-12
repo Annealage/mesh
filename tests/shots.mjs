@@ -188,6 +188,12 @@ const toastAndError = async (tab) => {
 // would, so the title bar is shown with its place filled in.
 const ME = { v: 1, display: 'andrew', email: 'andrew@example.com', account_url: 'https://account.annealage.ai/', security_url: 'https://account.annealage.ai/security', projects_url: 'https://account.annealage.ai/projects', signout: { method: 'POST', url: '/auth/logout' }, products: [{ key: 'mesh', name: 'Mesh', url: 'https://mesh.annealage.ai/', current: true }, { key: 'canvas', name: 'Canvas', url: 'https://canvas.annealage.ai/', current: false }, { key: 'loom', name: 'Loom', url: 'https://loom.annealage.ai/', current: false }] };
 const MENU = '.titlebar .tb-right > [data-account-menu] [data-menu]';
+// Fails the shot when the account menu is clipped by the window or the title bar overflows.
+const menuFits = async (tab) => {
+  const r = await tab.evaluate(`(() => { const m = [...document.querySelectorAll('.titlebar .menuwrap')].find((e) => e.offsetParent); const t = document.querySelector('.titlebar');
+    return { right: m ? Math.round(m.getBoundingClientRect().right) : null, w: innerWidth, sw: t.scrollWidth, cw: t.clientWidth }; })()`);
+  if (r.right === null || r.right > r.w || r.sw > r.cw) throw new Error(`the account menu is clipped: right edge ${r.right} in a ${r.w}px window, title bar ${r.sw} of ${r.cw}px`);
+};
 const hosted = (visitor) => async (tab) => {
   await tab.run(async ({ page }, o) => {
     await page.route('**/_front/me', (r) => r.fulfill({ status: o.visitor ? 401 : 200, contentType: 'application/json', body: JSON.stringify(o.visitor ? { error: 'unauthenticated' } : o.me) }));
@@ -269,6 +275,7 @@ export default {
     wide('mesh-hosted-menu', { state: both(content, hosted()) }),
     wide('mesh-hosted-open', { state: both(content, hosted(), click(MENU)) }),
     frame('mesh-hosted-1100', { viewports: [[1100, 800]], state: both(content, hosted(), click(MENU)) }),
+    ...[1280, 1100, 901].map((w) => frame(`mesh-hosted-fit-${w}`, { viewports: [[w, 800]], state: both(content, hosted(), menuFits) })),
     wide('mesh-hosted-visitor', { state: both(content, hosted(true)) }),
     narrow('mesh-hosted-menu-phone', { state: hosted() }),
     narrow('mesh-hosted-open-phone', { state: both(hosted(), click(MENU)) }),
