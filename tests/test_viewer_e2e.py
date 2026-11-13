@@ -3218,14 +3218,18 @@ def test_controls_that_cannot_act_are_disabled_and_say_why(browser, mesh_server)
         page.evaluate(_ADD_TWO_PINS)
         assert page.is_enabled("#submit") and page.is_enabled("#clear")
 
-        # No agent (this server is viewer-only): the composer and Pause say why.
+        # The agent unavailable: the model field, Interrupt and Pause are off and
+        # say why. Send stays on, since sending tries to start the agent again,
+        # and its title says so (the agent layer's rule; viewer-only runs turn
+        # it off as well, which the viewer-only shots show).
         page.evaluate(
             "async () => { const { store } = await import('agent/store.js'); "
             "store.setChatAgentStatus('unavailable'); }"
         )
-        for sel in ("#chatSend", "#chatInput", "#chatAttachBtn", "#chatInterrupt", "#pauseBtn"):
+        for sel in ("#chatModelInput", "#chatInterrupt", "#pauseBtn"):
             assert page.is_disabled(sel), sel
-            assert "not running" in page.get_attribute(sel, "title"), sel
+            assert page.get_attribute(sel, "title"), sel
+        assert "not running" in page.get_attribute("#chatSend", "title")
 
         # The sketch bar: nothing drawn, so nothing to undo, clear or attach.
         page.click("#sketchBtn")

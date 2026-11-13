@@ -13,7 +13,6 @@
  * saved up axis means) is passed in here, so none of them names a Mesh module.
  */
 
-import { initReasons } from "./reasons.js";
 import { initChat } from "agent/chat.js";
 import { initPause } from "agent/pause.js";
 import { initSettings } from "agent/settings.js";
@@ -78,7 +77,6 @@ const chatApi = initChat({
   },
 });
 const pauseApi = initPause({ send });
-initReasons();
 const commandsApi = initCommands({ scene3d });
 initSketch({ container: appEl, captureView: scene3d.captureView,
              cameraState: scene3d.cameraState });
