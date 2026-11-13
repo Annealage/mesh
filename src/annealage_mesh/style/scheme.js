@@ -22,9 +22,7 @@
 // Any <button data-scheme-toggle> cycles System, Light, Dark. It holds one
 // <svg class="ico"><use href=".../icons.svg#i-auto"/></svg>, and the icon is
 // swapped to match the choice (i-auto, i-sun, i-moon; the sprite path in the
-// href is kept). The earlier markup still works: one
-// <svg data-for="system|light|dark"> per state, of which theme.css shows the
-// one matching the button's data-scheme.
+// href is kept).
 //
 // The marks' <picture><source media="(prefers-color-scheme: dark)"> would
 // follow the OS and ignore a forced scheme, so those sources get their media
@@ -71,10 +69,9 @@
     var next = ORDER[(ORDER.indexOf(c) + 1) % ORDER.length];
     var btns = document.querySelectorAll("[data-scheme-toggle]");
     for (var i = 0; i < btns.length; i++) {
-      btns[i].setAttribute("data-scheme", c);
       btns[i].setAttribute("aria-label", LABEL[c] + ". Switch to " + next + ".");
       btns[i].title = LABEL[c];
-      var use = btns[i].querySelector("svg:not([data-for]) > use");
+      var use = btns[i].querySelector("svg > use");
       if (use) {
         var href = use.getAttribute("href") || "";
         use.setAttribute("href", href.slice(0, href.indexOf("#") + 1) + ICON[c]);

@@ -64,10 +64,12 @@
   /* Paper: a schematic sheet or its thumbnail. It is paper in both schemes, a
      slight warm off-white in dark, never a veil over the linework. A sheet
      image multiplies onto --paper-under (white in light, so nothing changes).
-     Marks drawn on paper use --paper-ink, which does not follow the scheme. */
+     Marks drawn on paper use --paper-ink and --paper-ink-3 (a resolved one),
+     which do not follow the scheme. */
   --paper: light-dark(#FDFDF9, #F4F3EF);
   --paper-under: light-dark(#FFFFFF, #F4F3EF);
   --paper-ink: #14171A;
+  --paper-ink-3: #666D73;
 
   /* Findings drawn on a sheet, which is paper in both schemes. */
   --sheet-danger: #C42B21;
@@ -162,6 +164,8 @@
   --r-sm: 4px;
   --r-xs: 2px;
   --cut: 5px;
+  /* The scrim under a dialog. */
+  --scrim: light-dark(rgba(20, 23, 26, 0.35), rgba(0, 0, 0, 0.55));
   --shadow-menu: 0 10px 28px light-dark(rgba(20, 23, 26, 0.14), rgba(0, 0, 0, 0.5)),
     0 1px 3px light-dark(rgba(20, 23, 26, 0.10), rgba(0, 0, 0, 0.45));
 

@@ -3278,3 +3278,32 @@ def test_the_page_has_an_icon_and_an_empty_folder_says_so_in_the_view(browser, t
             server.stop()
     finally:
         page.close()
+
+
+def test_agent_plates_with_long_numbers_hold_their_text(browser, mesh_server):
+    """A10 and A100 widen the plate; the text stays inside its ruled edge and
+    the plate stays clear of the row's fields."""
+    page = browser.new_page()
+    try:
+        page.goto(mesh_server.base_url + "/")
+        _wait_both_meshes_loaded(page)
+        page.evaluate(
+            "() => window.mesh.store.setCallouts([1, 10, 100].map((id) => "
+            "({ id, part: 'alpha', label: '+Z', point: [0, 0, id], comment: 'x' })))"
+        )
+        page.wait_for_function("() => document.querySelectorAll('#agentPins .apin').length === 3")
+        boxes = page.evaluate(
+            """() => [...document.querySelectorAll('#agentPins .apin')].map((row) => {
+              const mk = row.querySelector('.mk'), r = document.createRange();
+              r.selectNodeContents(mk);
+              const t = r.getBoundingClientRect(), b = mk.getBoundingClientRect();
+              const f = row.querySelector('.fields').getBoundingClientRect();
+              return { text: mk.textContent, tl: t.left, tr: t.right, bl: b.left, br: b.right, fl: f.left };
+            })"""
+        )
+        assert [b["text"] for b in boxes] == ["A1", "A10", "A100"]
+        for b in boxes:
+            assert b["tl"] >= b["bl"] + 1.5 and b["tr"] <= b["br"] - 1.5, b
+            assert b["br"] <= b["fl"], b
+    finally:
+        page.close()

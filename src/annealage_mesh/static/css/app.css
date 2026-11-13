@@ -4,8 +4,8 @@
    sections and rows, the toast, the error line and the chat all come from
    theme.css; what is here is only what Mesh alone draws: the view's canvas,
    sketch overlay and empty-folder note, the title, the parts list swatches,
-   the pin and callout fields, the measure section, and where the error line
-   sits. The 3D scene's own colours are tokens too, read by js/palette.js. */
+   the pin and callout fields and the measure section. The 3D scene's own
+   colours are tokens too, read by js/palette.js. */
 
 * { -webkit-tap-highlight-color: transparent; }
 
@@ -34,9 +34,6 @@
 .viewempty { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 0 24px; text-align: center; color: var(--ink-2); font-size: var(--fs-ui); pointer-events: none; }
 .viewempty[hidden] { display: none; }
 
-/* The error line sits under the title and view bars, not over the command field. */
-html #err { top: calc(var(--h-bar) + var(--h-pane) + var(--s-3)); }
-
 /* ---------- parts list ---------- */
 #parts .sw { width: 10px; height: 10px; border-radius: 1px; flex: none; outline: 1px solid var(--rule-strong); outline-offset: -1px; }
 #parts .check { min-width: 0; }
@@ -58,11 +55,9 @@ html #err { top: calc(var(--h-bar) + var(--h-pane) + var(--s-3)); }
 #measureSec .fields[hidden], #measureSec .empty[hidden] { display: none; }
 #measureSec .empty { padding: 6px 12px 0; font-size: 12px; color: var(--ink-2); }
 
-/* ---------- error line on a phone ----------
-   The theme floats #err at the top, which at 900px and below is the title bar
-   and the tab bar. Keep those reachable: stack it above the toast instead. */
+/* ---------- measure readout on a phone ----------
+   The phone's tool pill sits on the bottom edge of the view; the measured
+   distance sits above it. */
 @media (max-width: 900px) {
-  /* The phone's tool pill sits on the bottom edge of the view; the measured distance sits above it. */
   #measureHud { bottom: 60px; }
-  html #err { top: auto; bottom: calc(var(--h-status) + 56px); }
 }
