@@ -30,13 +30,21 @@ const click = (selector) => async (tab) => {
 };
 const both = (...steps) => async (tab) => { for (const step of steps) await step(tab); };
 
-// Three parts, two pins and a callout, set through the page's own store.
+// Three parts, two pins and a callout on the top face of the first (visible) part, set through the page's
+// own store, then Fit, since selecting a pin moves the view. A marker on a face seen edge-on rasterises
+// differently from run to run, so all three sit on the top face.
 const content = async (tab) => {
   await tab.evaluate(`(async () => {
     const s = window.mesh.store;
-    s.addPin({ point: [0, 0, 0], part: 'alpha', label: '+Z' });
-    s.addPin({ point: [5, 0, 0], part: 'alpha', label: '+X' });
-    s.setCallouts([{ id: 1, part: 'alpha', label: '+Z', point: [0, 5, 0], comment: 'Top skin is 1.6 mm.' }]);
+    const m = s.getState().models[0];
+    const g = window.mesh.meshes[m.rel].geometry;
+    g.computeBoundingBox();
+    const { min, max } = g.boundingBox;
+    const cx = (min.x + max.x) / 2, cy = (min.y + max.y) / 2;
+    s.addPin({ point: [cx - (max.x - min.x) / 4, cy, max.z], part: m.label, label: '+Z' });
+    s.addPin({ point: [cx + (max.x - min.x) / 4, cy - (max.y - min.y) / 4, max.z], part: m.label, label: '+Z' });
+    s.setCallouts([{ id: 1, part: m.label, label: '+Z', point: [cx + (max.x - min.x) / 4, cy + (max.y - min.y) / 4, max.z], comment: 'Top skin is 1.6 mm.' }]);
+    document.getElementById('fit').click();
   })()`);
 };
 // m2: two pins and a callout on real parts, a measurement between the pins, one pin selected.
