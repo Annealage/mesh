@@ -6,8 +6,9 @@
  * WebGL materials and canvas sprites cannot reference a CSS variable, so each
  * drawing module reads the resolved values here and redraws through
  * `onPaletteChange` when the colour scheme flips. The variables come from the
- * brand tokens (lib/style's tokens.css), which write them with light-dark(),
- * so reading the custom property itself gives back that unresolved text.
+ * style library's tokens.css (vendored in annealage_mesh/style), which writes
+ * them with light-dark(), so reading the custom property itself gives back
+ * that unresolved text.
  * Each one is resolved instead through a hidden probe element's computed
  * `color`, which yields the rgb() the current scheme (and any data-theme
  * override) picks.

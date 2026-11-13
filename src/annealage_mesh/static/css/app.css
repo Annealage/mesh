@@ -1,10 +1,11 @@
 /* Mesh's own styling, linked last, after the brand tokens, the agent layer's
-   agent.css and the shared Workbench theme (lib/style). The frame, the
-   review panel's sections and rows, and the chat all come from theme.css;
-   what is here is only what Mesh alone draws: the view's canvas and sketch
-   overlay, the parts list swatches, the measure section, and the toast and
-   error banner. The 3D scene's own colours are tokens too, read by
-   js/palette.js. */
+   agent.css and the style library's theme.css (vendored in
+   annealage_mesh/style, served at /style/). The frame, the review panel's
+   sections and rows, the toast, the error line and the chat all come from
+   theme.css; what is here is only what Mesh alone draws: the view's canvas,
+   sketch overlay and empty-folder note, the title, the parts list swatches,
+   the pin and callout fields, the measure section, and where the error line
+   sits. The 3D scene's own colours are tokens too, read by js/palette.js. */
 
 * { -webkit-tap-highlight-color: transparent; }
 
