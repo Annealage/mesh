@@ -479,20 +479,30 @@ summary { cursor: pointer; }
    #err (class ok or err on the toast). They float, so they have the menu's
    edge and shadow, and a lamp like any message: quench for ok, danger for an
    error. ui.js sets display inline, so the lamp is positioned, not a grid
-   column. The toast sits above the status bar. The error line hangs under the
-   title bar and the row under it (the view tabs or the pane heads), so it covers
-   no control of the frame; at 900px and below, where those rows are the title
-   bar and the tab bar, it sits above the toast instead. A product does not
-   place either. */
+   column. A product places neither. Both hang at the top of the view, under
+   the title bar and the row under it (the view tabs or the pane heads): the
+   bottom edge holds controls (the inspector's footer, the composer, a sheet's
+   tabs) and each phone tab has a different one. The error line comes first and
+   the toast under it, so both can show at once; frame.js mirrors the error
+   line's height and gap onto <html> as --err-stack (0 without it). Above 900px
+   they are centred over the view column, so the inspector's and the agent's
+   heads stay clear: frame.js mirrors the column's edges as --view-l and
+   --view-r (0 without it, the whole window). The Agent layout has no view
+   column and takes the window. At 900px and below the title bar, the tab bar
+   and the pane head are above them, and they span the window. */
+html { --notice-top: calc(var(--h-bar) + var(--h-pane) + var(--s-3)); }
 html #toast, html #err {
-  position: fixed; z-index: 60; left: var(--s-3); right: var(--s-3); bottom: calc(var(--h-status) + var(--s-3));
+  position: fixed; z-index: 60; top: var(--notice-top); left: calc(var(--view-l, 0px) + var(--s-3)); right: calc(var(--view-r, 0px) + var(--s-3));
   width: fit-content; max-width: 560px; margin-inline: auto; padding: 8px 12px 8px 30px;
   border: 1px solid var(--rule-strong); border-radius: var(--r);
   background: var(--field); box-shadow: var(--shadow-menu); color: var(--ink);
   font-size: var(--fs-ui); line-height: var(--lh-ui); white-space: pre-wrap; overflow-wrap: anywhere;
 }
-html #err { top: calc(var(--h-bar) + var(--h-pane) + var(--s-3)); bottom: auto; }
-@media (max-width: 900px) { html #err { top: auto; bottom: calc(var(--h-status) + var(--ctl) + 2 * var(--s-3) + var(--s-2)); } }
+html #toast { top: calc(var(--notice-top) + var(--err-stack, 0px)); }
+@media (max-width: 900px) {
+  html { --notice-top: calc(var(--h-bar) + 40px + var(--h-pane) + var(--s-3)); }
+  html #toast, html #err { left: var(--s-3); right: var(--s-3); }
+}
 html #toast::before, html #err::before {
   content: ""; position: absolute; left: 12px; top: 14px; width: 8px; height: 8px; border-radius: 1px; background: var(--ink-3);
 }
@@ -1690,7 +1700,7 @@ ol.src > li::before { content: counter(line); text-align: right; color: var(--in
 /* annealage-ember's project.js builds the title bar's project name and Rename,
    the History pane, the "Send to" lineage bar, the project list and the
    confirming dialog out of pj-* classes. They are drawn here, from the page's
-   own tokens, with no --pj-* variable; ember's project.css has no rules.
+   own tokens, with no --pj-* variable; ember ships no stylesheet for them.
    .pj-btn is a text button (.btn), .pj-menu the menu, .pj-dialog the settings
    window's dialog. Rows are hairlines; only the dialog, the menu and inputs
    have an edge.

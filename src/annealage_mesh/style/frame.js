@@ -41,6 +41,11 @@
 //                                 shown only at 900px and below)
 //   reset()                       forget the stored settings and go back to the markup's
 //   destroy()
+// The floating messages #toast and #err sit outside .wb, so frame.js mirrors what
+// theme.css places them by onto <html>, after each change and when the view or the
+// error line resizes: --view-l and --view-r (px from the window's left and right edge to
+// the view column; absent at 900px and below and while the view is hidden, as in the Agent
+// layout) and --err-stack (px the error line takes, with its gap, or 0).
 // A "framechange" event fires on .wb, detail {layout, insp, chat, panelOpen,
 // activeTab} (and split on a page that has one), after each change, so a canvas
 // or WebGL view can resize.
@@ -151,6 +156,7 @@
       return s;
     }
     function emit() {
+      placeNotices();
       root.dispatchEvent(new win.CustomEvent("framechange", { bubbles: true, detail: snapshot() }));
     }
     function persist() {
@@ -158,6 +164,32 @@
       COLUMNS.forEach(function (c) { if (pref[c.key] != null) rec[c.key] = pref[c.key]; });
       if (pref.split != null) rec.split = pref.split;
       write(storage, KEY, JSON.stringify(rec));
+    }
+
+    // ---- The floating messages
+
+    // #toast and #err are outside .wb, so the theme cannot read the grid: mirror the view column's
+    // edges and the error line's height onto <html> for it.
+    var NOTICE_GAP = 8; // between the error line and the toast under it
+    function placeNotices() {
+      var html = doc.documentElement;
+      if (!html || !html.style) return;
+      var view = root.querySelector(".view");
+      var r = !isNarrow() && view ? view.getBoundingClientRect() : null;
+      if (r && r.width > 0) {
+        html.style.setProperty("--view-l", Math.round(r.left) + "px");
+        html.style.setProperty("--view-r", Math.round((html.clientWidth || win.innerWidth || 0) - r.right) + "px");
+      } else {
+        html.style.removeProperty("--view-l");
+        html.style.removeProperty("--view-r");
+      }
+      var err = doc.querySelector("#err");
+      html.style.setProperty("--err-stack", (err && err.offsetHeight > 0 ? err.offsetHeight + NOTICE_GAP : 0) + "px");
+    }
+    function forgetNotices() {
+      var html = doc.documentElement;
+      if (!html || !html.style) return;
+      ["--view-l", "--view-r", "--err-stack"].forEach(function (k) { html.style.removeProperty(k); });
     }
 
     // ---- Layout focus
@@ -513,6 +545,8 @@
       root.removeEventListener("click", onClick);
       win.removeEventListener("resize", onResize);
       mq.removeEventListener("change", onNarrow);
+      if (watch) watch.disconnect();
+      forgetNotices();
       grips.forEach(function (g) { g.el.remove(); });
       grips = [];
       if (splitGrip) splitGrip.remove();
@@ -550,6 +584,9 @@
     win.addEventListener("resize", onResize);
     mq.addEventListener("change", onNarrow);
     fit();
+    placeNotices();
+    var watch = win.ResizeObserver ? new win.ResizeObserver(placeNotices) : null;
+    if (watch) [root.querySelector(".view"), doc.querySelector("#err")].forEach(function (el) { if (el) watch.observe(el); });
 
     var api = {
       root: root,
