@@ -272,7 +272,7 @@ static/
   js/models.js     180   manifest load, part list, visibility
   js/pins.js       300   user pins and agent callouts, markers, sprites, picking
   js/measure.js    160
-  js/layout.js     140   pane split, mobile tab arbitration
+  style/frame.js   -     pane split, phone tab arbitration (the shared style library's, not a Mesh module)
   js/chat.js       320   transcript render, streaming deltas, uploads, permission cards
   js/sketch.js     160   overlay canvas, composite, upload
   js/settings.js   200   settings modal: sections, provenance display, restart-required labels
