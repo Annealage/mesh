@@ -24,8 +24,10 @@
    theme's .canvas, which is already the positioning context, and the overlay
    with inset: 0 fills the same box three-scene.js sizes the renderer from. */
 #app canvas.sketch-overlay { position: absolute; inset: 0; cursor: crosshair; }
+/* The toolbar sits at the bottom of the view, above the HUD row (the units, the measured
+   distance): a toast or the error line hangs at the top. */
 .sketchbar {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1;
+  position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 1;
   display: flex; gap: 6px; padding: 6px;
   background: var(--field); border: 1px solid var(--rule-strong); border-radius: var(--r);
 }
@@ -55,9 +57,10 @@
 #measureSec .fields[hidden], #measureSec .empty[hidden] { display: none; }
 #measureSec .empty { padding: 6px 12px 0; font-size: 12px; color: var(--ink-2); }
 
-/* ---------- measure readout on a phone ----------
+/* ---------- measure readout and sketch toolbar on a phone ----------
    The phone's tool pill sits on the bottom edge of the view; the measured
-   distance sits above it. */
+   distance sits above it and the sketch toolbar above that. */
 @media (max-width: 900px) {
   #measureHud { bottom: 60px; }
+  .sketchbar { bottom: 84px; }
 }

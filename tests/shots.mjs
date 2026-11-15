@@ -191,14 +191,14 @@ const toastAndError = async (tab) => {
     ui.showError('No parts in this folder yet.');
   })()`);
 };
-// Fails the shot unless a toast or error line is showing and none of them overlaps a bottom control: the
-// inspector's footer, the composer, the status text.
+// Fails the shot unless a toast or error line is showing and none of them overlaps a control: the
+// inspector's footer, the composer, the status text, the sketch toolbar.
 const toastClear = async (tab) => {
   const r = await tab.evaluate(`(() => {
     const shown = (e) => e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
     const box = (e) => { const b = e.getBoundingClientRect(); return { l: b.left, t: b.top, r: b.right, b: b.bottom }; };
     const notices = ['#toast', '#err'].map((s) => document.querySelector(s)).filter(shown);
-    const under = ['.ifoot', '#chatComposer', '#chatPending', '.statusbar'].map((s) => [s, document.querySelector(s)]).filter(([, e]) => shown(e));
+    const under = ['.ifoot', '#chatComposer', '#chatPending', '.statusbar', '.sketchbar'].map((s) => [s, document.querySelector(s)]).filter(([, e]) => shown(e));
     const hits = [];
     for (const n of notices) for (const [s, e] of under) {
       const a = box(n), c = box(e);
@@ -209,6 +209,20 @@ const toastClear = async (tab) => {
   if (r.notices === 0) throw new Error('no toast or error line is showing');
   if (r.hits.length) throw new Error('a notice covers a control: ' + r.hits.join(', '));
 };
+
+// Fails the shot unless the sketch toolbar is on screen.
+const sketchBarShown = async (tab) => {
+  const shown = await tab.evaluate(`(() => { const b = document.querySelector('.sketchbar'); return !!b && b.getClientRects().length > 0; })()`);
+  if (!shown) throw new Error('the sketch toolbar is not showing');
+};
+
+// The toast of a view that moved under a sketch, with the sketch toolbar still reachable.
+const sketchMoved = both(
+  sketch,
+  say('toast', 'The view moved since you started drawing, so the marks no longer line up. Clear and draw again, or put the view back.', false),
+  toastClear,
+  sketchBarShown,
+);
 
 // The account menu of a hosted title bar. Mesh does not serve itself hosted yet, so the page never loads
 // account.js: these states stand in for the host. They answer /_front/me the way the hosted front does (a
@@ -294,7 +308,8 @@ export default {
     wide('m5-load-failed', { state: both(content, say('showError', 'Could not load alpha.')) }),
     wide('m5-pin-toast', { state: both(content, click('#panelBtn'), say('toast', 'Pin 3 added. Open the review panel to comment.', true)), conform: INSPECTOR_CLOSED }),
     wide('m5-submit-refused', { state: both(content, say('toast', 'Could not submit: sign in again', false)) }),
-    wide('m5-sketch-moved', { state: both(sketch, say('toast', 'The view moved since you started drawing, so the marks no longer line up. Clear and draw again, or put the view back.', false)) }),
+    wide('m5-sketch-moved', { state: sketchMoved }),
+    narrow('m5-sketch-moved-phone', { state: sketchMoved }),
     // m5: the toast where each layout and phone tab has its own bottom controls (the inspector's footer, the composer, the
     // phone Review tab's footer, the status text); each state fails the shot if the toast or the error line overlaps one.
     wide('m5-toast-agent', { state: both(click('[data-layout-set="agent"]'), say('toast', 'The view moved since you started drawing, so the marks no longer line up. Clear and draw again, or put the view back.', false), toastClear), conform: AGENT }),
